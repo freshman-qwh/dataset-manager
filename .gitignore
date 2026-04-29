@@ -30,6 +30,9 @@ ENV/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+pytest-cache-files-*/
+backend/pytest-cache-files-*/
+backend/.tmp/
 .coverage
 htmlcov/
 dist/
