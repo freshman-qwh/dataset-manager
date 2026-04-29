@@ -1,0 +1,16 @@
+storage:
+  root: "./storage"
+  datasets: "./storage/datasets"
+  thumbnails: "./storage/thumbnails"
+  cache: "./storage/cache"
+
+database:
+  url: "sqlite:///./database/app.db"
+
+scan:
+  image_exts: [".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"]
+  video_exts: [".mp4", ".avi", ".mov", ".mkv"]
+  table_exts: [".csv", ".xlsx", ".json"]
+
+app:
+  debug: true
