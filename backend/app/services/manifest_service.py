@@ -1,15 +1,33 @@
-from sqlmodel import Session, select
+from sqlmodel import Session
 
-from app.models.sample import Sample
 from app.services.dataset_service import get_dataset_or_404
+from app.services.sample_service import get_filtered_samples
 from app.services.stats_service import get_dataset_stats
 
 
-def export_manifest(session: Session, dataset_id: int) -> dict:
+def export_manifest(
+    session: Session,
+    dataset_id: int,
+    search: str | None = None,
+    file_type: str | None = None,
+    tag: str | None = None,
+    split: str | None = None,
+    sample_ids: list[int] | None = None,
+    sort_by: str = "relative_path",
+    sort_order: str = "asc",
+) -> dict:
     dataset = get_dataset_or_404(session, dataset_id)
-    samples = session.exec(
-        select(Sample).where(Sample.dataset_id == dataset_id).order_by(Sample.relative_path)
-    ).all()
+    samples = get_filtered_samples(
+        session,
+        dataset_id,
+        search=search,
+        file_type=file_type,
+        tag=tag,
+        split=split,
+        sample_ids=sample_ids,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
     stats = get_dataset_stats(session, dataset_id)
 
     return {
@@ -19,10 +37,26 @@ def export_manifest(session: Session, dataset_id: int) -> dict:
             "description": dataset.description,
             "task_type": dataset.task_type,
             "root_path": dataset.root_path,
+            "source": dataset.source,
+            "modality": dataset.modality,
+            "license": dataset.license,
+            "owner": dataset.owner,
+            "project": dataset.project,
+            "notes": dataset.notes,
             "created_at": dataset.created_at.isoformat(),
             "updated_at": dataset.updated_at.isoformat(),
         },
+        "filters": {
+            "search": search,
+            "file_type": file_type,
+            "tag": tag,
+            "split": split,
+            "sample_ids": sample_ids or [],
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+        },
         "stats": stats.model_dump(),
+        "exported_sample_count": len(samples),
         "samples": [
             {
                 "id": sample.id,
@@ -34,8 +68,12 @@ def export_manifest(session: Session, dataset_id: int) -> dict:
                 "file_type": sample.file_type,
                 "mime_type": sample.mime_type,
                 "file_hash": sample.file_hash,
+                "file_status": sample.file_status,
+                "file_modified_at": sample.file_modified_at.isoformat() if sample.file_modified_at else None,
+                "last_scanned_at": sample.last_scanned_at.isoformat() if sample.last_scanned_at else None,
                 "split": sample.split,
                 "notes": sample.notes,
+                "metadata_json": sample.metadata_json,
                 "tags": [tag.name for tag in sample.tags],
             }
             for sample in samples

@@ -1,12 +1,13 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import FileResponse
 from sqlmodel import Session
 
 from app.core.database import get_session
-from app.schemas.sample import SampleRead, SampleUpdate
-from app.services import sample_service
+from app.schemas.sample import SamplePreview, SampleRead, SampleUpdate
+from app.schemas.tag import TagRead, TagUpdate
+from app.services import sample_service, tag_service
 
 router = APIRouter(prefix="/api", tags=["samples"])
 
@@ -23,6 +24,27 @@ def update_sample(
     session: Session = Depends(get_session),
 ) -> SampleRead:
     return sample_service.update_sample(session, sample_id, payload)
+
+
+@router.patch("/tags/{tag_id}", response_model=TagRead)
+def update_tag(
+    tag_id: int,
+    payload: TagUpdate,
+    session: Session = Depends(get_session),
+) -> TagRead:
+    return tag_service.update_tag(session, tag_id, payload)
+
+
+@router.delete("/tags/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_tag(tag_id: int, session: Session = Depends(get_session)) -> Response:
+    tag_service.delete_tag(session, tag_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/samples/{sample_id}/preview", response_model=SamplePreview)
+def get_sample_preview(sample_id: int, session: Session = Depends(get_session)) -> SamplePreview:
+    sample = sample_service.get_sample_or_404(session, sample_id)
+    return sample_service.get_sample_preview(sample)
 
 
 @router.get("/samples/{sample_id}/file")

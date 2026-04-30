@@ -13,6 +13,9 @@ class ScanResult(BaseModel):
     root_path: str
     scanned: int
     imported: int
+    updated: int
+    unchanged: int
+    missing: int
     skipped_existing: int
     skipped_unsupported: int
-    errors: list[str] = []
+    errors: list[str] = Field(default_factory=list)

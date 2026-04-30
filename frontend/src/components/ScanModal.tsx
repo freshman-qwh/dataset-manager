@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 
+import DirectoryPickerModal from "./DirectoryPickerModal";
 import Modal from "./Modal";
 
 interface ScanModalProps {
@@ -12,6 +13,7 @@ interface ScanModalProps {
 
 export default function ScanModal({ open, defaultPath, scanning, onClose, onScan }: ScanModalProps) {
   const [path, setPath] = useState(defaultPath);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
     setPath(defaultPath);
@@ -30,12 +32,21 @@ export default function ScanModal({ open, defaultPath, scanning, onClose, onScan
       <form onSubmit={handleSubmit} className="space-y-4 px-5 py-5">
         <label className="block">
           <span className="text-sm font-medium text-gray-700">本地目录</span>
-          <input
-            value={path}
-            onChange={(event) => setPath(event.target.value)}
-            className="mt-2 w-full rounded-lg border border-line px-3 py-2.5 text-sm outline-none transition focus:border-gray-900"
-            placeholder="D:/My Code/dataset-manager/storage/datasets/example"
-          />
+          <div className="mt-2 flex gap-2">
+            <input
+              value={path}
+              onChange={(event) => setPath(event.target.value)}
+              className="min-w-0 flex-1 rounded-lg border border-line px-3 py-2.5 text-sm outline-none transition focus:border-gray-900"
+              placeholder="D:/My Code/dataset-manager/storage/datasets/example"
+            />
+            <button
+              type="button"
+              onClick={() => setPickerOpen(true)}
+              className="rounded-lg border border-line px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              选择
+            </button>
+          </div>
         </label>
         <div className="flex justify-end gap-2 pt-2">
           <button
@@ -54,6 +65,12 @@ export default function ScanModal({ open, defaultPath, scanning, onClose, onScan
           </button>
         </div>
       </form>
+      <DirectoryPickerModal
+        open={pickerOpen}
+        initialPath={path || undefined}
+        onClose={() => setPickerOpen(false)}
+        onSelect={setPath}
+      />
     </Modal>
   );
 }

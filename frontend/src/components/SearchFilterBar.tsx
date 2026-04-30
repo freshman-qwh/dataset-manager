@@ -1,13 +1,19 @@
-import { Download, Filter, RefreshCw, Search } from "lucide-react";
+import { Download, Filter, RefreshCw, Search, Tags, Upload } from "lucide-react";
 
 interface SearchFilterBarProps {
   search: string;
   fileType: string;
   tag: string;
+  split: string;
+  exportFormat: string;
   onSearchChange: (value: string) => void;
   onFileTypeChange: (value: string) => void;
   onTagChange: (value: string) => void;
+  onSplitChange: (value: string) => void;
+  onExportFormatChange: (value: string) => void;
   onScan: () => void;
+  onImportMetadata: () => void;
+  onManageTags: () => void;
   onExport: () => void;
 }
 
@@ -15,10 +21,16 @@ export default function SearchFilterBar({
   search,
   fileType,
   tag,
+  split,
+  exportFormat,
   onSearchChange,
   onFileTypeChange,
   onTagChange,
+  onSplitChange,
+  onExportFormatChange,
   onScan,
+  onImportMetadata,
+  onManageTags,
   onExport
 }: SearchFilterBarProps) {
   return (
@@ -52,6 +64,17 @@ export default function SearchFilterBar({
           className="w-full rounded-lg border border-line px-3 py-2 text-sm outline-none transition focus:border-gray-900 sm:w-36"
           placeholder="标签筛选"
         />
+        <select
+          value={split}
+          onChange={(event) => onSplitChange(event.target.value)}
+          className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm outline-none transition focus:border-gray-900 sm:w-32"
+        >
+          <option value="">全部划分</option>
+          <option value="train">train</option>
+          <option value="val">val</option>
+          <option value="test">test</option>
+          <option value="unassigned">未划分</option>
+        </select>
         <button
           type="button"
           title="扫描"
@@ -63,7 +86,35 @@ export default function SearchFilterBar({
         </button>
         <button
           type="button"
-          title="导出 manifest"
+          title="标签体系"
+          onClick={onManageTags}
+          className="inline-flex items-center justify-center gap-2 rounded-lg border border-line px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+        >
+          <Tags size={17} />
+          标签
+        </button>
+        <button
+          type="button"
+          title="导入元数据"
+          onClick={onImportMetadata}
+          className="inline-flex items-center justify-center gap-2 rounded-lg border border-line px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+        >
+          <Upload size={17} />
+          导入
+        </button>
+        <select
+          value={exportFormat}
+          onChange={(event) => onExportFormatChange(event.target.value)}
+          className="rounded-lg border border-line bg-white px-3 py-2 text-sm outline-none transition focus:border-gray-900 sm:w-32"
+        >
+          <option value="manifest">manifest</option>
+          <option value="csv">CSV 标签表</option>
+          <option value="coco">COCO 骨架</option>
+          <option value="yolo">YOLO 骨架</option>
+        </select>
+        <button
+          type="button"
+          title="导出"
           onClick={onExport}
           className="inline-flex items-center justify-center gap-2 rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800"
         >

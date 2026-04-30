@@ -1,12 +1,13 @@
 import { Save, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { getSampleFileUrl } from "../api/client";
-import type { Sample } from "../types/dataset";
+import { getSampleFileUrl, getSamplePreview } from "../api/client";
+import type { Sample, SamplePreview, Tag } from "../types/dataset";
 import TagEditor from "./TagEditor";
 
 interface SampleDetailPanelProps {
   sample: Sample | null;
+  availableTags: Tag[];
   saving: boolean;
   onClose: () => void;
   onSave: (payload: { split: string | null; notes: string | null; tags: string[] }) => Promise<void>;
@@ -22,15 +23,31 @@ function formatBytes(value: number): string {
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export default function SampleDetailPanel({ sample, saving, onClose, onSave }: SampleDetailPanelProps) {
+export default function SampleDetailPanel({ sample, availableTags, saving, onClose, onSave }: SampleDetailPanelProps) {
   const [split, setSplit] = useState("");
   const [notes, setNotes] = useState("");
   const [tags, setTags] = useState<string[]>([]);
+  const [preview, setPreview] = useState<SamplePreview | null>(null);
 
   useEffect(() => {
     setSplit(sample?.split ?? "");
     setNotes(sample?.notes ?? "");
     setTags(sample?.tags.map((tag) => tag.name) ?? []);
+    setPreview(null);
+    if (sample) {
+      void getSamplePreview(sample.id).then(setPreview).catch(() => {
+        setPreview({
+          sample_id: sample.id,
+          file_type: sample.file_type,
+          filename: sample.filename,
+          file_url: null,
+          columns: [],
+          rows: [],
+          preview_row_count: 0,
+          error: "预览加载失败"
+        });
+      });
+    }
   }, [sample]);
 
   const shortHash = useMemo(() => sample?.file_hash.slice(0, 16), [sample]);
@@ -54,12 +71,41 @@ export default function SampleDetailPanel({ sample, saving, onClose, onSave }: S
       </div>
       <div className="flex-1 overflow-y-auto px-5 py-5">
         <div className="overflow-hidden rounded-lg border border-line bg-gray-50">
-          {sample.file_type === "image" ? (
+          {sample.file_status === "missing" ? (
+            <div className="flex h-40 items-center justify-center text-sm text-amber-700">文件缺失</div>
+          ) : sample.file_type === "image" ? (
             <img src={getSampleFileUrl(sample.id)} alt={sample.filename} className="max-h-72 w-full object-contain" />
           ) : sample.file_type === "video" ? (
             <video src={getSampleFileUrl(sample.id)} controls className="max-h-72 w-full bg-black" />
+          ) : sample.file_type === "table" && preview?.rows.length ? (
+            <div className="max-h-72 overflow-auto bg-white">
+              <table className="min-w-full text-left text-xs">
+                <thead className="sticky top-0 bg-gray-50 text-gray-500">
+                  <tr>
+                    {preview.columns.map((column) => (
+                      <th key={column} className="border-b border-line px-3 py-2 font-medium">
+                        {column}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.rows.map((row, rowIndex) => (
+                    <tr key={rowIndex} className="border-b border-line last:border-0">
+                      {preview.columns.map((column) => (
+                        <td key={column} className="max-w-44 truncate px-3 py-2 text-gray-700">
+                          {row[column]}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           ) : (
-            <div className="flex h-40 items-center justify-center text-sm text-gray-500">{sample.extension.toUpperCase()}</div>
+            <div className="flex h-40 items-center justify-center text-sm text-gray-500">
+              {preview?.error || sample.extension.toUpperCase()}
+            </div>
           )}
         </div>
 
@@ -72,6 +118,14 @@ export default function SampleDetailPanel({ sample, saving, onClose, onSave }: S
             <dt className="text-gray-500">大小</dt>
             <dd className="mt-1 font-medium text-ink">{formatBytes(sample.file_size)}</dd>
           </div>
+          <div className="rounded-lg border border-line px-3 py-2">
+            <dt className="text-gray-500">状态</dt>
+            <dd className="mt-1 font-medium text-ink">{sample.file_status}</dd>
+          </div>
+          <div className="rounded-lg border border-line px-3 py-2">
+            <dt className="text-gray-500">划分</dt>
+            <dd className="mt-1 font-medium text-ink">{sample.split || "未设置"}</dd>
+          </div>
           <div className="col-span-2 rounded-lg border border-line px-3 py-2">
             <dt className="text-gray-500">相对路径</dt>
             <dd className="mt-1 break-all font-medium text-ink">{sample.relative_path}</dd>
@@ -83,6 +137,19 @@ export default function SampleDetailPanel({ sample, saving, onClose, onSave }: S
         </dl>
 
         <div className="mt-5 space-y-4">
+          {Object.keys(sample.metadata).length > 0 && (
+            <div className="rounded-lg border border-line p-3">
+              <div className="text-sm font-medium text-gray-700">元数据</div>
+              <dl className="mt-2 space-y-1 text-sm">
+                {Object.entries(sample.metadata).map(([key, value]) => (
+                  <div key={key} className="grid grid-cols-[110px_1fr] gap-2">
+                    <dt className="truncate text-gray-500">{key}</dt>
+                    <dd className="min-w-0 break-all text-gray-800">{String(value ?? "")}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          )}
           <label className="block">
             <span className="text-sm font-medium text-gray-700">划分</span>
             <select
@@ -96,12 +163,12 @@ export default function SampleDetailPanel({ sample, saving, onClose, onSave }: S
               <option value="test">test</option>
             </select>
           </label>
-          <label className="block">
-            <span className="text-sm font-medium text-gray-700">标签</span>
+          <div className="block">
+            <div className="text-sm font-medium text-gray-700">标签</div>
             <div className="mt-2">
-              <TagEditor tags={tags} onChange={setTags} />
+              <TagEditor tags={tags} options={availableTags} onChange={setTags} />
             </div>
-          </label>
+          </div>
           <label className="block">
             <span className="text-sm font-medium text-gray-700">备注</span>
             <textarea

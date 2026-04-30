@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import datasets, samples
+from app.api import datasets, filesystem, samples
 from app.core.config import get_settings
 from app.core.database import init_db
 
@@ -28,6 +28,7 @@ app.add_middleware(
 )
 
 app.include_router(datasets.router)
+app.include_router(filesystem.router)
 app.include_router(samples.router)
 
 

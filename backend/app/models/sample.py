@@ -34,8 +34,12 @@ class Sample(SQLModel, table=True):
     file_type: str = Field(index=True, max_length=32)
     mime_type: str | None = Field(default=None, max_length=120)
     file_hash: str = Field(index=True, max_length=128)
+    file_status: str = Field(default="normal", index=True, max_length=40)
+    file_modified_at: datetime | None = Field(default=None)
+    last_scanned_at: datetime | None = Field(default=None)
     split: str | None = Field(default=None, max_length=40)
     notes: str | None = Field(default=None, max_length=4000)
+    metadata_json: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 

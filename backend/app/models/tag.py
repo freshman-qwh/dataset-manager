@@ -22,6 +22,9 @@ class Tag(SQLModel, table=True):
     dataset_id: int = Field(foreign_key="datasets.id", index=True)
     name: str = Field(index=True, min_length=1, max_length=80)
     color: str | None = Field(default=None, max_length=32)
+    description: str | None = Field(default=None, max_length=1000)
+    parent_id: int | None = Field(default=None, index=True)
+    aliases_json: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=utc_now)
 
     dataset: "Dataset" = Relationship(back_populates="tags")

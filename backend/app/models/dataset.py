@@ -20,6 +20,12 @@ class Dataset(SQLModel, table=True):
     description: str | None = Field(default=None, max_length=2000)
     task_type: str | None = Field(default="classification", max_length=80)
     root_path: str | None = Field(default=None, max_length=2000)
+    source: str | None = Field(default=None, max_length=500)
+    modality: str | None = Field(default=None, max_length=120)
+    license: str | None = Field(default=None, max_length=160)
+    owner: str | None = Field(default=None, max_length=160)
+    project: str | None = Field(default=None, max_length=160)
+    notes: str | None = Field(default=None, max_length=4000)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 

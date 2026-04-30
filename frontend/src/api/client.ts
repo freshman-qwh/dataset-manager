@@ -4,9 +4,21 @@ import type {
   Dataset,
   DatasetCreate,
   DatasetStats,
+  DirectoryListResponse,
+  DuplicateReport,
+  ExportTemplateResponse,
+  BatchSampleUpdate,
+  BatchSampleUpdateResult,
+  MetadataImportRequest,
+  MetadataImportResult,
   Sample,
+  SampleListResponse,
+  SampleQuery,
+  SamplePreview,
   SampleUpdate,
-  ScanResult
+  ScanResult,
+  Tag,
+  TagCreate
 } from "../types/dataset";
 
 export const API_BASE_URL =
@@ -27,8 +39,56 @@ export async function createDataset(payload: DatasetCreate): Promise<Dataset> {
   return data;
 }
 
+export async function updateDataset(datasetId: number, payload: Partial<DatasetCreate>): Promise<Dataset> {
+  const { data } = await client.patch<Dataset>(`/datasets/${datasetId}`, payload);
+  return data;
+}
+
+export async function deleteDataset(datasetId: number): Promise<void> {
+  await client.delete(`/datasets/${datasetId}`);
+}
+
 export async function getDataset(datasetId: number): Promise<Dataset> {
   const { data } = await client.get<Dataset>(`/datasets/${datasetId}`);
+  return data;
+}
+
+export async function listDirectories(path?: string): Promise<DirectoryListResponse> {
+  const { data } = await client.get<DirectoryListResponse>("/filesystem/directories", {
+    params: { path: path || undefined }
+  });
+  return data;
+}
+
+export async function getDuplicateReport(datasetId: number): Promise<DuplicateReport> {
+  const { data } = await client.get<DuplicateReport>(`/datasets/${datasetId}/duplicates`);
+  return data;
+}
+
+export async function listTags(datasetId: number): Promise<Tag[]> {
+  const { data } = await client.get<Tag[]>(`/datasets/${datasetId}/tags`);
+  return data;
+}
+
+export async function createTag(datasetId: number, payload: TagCreate): Promise<Tag> {
+  const { data } = await client.post<Tag>(`/datasets/${datasetId}/tags`, payload);
+  return data;
+}
+
+export async function updateTag(tagId: number, payload: Partial<TagCreate>): Promise<Tag> {
+  const { data } = await client.patch<Tag>(`/tags/${tagId}`, payload);
+  return data;
+}
+
+export async function deleteTag(tagId: number): Promise<void> {
+  await client.delete(`/tags/${tagId}`);
+}
+
+export async function importMetadata(
+  datasetId: number,
+  payload: MetadataImportRequest
+): Promise<MetadataImportResult> {
+  const { data } = await client.post<MetadataImportResult>(`/datasets/${datasetId}/import-metadata`, payload);
   return data;
 }
 
@@ -39,18 +99,18 @@ export async function scanDataset(datasetId: number, folderPath: string): Promis
   return data;
 }
 
-export async function listSamples(params: {
-  datasetId: number;
-  search?: string;
-  fileType?: string;
-  tag?: string;
-}): Promise<Sample[]> {
-  const { datasetId, search, fileType, tag } = params;
-  const { data } = await client.get<Sample[]>(`/datasets/${datasetId}/samples`, {
+export async function listSamples(params: SampleQuery): Promise<SampleListResponse> {
+  const { datasetId, search, fileType, tag, split, page, pageSize, sortBy, sortOrder } = params;
+  const { data } = await client.get<SampleListResponse>(`/datasets/${datasetId}/samples`, {
     params: {
       search: search || undefined,
       file_type: fileType || undefined,
-      tag: tag || undefined
+      tag: tag || undefined,
+      split: split || undefined,
+      page,
+      page_size: pageSize,
+      sort_by: sortBy,
+      sort_order: sortOrder
     }
   });
   return data;
@@ -66,6 +126,19 @@ export async function updateSample(sampleId: number, payload: SampleUpdate): Pro
   return data;
 }
 
+export async function batchUpdateSamples(
+  datasetId: number,
+  payload: BatchSampleUpdate
+): Promise<BatchSampleUpdateResult> {
+  const { data } = await client.patch<BatchSampleUpdateResult>(`/datasets/${datasetId}/samples/batch`, payload);
+  return data;
+}
+
+export async function getSamplePreview(sampleId: number): Promise<SamplePreview> {
+  const { data } = await client.get<SamplePreview>(`/samples/${sampleId}/preview`);
+  return data;
+}
+
 export async function getDatasetStats(datasetId: number): Promise<DatasetStats> {
   const { data } = await client.get<DatasetStats>(`/stats/datasets/${datasetId}`);
   return data;
@@ -75,6 +148,38 @@ export function getSampleFileUrl(sampleId: number): string {
   return `${API_BASE_URL}/samples/${sampleId}/file`;
 }
 
-export function getManifestUrl(datasetId: number): string {
-  return `${API_BASE_URL}/datasets/${datasetId}/export-manifest`;
+export function getManifestUrl(datasetId: number, params?: Omit<SampleQuery, "datasetId" | "page" | "pageSize">): string {
+  const searchParams = new URLSearchParams();
+  if (params?.search) {
+    searchParams.set("search", params.search);
+  }
+  if (params?.fileType) {
+    searchParams.set("file_type", params.fileType);
+  }
+  if (params?.tag) {
+    searchParams.set("tag", params.tag);
+  }
+  if (params?.split) {
+    searchParams.set("split", params.split);
+  }
+  if (params?.sortBy) {
+    searchParams.set("sort_by", params.sortBy);
+  }
+  if (params?.sortOrder) {
+    searchParams.set("sort_order", params.sortOrder);
+  }
+  const query = searchParams.toString();
+  return `${API_BASE_URL}/datasets/${datasetId}/export-manifest${query ? `?${query}` : ""}`;
+}
+
+export function getExportTemplateUrl(datasetId: number, format: string): string {
+  const searchParams = new URLSearchParams({ format });
+  return `${API_BASE_URL}/datasets/${datasetId}/export-template?${searchParams.toString()}`;
+}
+
+export async function getExportTemplate(datasetId: number, format: string): Promise<ExportTemplateResponse> {
+  const { data } = await client.get<ExportTemplateResponse>(`/datasets/${datasetId}/export-template`, {
+    params: { format }
+  });
+  return data;
 }

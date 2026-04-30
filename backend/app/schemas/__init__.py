@@ -1,4 +1,8 @@
 from app.schemas.dataset import DatasetCreate, DatasetRead, DatasetUpdate
+from app.schemas.duplicates import DuplicateGroup, DuplicateReport
+from app.schemas.export_template import ExportTemplateResponse
+from app.schemas.filesystem import DirectoryEntry, DirectoryListResponse
+from app.schemas.metadata_import import MetadataImportRequest, MetadataImportResult
 from app.schemas.sample import SampleRead, SampleUpdate
 from app.schemas.scan import ScanRequest, ScanResult
 from app.schemas.stats import DatasetStats
@@ -8,6 +12,13 @@ __all__ = [
     "DatasetCreate",
     "DatasetRead",
     "DatasetUpdate",
+    "DuplicateGroup",
+    "DuplicateReport",
+    "DirectoryEntry",
+    "DirectoryListResponse",
+    "ExportTemplateResponse",
+    "MetadataImportRequest",
+    "MetadataImportResult",
     "DatasetStats",
     "SampleRead",
     "SampleUpdate",
