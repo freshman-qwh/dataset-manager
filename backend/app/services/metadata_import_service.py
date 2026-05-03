@@ -9,10 +9,20 @@ from app.models.dataset import utc_now
 from app.models.sample import Sample
 from app.schemas.metadata_import import MetadataImportRequest, MetadataImportResult
 from app.services.dataset_service import get_dataset_or_404
-from app.services.sample_service import _clean_tag_names, _get_or_create_tag
+from app.services.sample_service import _clean_tag_names, _get_or_create_tag, _validate_review_status
 from app.utils.paths import resolve_local_path
 
-RESERVED_COLUMNS = {"sample_id", "relative_path", "absolute_path", "filename", "file_hash", "tags", "split", "notes"}
+RESERVED_COLUMNS = {
+    "sample_id",
+    "relative_path",
+    "absolute_path",
+    "filename",
+    "file_hash",
+    "tags",
+    "split",
+    "review_status",
+    "notes",
+}
 SUPPORTED_MATCH_FIELDS = {"sample_id", "relative_path", "absolute_path", "filename", "file_hash"}
 
 
@@ -225,6 +235,10 @@ def _apply_row(
     if "split" in row:
         split = str(row.get("split") or "").strip()
         sample.split = split or None
+    if "review_status" in row:
+        review_status = str(row.get("review_status") or "").strip()
+        if review_status:
+            sample.review_status = _validate_review_status(review_status)
     if "notes" in row:
         notes = str(row.get("notes") or "").strip()
         sample.notes = notes or None

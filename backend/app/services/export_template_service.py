@@ -35,11 +35,12 @@ def export_template(session: Session, dataset_id: int, template_format: str) -> 
 
 def _csv_payload(samples) -> dict[str, object]:
     return {
-        "columns": ["relative_path", "split", "tags", "notes", "file_type", "file_hash", "metadata"],
+        "columns": ["relative_path", "split", "review_status", "tags", "notes", "file_type", "file_hash", "metadata"],
         "rows": [
             {
                 "relative_path": sample.relative_path,
                 "split": sample.split,
+                "review_status": sample.review_status,
                 "tags": [tag.name for tag in sample.tags],
                 "notes": sample.notes,
                 "file_type": sample.file_type,

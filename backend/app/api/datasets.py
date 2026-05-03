@@ -6,8 +6,17 @@ from app.schemas.dataset import DatasetCreate, DatasetRead, DatasetUpdate
 from app.schemas.duplicates import DuplicateReport
 from app.schemas.export_template import ExportTemplateResponse
 from app.schemas.metadata_import import MetadataImportRequest, MetadataImportResult
-from app.schemas.sample import BatchSampleUpdate, BatchSampleUpdateResult, SampleListResponse
+from app.schemas.sample import (
+    BatchSampleDelete,
+    BatchSampleUpdate,
+    BatchSampleUpdateResult,
+    MissingSampleRepairRequest,
+    MissingSampleRepairResult,
+    SampleDeleteResult,
+    SampleListResponse,
+)
 from app.schemas.scan import ScanRequest, ScanResult
+from app.schemas.split import SplitPlanRequest, SplitPlanResult
 from app.schemas.stats import DatasetStats
 from app.schemas.tag import TagCreate, TagRead
 from app.services import (
@@ -18,6 +27,7 @@ from app.services import (
     metadata_import_service,
     sample_service,
     scan_service,
+    split_service,
     stats_service,
     tag_service,
 )
@@ -72,8 +82,10 @@ def list_dataset_samples(
     dataset_id: int,
     search: str | None = Query(default=None),
     file_type: str | None = Query(default=None),
+    file_status: str | None = Query(default=None),
     tag: str | None = Query(default=None),
     split: str | None = Query(default=None),
+    review_status: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=60, ge=1, le=200),
     sort_by: str = Query(default="created_at"),
@@ -86,8 +98,10 @@ def list_dataset_samples(
         dataset_id,
         search,
         file_type,
+        file_status,
         tag,
         split,
+        review_status,
         page,
         page_size,
         sort_by,
@@ -103,6 +117,34 @@ def batch_update_dataset_samples(
 ) -> BatchSampleUpdateResult:
     dataset_service.get_dataset_or_404(session, dataset_id)
     return sample_service.batch_update_samples(session, dataset_id, payload)
+
+
+@router.post("/datasets/{dataset_id}/split-plan", response_model=SplitPlanResult)
+def apply_dataset_split_plan(
+    dataset_id: int,
+    payload: SplitPlanRequest,
+    session: Session = Depends(get_session),
+) -> SplitPlanResult:
+    return split_service.apply_split_plan(session, dataset_id, payload)
+
+
+@router.post("/datasets/{dataset_id}/samples/delete", response_model=SampleDeleteResult)
+def delete_dataset_samples(
+    dataset_id: int,
+    payload: BatchSampleDelete,
+    session: Session = Depends(get_session),
+) -> SampleDeleteResult:
+    dataset_service.get_dataset_or_404(session, dataset_id)
+    return sample_service.delete_samples(session, dataset_id, payload.sample_ids)
+
+
+@router.post("/datasets/{dataset_id}/repair-missing", response_model=MissingSampleRepairResult)
+def repair_dataset_missing_samples(
+    dataset_id: int,
+    payload: MissingSampleRepairRequest,
+    session: Session = Depends(get_session),
+) -> MissingSampleRepairResult:
+    return sample_service.repair_missing_samples(session, dataset_id, payload)
 
 
 @router.get("/datasets/{dataset_id}/duplicates", response_model=DuplicateReport)
@@ -145,8 +187,10 @@ def export_dataset_manifest(
     dataset_id: int,
     search: str | None = Query(default=None),
     file_type: str | None = Query(default=None),
+    file_status: str | None = Query(default=None),
     tag: str | None = Query(default=None),
     split: str | None = Query(default=None),
+    review_status: str | None = Query(default=None),
     sample_ids: list[int] | None = Query(default=None),
     sort_by: str = Query(default="relative_path"),
     sort_order: str = Query(default="asc", pattern="^(asc|desc)$"),
@@ -157,8 +201,10 @@ def export_dataset_manifest(
         dataset_id,
         search=search,
         file_type=file_type,
+        file_status=file_status,
         tag=tag,
         split=split,
+        review_status=review_status,
         sample_ids=sample_ids,
         sort_by=sort_by,
         sort_order=sort_order,

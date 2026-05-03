@@ -5,7 +5,7 @@ from fastapi.responses import FileResponse
 from sqlmodel import Session
 
 from app.core.database import get_session
-from app.schemas.sample import SamplePreview, SampleRead, SampleUpdate
+from app.schemas.sample import SampleDeleteResult, SamplePreview, SampleRead, SampleRepairRequest, SampleUpdate
 from app.schemas.tag import TagRead, TagUpdate
 from app.services import sample_service, tag_service
 
@@ -24,6 +24,20 @@ def update_sample(
     session: Session = Depends(get_session),
 ) -> SampleRead:
     return sample_service.update_sample(session, sample_id, payload)
+
+
+@router.delete("/samples/{sample_id}", response_model=SampleDeleteResult)
+def delete_sample(sample_id: int, session: Session = Depends(get_session)) -> SampleDeleteResult:
+    return sample_service.delete_sample(session, sample_id)
+
+
+@router.patch("/samples/{sample_id}/repair", response_model=SampleRead)
+def repair_sample_file(
+    sample_id: int,
+    payload: SampleRepairRequest,
+    session: Session = Depends(get_session),
+) -> SampleRead:
+    return sample_service.repair_sample_file(session, sample_id, payload)
 
 
 @router.patch("/tags/{tag_id}", response_model=TagRead)

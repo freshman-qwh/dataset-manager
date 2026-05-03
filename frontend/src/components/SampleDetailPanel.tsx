@@ -1,4 +1,4 @@
-import { Save, X } from "lucide-react";
+import { Save, Trash2, Wrench, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { getSampleFileUrl, getSamplePreview } from "../api/client";
@@ -9,8 +9,12 @@ interface SampleDetailPanelProps {
   sample: Sample | null;
   availableTags: Tag[];
   saving: boolean;
+  repairing: boolean;
+  deleting: boolean;
   onClose: () => void;
   onSave: (payload: { split: string | null; notes: string | null; tags: string[] }) => Promise<void>;
+  onRepair: (filePath: string) => Promise<void>;
+  onDelete: () => Promise<void>;
 }
 
 function formatBytes(value: number): string {
@@ -23,16 +27,28 @@ function formatBytes(value: number): string {
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export default function SampleDetailPanel({ sample, availableTags, saving, onClose, onSave }: SampleDetailPanelProps) {
+export default function SampleDetailPanel({
+  sample,
+  availableTags,
+  saving,
+  repairing,
+  deleting,
+  onClose,
+  onSave,
+  onRepair,
+  onDelete
+}: SampleDetailPanelProps) {
   const [split, setSplit] = useState("");
   const [notes, setNotes] = useState("");
   const [tags, setTags] = useState<string[]>([]);
+  const [repairPath, setRepairPath] = useState("");
   const [preview, setPreview] = useState<SamplePreview | null>(null);
 
   useEffect(() => {
     setSplit(sample?.split ?? "");
     setNotes(sample?.notes ?? "");
     setTags(sample?.tags.map((tag) => tag.name) ?? []);
+    setRepairPath(sample?.absolute_path ?? "");
     setPreview(null);
     if (sample) {
       void getSamplePreview(sample.id).then(setPreview).catch(() => {
@@ -163,6 +179,29 @@ export default function SampleDetailPanel({ sample, availableTags, saving, onClo
               <option value="test">test</option>
             </select>
           </label>
+          {(sample.file_status === "missing" || sample.file_status === "permission_denied") && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <div className="text-sm font-medium text-amber-800">重新定位缺失文件</div>
+              <div className="mt-2 flex gap-2">
+                <input
+                  value={repairPath}
+                  onChange={(event) => setRepairPath(event.target.value)}
+                  className="min-w-0 flex-1 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-amber-700"
+                  placeholder="D:/dataset/new-path/sample.jpg"
+                />
+                <button
+                  type="button"
+                  onClick={() => onRepair(repairPath.trim())}
+                  disabled={repairing || !repairPath.trim()}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:cursor-not-allowed disabled:bg-amber-200"
+                >
+                  <Wrench size={16} />
+                  {repairing ? "修复中" : "修复"}
+                </button>
+              </div>
+              <div className="mt-2 text-xs text-amber-800">只更新数据库中的路径和文件元数据，不移动或删除本地文件。</div>
+            </div>
+          )}
           <div className="block">
             <div className="text-sm font-medium text-gray-700">标签</div>
             <div className="mt-2">
@@ -180,15 +219,26 @@ export default function SampleDetailPanel({ sample, availableTags, saving, onClo
         </div>
       </div>
       <div className="border-t border-line px-5 py-4">
-        <button
-          type="button"
-          onClick={() => onSave({ split: split || null, notes: notes || null, tags })}
-          disabled={saving}
-          className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
-        >
-          <Save size={17} />
-          {saving ? "保存中" : "保存更改"}
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={deleting || saving || repairing}
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 px-3 py-2.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-red-200"
+          >
+            <Trash2 size={17} />
+            {deleting ? "删除中" : "删记录"}
+          </button>
+          <button
+            type="button"
+            onClick={() => onSave({ split: split || null, notes: notes || null, tags })}
+            disabled={saving || deleting || repairing}
+            className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
+          >
+            <Save size={17} />
+            {saving ? "保存中" : "保存更改"}
+          </button>
+        </div>
       </div>
     </aside>
   );

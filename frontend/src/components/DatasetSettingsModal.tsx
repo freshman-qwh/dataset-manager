@@ -33,6 +33,7 @@ export default function DatasetSettingsModal({
   const [license, setLicense] = useState("");
   const [description, setDescription] = useState("");
   const [notes, setNotes] = useState("");
+  const [autoScanOnOpen, setAutoScanOnOpen] = useState(false);
   const [confirmName, setConfirmName] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -50,6 +51,7 @@ export default function DatasetSettingsModal({
     setLicense(dataset.license || "");
     setDescription(dataset.description || "");
     setNotes(dataset.notes || "");
+    setAutoScanOnOpen(dataset.auto_scan_on_open);
     setConfirmName("");
   }, [dataset, open]);
 
@@ -68,7 +70,8 @@ export default function DatasetSettingsModal({
       modality: modality.trim() || null,
       license: license.trim() || null,
       description: description.trim() || null,
-      notes: notes.trim() || null
+      notes: notes.trim() || null,
+      auto_scan_on_open: autoScanOnOpen
     });
   }
 
@@ -148,6 +151,23 @@ export default function DatasetSettingsModal({
           <span className="text-sm font-medium text-gray-700">备注</span>
           <textarea value={notes} onChange={(event) => setNotes(event.target.value)} className="mt-2 min-h-24 w-full rounded-lg border border-line px-3 py-2.5 text-sm outline-none transition focus:border-gray-900" />
         </label>
+
+        <div className="rounded-lg border border-line bg-gray-50 p-3">
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              checked={autoScanOnOpen}
+              onChange={(event) => setAutoScanOnOpen(event.target.checked)}
+              className="mt-1"
+            />
+            <span>
+              <span className="block text-sm font-medium text-gray-800">打开数据集时自动扫描</span>
+              <span className="mt-1 block text-xs text-gray-500">
+                进入详情页后用当前扫描目录做一次增量扫描，用于及时标记缺失或变更文件。大目录会增加打开耗时。
+              </span>
+            </span>
+          </label>
+        </div>
 
         <div className="rounded-lg border border-red-200 bg-red-50 p-3">
           <div className="text-sm font-medium text-red-800">删除数据集元数据</div>

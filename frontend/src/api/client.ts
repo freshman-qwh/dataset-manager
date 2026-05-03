@@ -9,14 +9,19 @@ import type {
   ExportTemplateResponse,
   BatchSampleUpdate,
   BatchSampleUpdateResult,
+  MissingSampleRepairRequest,
+  MissingSampleRepairResult,
   MetadataImportRequest,
   MetadataImportResult,
   Sample,
+  SampleDeleteResult,
   SampleListResponse,
   SampleQuery,
   SamplePreview,
   SampleUpdate,
   ScanResult,
+  SplitPlanRequest,
+  SplitPlanResult,
   Tag,
   TagCreate
 } from "../types/dataset";
@@ -100,13 +105,15 @@ export async function scanDataset(datasetId: number, folderPath: string): Promis
 }
 
 export async function listSamples(params: SampleQuery): Promise<SampleListResponse> {
-  const { datasetId, search, fileType, tag, split, page, pageSize, sortBy, sortOrder } = params;
+  const { datasetId, search, fileType, fileStatus, tag, split, reviewStatus, page, pageSize, sortBy, sortOrder } = params;
   const { data } = await client.get<SampleListResponse>(`/datasets/${datasetId}/samples`, {
     params: {
       search: search || undefined,
       file_type: fileType || undefined,
+      file_status: fileStatus || undefined,
       tag: tag || undefined,
       split: split || undefined,
+      review_status: reviewStatus || undefined,
       page,
       page_size: pageSize,
       sort_by: sortBy,
@@ -126,11 +133,43 @@ export async function updateSample(sampleId: number, payload: SampleUpdate): Pro
   return data;
 }
 
+export async function deleteSample(sampleId: number): Promise<SampleDeleteResult> {
+  const { data } = await client.delete<SampleDeleteResult>(`/samples/${sampleId}`);
+  return data;
+}
+
+export async function repairSample(sampleId: number, filePath: string): Promise<Sample> {
+  const { data } = await client.patch<Sample>(`/samples/${sampleId}/repair`, {
+    file_path: filePath
+  });
+  return data;
+}
+
 export async function batchUpdateSamples(
   datasetId: number,
   payload: BatchSampleUpdate
 ): Promise<BatchSampleUpdateResult> {
   const { data } = await client.patch<BatchSampleUpdateResult>(`/datasets/${datasetId}/samples/batch`, payload);
+  return data;
+}
+
+export async function applySplitPlan(datasetId: number, payload: SplitPlanRequest): Promise<SplitPlanResult> {
+  const { data } = await client.post<SplitPlanResult>(`/datasets/${datasetId}/split-plan`, payload);
+  return data;
+}
+
+export async function deleteSamples(datasetId: number, sampleIds: number[]): Promise<SampleDeleteResult> {
+  const { data } = await client.post<SampleDeleteResult>(`/datasets/${datasetId}/samples/delete`, {
+    sample_ids: sampleIds
+  });
+  return data;
+}
+
+export async function repairMissingSamples(
+  datasetId: number,
+  payload: MissingSampleRepairRequest
+): Promise<MissingSampleRepairResult> {
+  const { data } = await client.post<MissingSampleRepairResult>(`/datasets/${datasetId}/repair-missing`, payload);
   return data;
 }
 
@@ -156,11 +195,17 @@ export function getManifestUrl(datasetId: number, params?: Omit<SampleQuery, "da
   if (params?.fileType) {
     searchParams.set("file_type", params.fileType);
   }
+  if (params?.fileStatus) {
+    searchParams.set("file_status", params.fileStatus);
+  }
   if (params?.tag) {
     searchParams.set("tag", params.tag);
   }
   if (params?.split) {
     searchParams.set("split", params.split);
+  }
+  if (params?.reviewStatus) {
+    searchParams.set("review_status", params.reviewStatus);
   }
   if (params?.sortBy) {
     searchParams.set("sort_by", params.sortBy);

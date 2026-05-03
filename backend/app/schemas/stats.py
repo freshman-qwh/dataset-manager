@@ -9,6 +9,8 @@ class DatasetStats(BaseModel):
     by_extension: dict[str, int]
     by_status: dict[str, int]
     by_split: dict[str, int]
+    by_review_status: dict[str, int]
     tag_counts: dict[str, int]
     duplicate_groups: int = 0
     duplicate_samples: int = 0
+    unlabeled_samples: int = 0

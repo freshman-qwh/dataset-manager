@@ -14,6 +14,7 @@ class DatasetCreate(BaseModel):
     owner: str | None = Field(default=None, max_length=160)
     project: str | None = Field(default=None, max_length=160)
     notes: str | None = Field(default=None, max_length=4000)
+    auto_scan_on_open: bool = False
 
 
 class DatasetUpdate(BaseModel):
@@ -27,6 +28,7 @@ class DatasetUpdate(BaseModel):
     owner: str | None = Field(default=None, max_length=160)
     project: str | None = Field(default=None, max_length=160)
     notes: str | None = Field(default=None, max_length=4000)
+    auto_scan_on_open: bool | None = None
 
 
 class DatasetRead(BaseModel):
@@ -43,6 +45,7 @@ class DatasetRead(BaseModel):
     owner: str | None
     project: str | None
     notes: str | None
+    auto_scan_on_open: bool
     sample_count: int = 0
     created_at: datetime
     updated_at: datetime

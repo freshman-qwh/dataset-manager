@@ -19,12 +19,14 @@ DATASET_COLUMNS = {
     "owner": "VARCHAR(160)",
     "project": "VARCHAR(160)",
     "notes": "VARCHAR(4000)",
+    "auto_scan_on_open": "BOOLEAN DEFAULT 0",
 }
 
 SAMPLE_COLUMNS = {
     "file_status": "VARCHAR(40) DEFAULT 'normal'",
     "file_modified_at": "DATETIME",
     "last_scanned_at": "DATETIME",
+    "review_status": "VARCHAR(40) DEFAULT 'unlabeled'",
     "metadata_json": "TEXT",
 }
 

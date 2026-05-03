@@ -7,6 +7,7 @@ from app.schemas.tag import TagRead
 
 class SampleUpdate(BaseModel):
     split: str | None = Field(default=None, max_length=40)
+    review_status: str | None = Field(default=None, max_length=40)
     notes: str | None = Field(default=None, max_length=4000)
     tags: list[str] | None = None
 
@@ -14,6 +15,7 @@ class SampleUpdate(BaseModel):
 class BatchSampleUpdate(BaseModel):
     sample_ids: list[int] = Field(min_length=1)
     split: str | None = Field(default=None, max_length=40)
+    review_status: str | None = Field(default=None, max_length=40)
     add_tags: list[str] | None = None
     replace_tags: list[str] | None = None
 
@@ -23,6 +25,35 @@ class BatchSampleUpdateResult(BaseModel):
     requested: int
     updated: int
     skipped: int
+
+
+class BatchSampleDelete(BaseModel):
+    sample_ids: list[int] = Field(min_length=1)
+
+
+class SampleDeleteResult(BaseModel):
+    dataset_id: int
+    requested: int
+    deleted: int
+    skipped: int
+
+
+class SampleRepairRequest(BaseModel):
+    file_path: str = Field(min_length=1)
+
+
+class MissingSampleRepairRequest(BaseModel):
+    root_path: str = Field(min_length=1)
+    update_dataset_root: bool = True
+
+
+class MissingSampleRepairResult(BaseModel):
+    dataset_id: int
+    root_path: str
+    checked: int
+    repaired: int
+    skipped: int
+    errors: list[str] = Field(default_factory=list)
 
 
 class SamplePreview(BaseModel):
@@ -53,6 +84,7 @@ class SampleRead(BaseModel):
     file_modified_at: datetime | None
     last_scanned_at: datetime | None
     split: str | None
+    review_status: str
     notes: str | None
     metadata: dict[str, object] = Field(default_factory=dict)
     tags: list[TagRead] = Field(default_factory=list)

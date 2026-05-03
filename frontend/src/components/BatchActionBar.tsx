@@ -1,10 +1,12 @@
-import { CheckSquare, Tags } from "lucide-react";
+import { CheckSquare, Trash2, Tags } from "lucide-react";
 import { useState } from "react";
 
 interface BatchActionBarProps {
   selectedCount: number;
   busy: boolean;
+  deleting: boolean;
   onApply: (payload: { split: string | null; addTags: string[] }) => Promise<void>;
+  onDelete: () => Promise<void>;
   onClear: () => void;
 }
 
@@ -15,7 +17,7 @@ function parseTags(value: string): string[] {
     .filter(Boolean);
 }
 
-export default function BatchActionBar({ selectedCount, busy, onApply, onClear }: BatchActionBarProps) {
+export default function BatchActionBar({ selectedCount, busy, deleting, onApply, onDelete, onClear }: BatchActionBarProps) {
   const [split, setSplit] = useState("");
   const [tags, setTags] = useState("");
 
@@ -67,10 +69,19 @@ export default function BatchActionBar({ selectedCount, busy, onApply, onClear }
         <button
           type="button"
           onClick={handleApply}
-          disabled={busy || (!split && parseTags(tags).length === 0)}
+          disabled={busy || deleting || (!split && parseTags(tags).length === 0)}
           className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
         >
           {busy ? "应用中" : "应用"}
+        </button>
+        <button
+          type="button"
+          onClick={onDelete}
+          disabled={busy || deleting}
+          className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-red-200"
+        >
+          <Trash2 size={16} />
+          {deleting ? "删除中" : "删除记录"}
         </button>
       </div>
     </div>

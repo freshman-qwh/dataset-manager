@@ -3,20 +3,27 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
+  CheckSquare,
+  ClipboardCheck,
   Database,
   FileText,
   HardDrive,
   Image as ImageIcon,
+  RefreshCw,
   Settings,
+  Square,
   Tags,
   Video
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import {
+  applySplitPlan,
   batchUpdateSamples,
   deleteDataset,
+  deleteSample,
+  deleteSamples,
   getDuplicateReport,
   getDataset,
   getDatasetStats,
@@ -26,21 +33,39 @@ import {
   listTags,
   listSamples,
   scanDataset,
+  repairMissingSamples,
+  repairSample,
   updateDataset,
   updateSample
 } from "../api/client";
 import BatchActionBar from "../components/BatchActionBar";
+import DatasetActionMenu from "../components/DatasetActionMenu";
+import DatasetIssueModal from "../components/DatasetIssueModal";
+import DatasetQualityModal from "../components/DatasetQualityModal";
 import DatasetSettingsModal from "../components/DatasetSettingsModal";
 import ExportPreviewModal, { type ExportPreview } from "../components/ExportPreviewModal";
 import MetadataImportModal from "../components/MetadataImportModal";
+import MissingRepairModal from "../components/MissingRepairModal";
 import SampleDetailPanel from "../components/SampleDetailPanel";
 import SampleGrid from "../components/SampleGrid";
 import ScanModal from "../components/ScanModal";
 import SearchFilterBar from "../components/SearchFilterBar";
+import SplitPlanModal from "../components/SplitPlanModal";
 import StatCard from "../components/StatCard";
 import TagManagerModal from "../components/TagManagerModal";
+import TagStatsModal from "../components/TagStatsModal";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
-import type { Dataset, DatasetStats, DuplicateReport, Sample, ScanResult, Tag } from "../types/dataset";
+import type {
+  Dataset,
+  DatasetStats,
+  DuplicateReport,
+  MissingSampleRepairResult,
+  Sample,
+  ScanResult,
+  SplitPlanRequest,
+  SplitPlanResult,
+  Tag
+} from "../types/dataset";
 
 function formatBytes(value: number): string {
   if (value < 1024) {
@@ -100,6 +125,7 @@ export default function DatasetDetailPage() {
   const [lastScanResult, setLastScanResult] = useState<ScanResult | null>(null);
   const [search, setSearch] = useState("");
   const [fileType, setFileType] = useState("");
+  const [fileStatus, setFileStatus] = useState("");
   const [tag, setTag] = useState("");
   const [split, setSplit] = useState("");
   const [page, setPage] = useState(1);
@@ -110,14 +136,26 @@ export default function DatasetDetailPage() {
   const [scanOpen, setScanOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
+  const [tagStatsOpen, setTagStatsOpen] = useState(false);
   const [metadataImportOpen, setMetadataImportOpen] = useState(false);
+  const [missingRepairOpen, setMissingRepairOpen] = useState(false);
+  const [splitPlanOpen, setSplitPlanOpen] = useState(false);
+  const [qualityOpen, setQualityOpen] = useState(false);
+  const [issueModal, setIssueModal] = useState<"missing" | "duplicate" | null>(null);
   const [exportPreview, setExportPreview] = useState<ExportPreview | null>(null);
   const [scanning, setScanning] = useState(false);
   const [saving, setSaving] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [deletingDataset, setDeletingDataset] = useState(false);
   const [batchBusy, setBatchBusy] = useState(false);
+  const [deletingSamples, setDeletingSamples] = useState(false);
+  const [repairingSample, setRepairingSample] = useState(false);
+  const [repairingMissing, setRepairingMissing] = useState(false);
+  const [applyingSplitPlan, setApplyingSplitPlan] = useState(false);
+  const [missingRepairResult, setMissingRepairResult] = useState<MissingSampleRepairResult | null>(null);
+  const [splitPlanResult, setSplitPlanResult] = useState<SplitPlanResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const autoScannedDatasetIds = useRef<Set<number>>(new Set());
   const debouncedSearch = useDebouncedValue(search);
   const debouncedTag = useDebouncedValue(tag);
 
@@ -139,6 +177,7 @@ export default function DatasetDetailPage() {
       datasetId,
       search: debouncedSearch,
       fileType,
+      fileStatus,
       tag: debouncedTag,
       split,
       page,
@@ -151,7 +190,7 @@ export default function DatasetDetailPage() {
     if (nextSamples.page !== page) {
       setPage(nextSamples.page);
     }
-  }, [datasetId, debouncedSearch, debouncedTag, fileType, split, page, pageSize, sortBy, sortOrder]);
+  }, [datasetId, debouncedSearch, debouncedTag, fileType, fileStatus, split, page, pageSize, sortBy, sortOrder]);
 
   useEffect(() => {
     if (!Number.isFinite(datasetId)) {
@@ -171,13 +210,38 @@ export default function DatasetDetailPage() {
   const imageCount = stats?.by_file_type.image ?? 0;
   const videoCount = stats?.by_file_type.video ?? 0;
   const missingCount = stats?.by_status.missing ?? 0;
+  const permissionDeniedCount = stats?.by_status.permission_denied ?? 0;
+  const unavailableCount = missingCount + permissionDeniedCount;
   const duplicateSampleCount = stats?.duplicate_samples ?? 0;
+  const duplicateGroupCount = stats?.duplicate_groups ?? 0;
   const tagCount = useMemo(() => Object.keys(stats?.tag_counts ?? {}).length, [stats]);
+  const visibleSampleIds = useMemo(() => samples.map((sample) => sample.id), [samples]);
+  const selectedVisibleCount = useMemo(
+    () => visibleSampleIds.filter((sampleId) => selectedSampleIds.has(sampleId)).length,
+    [selectedSampleIds, visibleSampleIds]
+  );
+  const allVisibleSelected = visibleSampleIds.length > 0 && selectedVisibleCount === visibleSampleIds.length;
   const pageCount = Math.max(Math.ceil(sampleTotal / pageSize), 1);
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, debouncedTag, fileType, split, sortBy, sortOrder]);
+  }, [debouncedSearch, debouncedTag, fileType, fileStatus, split, sortBy, sortOrder]);
+
+  useEffect(() => {
+    if (!dataset?.auto_scan_on_open || !dataset.root_path || autoScannedDatasetIds.current.has(dataset.id)) {
+      return;
+    }
+    autoScannedDatasetIds.current.add(dataset.id);
+    setScanning(true);
+    setError(null);
+    void scanDataset(dataset.id, dataset.root_path)
+      .then(async (result) => {
+        setLastScanResult(result);
+        await Promise.all([loadOverview(), loadSamples()]);
+      })
+      .catch(() => setError("自动扫描失败，请检查扫描目录是否存在且可读取"))
+      .finally(() => setScanning(false));
+  }, [dataset, loadOverview, loadSamples]);
 
   async function handleScan(path: string) {
     setScanning(true);
@@ -265,6 +329,99 @@ export default function DatasetDetailPage() {
     }
   }
 
+  async function handleDeleteSelected() {
+    const sampleIds = Array.from(selectedSampleIds);
+    if (sampleIds.length === 0) {
+      return;
+    }
+    const confirmed = window.confirm(`只删除 ${sampleIds.length} 个样本的数据库记录，不删除本地文件。确定继续？`);
+    if (!confirmed) {
+      return;
+    }
+    setDeletingSamples(true);
+    try {
+      await deleteSamples(datasetId, sampleIds);
+      setSelectedSampleIds(new Set());
+      if (selected && sampleIds.includes(selected.id)) {
+        setSelected(null);
+      }
+      await Promise.all([loadOverview(), loadSamples()]);
+    } finally {
+      setDeletingSamples(false);
+    }
+  }
+
+  async function handleDeleteCurrentSample() {
+    if (!selected) {
+      return;
+    }
+    const confirmed = window.confirm(`只删除样本记录“${selected.filename}”，不删除本地文件。确定继续？`);
+    if (!confirmed) {
+      return;
+    }
+    setDeletingSamples(true);
+    try {
+      await deleteSample(selected.id);
+      setSelectedSampleIds((current) => {
+        const next = new Set(current);
+        next.delete(selected.id);
+        return next;
+      });
+      setSelected(null);
+      await Promise.all([loadOverview(), loadSamples()]);
+    } finally {
+      setDeletingSamples(false);
+    }
+  }
+
+  async function handleRepairCurrentSample(filePath: string) {
+    if (!selected) {
+      return;
+    }
+    setRepairingSample(true);
+    setError(null);
+    try {
+      const repaired = await repairSample(selected.id, filePath);
+      setSelected(repaired);
+      await Promise.all([loadOverview(), loadSamples()]);
+    } catch {
+      setError("样本修复失败，请确认文件路径存在且类型受支持");
+    } finally {
+      setRepairingSample(false);
+    }
+  }
+
+  async function handleRepairMissing(rootPath: string, updateDatasetRoot: boolean) {
+    setRepairingMissing(true);
+    setError(null);
+    try {
+      const result = await repairMissingSamples(datasetId, {
+        root_path: rootPath,
+        update_dataset_root: updateDatasetRoot
+      });
+      setMissingRepairResult(result);
+      await Promise.all([loadOverview(), loadSamples()]);
+    } catch {
+      setError("缺失文件修复失败，请确认目录存在且可读取");
+    } finally {
+      setRepairingMissing(false);
+    }
+  }
+
+  async function handleApplySplitPlan(payload: SplitPlanRequest) {
+    setApplyingSplitPlan(true);
+    setError(null);
+    try {
+      const result = await applySplitPlan(datasetId, payload);
+      setSplitPlanResult(result);
+      await Promise.all([loadOverview(), loadSamples()]);
+    } catch {
+      setError("数据集划分失败，请检查比例设置和样本数量");
+    } finally {
+      setApplyingSplitPlan(false);
+    }
+  }
+
   async function handleExport() {
     setError(null);
     try {
@@ -295,6 +452,7 @@ export default function DatasetDetailPage() {
         getManifestUrl(datasetId, {
           search: debouncedSearch,
           fileType,
+          fileStatus,
           tag: debouncedTag,
           split,
           sortBy,
@@ -325,6 +483,52 @@ export default function DatasetDetailPage() {
     setExportPreview(null);
   }
 
+  function clearFilters() {
+    setSearch("");
+    setFileType("");
+    setFileStatus("");
+    setTag("");
+    setSplit("");
+    setPage(1);
+  }
+
+  function filterFileType(nextFileType: string) {
+    setFileType(nextFileType);
+    setPage(1);
+  }
+
+  function toggleVisibleSamples() {
+    setSelectedSampleIds((current) => {
+      const next = new Set(current);
+      if (allVisibleSelected) {
+        visibleSampleIds.forEach((sampleId) => next.delete(sampleId));
+      } else {
+        visibleSampleIds.forEach((sampleId) => next.add(sampleId));
+      }
+      return next;
+    });
+  }
+
+  function filterMissing(status: "missing" | "permission_denied" = "missing") {
+    setFileStatus(status);
+    setPage(1);
+    setIssueModal(null);
+    setQualityOpen(false);
+  }
+
+  function filterDuplicates() {
+    setFileStatus("duplicate");
+    setPage(1);
+    setIssueModal(null);
+  }
+
+  function openMissingRepair() {
+    setIssueModal(null);
+    setQualityOpen(false);
+    setMissingRepairResult(null);
+    setMissingRepairOpen(true);
+  }
+
   return (
     <main className="min-h-screen bg-canvas">
       <header className="border-b border-line bg-white/90 backdrop-blur">
@@ -339,14 +543,32 @@ export default function DatasetDetailPage() {
               <p className="mt-2 max-w-3xl text-sm text-gray-500">{dataset?.description || "未填写描述"}</p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="rounded-lg border border-line bg-gray-50 px-3 py-2 text-sm text-gray-600">
-                {dataset?.root_path || "未设置扫描目录"}
+              <div className="flex h-10 min-w-0 overflow-hidden rounded-lg border border-line bg-gray-50 sm:items-stretch">
+                <div className="flex min-w-0 flex-1 items-center truncate px-3 text-sm text-gray-600">
+                  {dataset?.root_path || "未设置扫描目录"}
+                </div>
+                <button
+                  type="button"
+                  title="扫描当前目录"
+                  disabled={scanning}
+                  onClick={() => {
+                    if (dataset?.root_path) {
+                      void handleScan(dataset.root_path);
+                    } else {
+                      setScanOpen(true);
+                    }
+                  }}
+                  className="inline-flex h-full items-center justify-center gap-2 bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                >
+                  <RefreshCw size={16} className={scanning ? "animate-spin" : ""} />
+                  {scanning ? "扫描中" : "扫描"}
+                </button>
               </div>
               <button
                 type="button"
                 title="数据集设置"
                 onClick={() => setSettingsOpen(true)}
-                className="inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
                 <Settings size={17} />
                 设置
@@ -369,12 +591,51 @@ export default function DatasetDetailPage() {
         {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-7">
-          <StatCard label="样本" value={stats?.sample_count ?? 0} icon={<Database size={18} />} />
-          <StatCard label="图片" value={imageCount} icon={<ImageIcon size={18} />} />
-          <StatCard label="视频" value={videoCount} icon={<Video size={18} />} />
-          <StatCard label="标签" value={tagCount} icon={<Tags size={18} />} />
-          <StatCard label="缺失" value={missingCount} icon={<AlertTriangle size={18} />} />
-          <StatCard label="重复" value={duplicateSampleCount} icon={<AlertTriangle size={18} />} />
+          <StatCard
+            label="样本"
+            value={stats?.sample_count ?? 0}
+            icon={<Database size={18} />}
+            actionLabel="全部类型"
+            onClick={() => filterFileType("")}
+          />
+          <StatCard
+            label="图片"
+            value={imageCount}
+            icon={<ImageIcon size={18} />}
+            actionLabel="筛选图片"
+            onClick={() => filterFileType("image")}
+          />
+          <StatCard
+            label="视频"
+            value={videoCount}
+            icon={<Video size={18} />}
+            actionLabel="筛选视频"
+            onClick={() => filterFileType("video")}
+          />
+          <StatCard
+            label="标签"
+            value={tagCount}
+            icon={<Tags size={18} />}
+            tone="info"
+            actionLabel="查看统计"
+            onClick={() => setTagStatsOpen(true)}
+          />
+          <StatCard
+            label="缺失"
+            value={unavailableCount}
+            icon={<AlertTriangle size={18} />}
+            tone={unavailableCount > 0 ? "danger" : "neutral"}
+            actionLabel={unavailableCount > 0 ? "查看/修复" : undefined}
+            onClick={() => setIssueModal("missing")}
+          />
+          <StatCard
+            label="重复"
+            value={duplicateSampleCount}
+            icon={<AlertTriangle size={18} />}
+            tone={duplicateSampleCount > 0 ? "warning" : "neutral"}
+            actionLabel={duplicateSampleCount > 0 ? `${duplicateGroupCount} 组` : undefined}
+            onClick={() => setIssueModal("duplicate")}
+          />
           <StatCard label="容量" value={formatBytes(stats?.total_size ?? 0)} icon={<HardDrive size={18} />} />
         </div>
 
@@ -384,21 +645,6 @@ export default function DatasetDetailPage() {
           <span>test：{stats?.by_split.test ?? 0}</span>
           <span>未划分：{stats?.by_split.unassigned ?? 0}</span>
         </div>
-
-        {duplicateReport && duplicateReport.group_count > 0 && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-            <div className="font-medium">
-              发现 {duplicateReport.group_count} 组重复样本，共 {duplicateReport.duplicate_sample_count} 个样本
-            </div>
-            <div className="mt-2 space-y-1">
-              {duplicateReport.groups.slice(0, 3).map((group) => (
-                <div key={group.file_hash} className="truncate">
-                  {group.file_hash.slice(0, 12)}...：{group.samples.map((sample) => sample.relative_path).join(" / ")}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
         {lastScanResult && (
           <div className="grid gap-2 rounded-lg border border-line bg-white p-3 text-sm shadow-sm sm:grid-cols-3 xl:grid-cols-7">
@@ -415,35 +661,72 @@ export default function DatasetDetailPage() {
         <SearchFilterBar
           search={search}
           fileType={fileType}
+          fileStatus={fileStatus}
           tag={tag}
           split={split}
-          exportFormat={exportFormat}
           onSearchChange={setSearch}
           onFileTypeChange={setFileType}
+          onFileStatusChange={setFileStatus}
           onTagChange={setTag}
           onSplitChange={setSplit}
-          onExportFormatChange={setExportFormat}
-          onScan={() => setScanOpen(true)}
-          onImportMetadata={() => setMetadataImportOpen(true)}
-          onManageTags={() => setTagsOpen(true)}
-          onExport={() => void handleExport()}
+          onClear={clearFilters}
         />
 
         <BatchActionBar
           selectedCount={selectedSampleIds.size}
           busy={batchBusy}
+          deleting={deletingSamples}
           onApply={handleBatchApply}
+          onDelete={handleDeleteSelected}
           onClear={() => setSelectedSampleIds(new Set())}
         />
 
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <h2 className="inline-flex items-center gap-2 text-base font-semibold text-ink">
             <FileText size={18} />
             样本
           </h2>
-          <span className="text-sm text-gray-500">
-            {sampleTotal} 项，第 {page} / {pageCount} 页
-          </span>
+          <div className="flex flex-wrap items-center gap-3">
+            {samples.length > 0 && (
+              <button
+                type="button"
+                onClick={toggleVisibleSamples}
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                {allVisibleSelected ? <CheckSquare size={16} /> : <Square size={16} />}
+                {allVisibleSelected ? "取消本页" : "选择本页"}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setQualityOpen(true)}
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <ClipboardCheck size={16} />
+              体检
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSplitPlanResult(null);
+                setSplitPlanOpen(true);
+              }}
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <FileText size={16} />
+              划分
+            </button>
+            <DatasetActionMenu
+              exportFormat={exportFormat}
+              onExportFormatChange={setExportFormat}
+              onManageTags={() => setTagsOpen(true)}
+              onImportMetadata={() => setMetadataImportOpen(true)}
+              onExport={() => void handleExport()}
+            />
+            <span className="text-sm text-gray-500">
+              {sampleTotal} 项，第 {page} / {pageCount} 页
+            </span>
+          </div>
         </div>
 
         <div className="flex flex-col gap-3 rounded-lg border border-line bg-white p-3 shadow-sm lg:flex-row lg:items-center lg:justify-between">
@@ -531,8 +814,12 @@ export default function DatasetDetailPage() {
         sample={selected}
         availableTags={availableTags}
         saving={saving}
+        repairing={repairingSample}
+        deleting={deletingSamples}
         onClose={() => setSelected(null)}
         onSave={handleSave}
+        onRepair={handleRepairCurrentSample}
+        onDelete={handleDeleteCurrentSample}
       />
       <DatasetSettingsModal
         dataset={dataset}
@@ -551,6 +838,26 @@ export default function DatasetDetailPage() {
           await Promise.all([loadOverview(), loadSamples()]);
         }}
       />
+      <TagStatsModal
+        open={tagStatsOpen}
+        stats={stats}
+        tags={availableTags}
+        onClose={() => setTagStatsOpen(false)}
+        onManage={() => {
+          setTagStatsOpen(false);
+          setTagsOpen(true);
+        }}
+        onFilterTag={(tagName) => {
+          setTag(tagName);
+          setPage(1);
+          setTagStatsOpen(false);
+        }}
+        onFilterUnlabeled={() => {
+          setTag("__untagged__");
+          setPage(1);
+          setTagStatsOpen(false);
+        }}
+      />
       <MetadataImportModal
         datasetId={datasetId}
         open={metadataImportOpen}
@@ -558,6 +865,61 @@ export default function DatasetDetailPage() {
         onImported={async () => {
           await Promise.all([loadOverview(), loadSamples()]);
         }}
+      />
+      <MissingRepairModal
+        open={missingRepairOpen}
+        defaultPath={dataset?.root_path ?? ""}
+        repairing={repairingMissing}
+        result={missingRepairResult}
+        onClose={() => setMissingRepairOpen(false)}
+        onRepair={handleRepairMissing}
+      />
+      <DatasetIssueModal
+        issue={issueModal}
+        missingCount={missingCount}
+        permissionDeniedCount={permissionDeniedCount}
+        duplicateGroupCount={duplicateGroupCount}
+        duplicateSampleCount={duplicateSampleCount}
+        duplicateReport={duplicateReport}
+        onClose={() => setIssueModal(null)}
+        onFilterMissing={() => filterMissing("missing")}
+        onFilterPermissionDenied={() => filterMissing("permission_denied")}
+        onFilterDuplicates={filterDuplicates}
+        onRepairMissing={openMissingRepair}
+      />
+      <DatasetQualityModal
+        open={qualityOpen}
+        stats={stats}
+        duplicateReport={duplicateReport}
+        onClose={() => setQualityOpen(false)}
+        onFilterMissing={() => {
+          filterMissing((stats?.by_status.missing ?? 0) > 0 ? "missing" : "permission_denied");
+        }}
+        onFilterUnassigned={() => {
+          setSplit("unassigned");
+          setPage(1);
+          setQualityOpen(false);
+        }}
+        onFilterUnlabeled={() => {
+          setTag("__untagged__");
+          setPage(1);
+          setQualityOpen(false);
+        }}
+        onOpenRepairMissing={() => {
+          openMissingRepair();
+        }}
+        onOpenSplitPlan={() => {
+          setQualityOpen(false);
+          setSplitPlanResult(null);
+          setSplitPlanOpen(true);
+        }}
+      />
+      <SplitPlanModal
+        open={splitPlanOpen}
+        applying={applyingSplitPlan}
+        result={splitPlanResult}
+        onClose={() => setSplitPlanOpen(false)}
+        onApply={handleApplySplitPlan}
       />
       <ExportPreviewModal
         preview={exportPreview}

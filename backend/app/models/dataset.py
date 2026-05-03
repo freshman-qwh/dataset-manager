@@ -26,6 +26,7 @@ class Dataset(SQLModel, table=True):
     owner: str | None = Field(default=None, max_length=160)
     project: str | None = Field(default=None, max_length=160)
     notes: str | None = Field(default=None, max_length=4000)
+    auto_scan_on_open: bool = Field(default=False)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 

@@ -1,9 +1,10 @@
-import { Calendar, Database, Plus } from "lucide-react";
+import { Calendar, Database, MoreHorizontal, Plus, RefreshCw, Settings, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { createDataset, listDatasets } from "../api/client";
+import { createDataset, deleteDataset, listDatasets, updateDataset } from "../api/client";
 import CreateDatasetModal from "../components/CreateDatasetModal";
+import DatasetSettingsModal from "../components/DatasetSettingsModal";
 import type { Dataset, DatasetCreate } from "../types/dataset";
 
 function formatDate(value: string): string {
@@ -18,6 +19,10 @@ export default function DatasetListPage() {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [settingsDataset, setSettingsDataset] = useState<Dataset | null>(null);
+  const [menuDatasetId, setMenuDatasetId] = useState<number | null>(null);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [deletingDataset, setDeletingDataset] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function loadDatasets() {
@@ -39,6 +44,35 @@ export default function DatasetListPage() {
   async function handleCreate(payload: DatasetCreate) {
     await createDataset(payload);
     await loadDatasets();
+  }
+
+  async function handleSettingsSave(payload: Partial<DatasetCreate>) {
+    if (!settingsDataset) {
+      return;
+    }
+    setSavingSettings(true);
+    try {
+      const updated = await updateDataset(settingsDataset.id, payload);
+      setSettingsDataset(updated);
+      await loadDatasets();
+      setSettingsDataset(null);
+    } finally {
+      setSavingSettings(false);
+    }
+  }
+
+  async function handleSettingsDelete() {
+    if (!settingsDataset) {
+      return;
+    }
+    setDeletingDataset(true);
+    try {
+      await deleteDataset(settingsDataset.id);
+      setSettingsDataset(null);
+      await loadDatasets();
+    } finally {
+      setDeletingDataset(false);
+    }
   }
 
   return (
@@ -81,39 +115,91 @@ export default function DatasetListPage() {
         ) : (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {datasets.map((dataset) => (
-              <Link
+              <div
                 key={dataset.id}
-                to={`/datasets/${dataset.id}`}
-                className="rounded-lg border border-line bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-soft"
+                className="relative rounded-lg border border-line bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-soft"
               >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <h2 className="truncate text-base font-semibold text-ink">{dataset.name}</h2>
-                    <p className="mt-2 line-clamp-2 min-h-10 text-sm text-gray-500">
-                      {dataset.description || "未填写描述"}
-                    </p>
+                <div className="absolute right-4 top-4">
+                  <button
+                    type="button"
+                    title="数据集操作"
+                    onClick={() => setMenuDatasetId((current) => (current === dataset.id ? null : dataset.id))}
+                    className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+                  >
+                    <MoreHorizontal size={17} />
+                  </button>
+                  {menuDatasetId === dataset.id && (
+                    <div className="absolute right-0 z-20 mt-2 w-40 rounded-lg border border-line bg-white p-1 shadow-soft">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSettingsDataset(dataset);
+                          setMenuDatasetId(null);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        <Settings size={15} />
+                        设置
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSettingsDataset(dataset);
+                          setMenuDatasetId(null);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-red-700 hover:bg-red-50"
+                      >
+                        <Trash2 size={15} />
+                        删除元数据
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <Link to={`/datasets/${dataset.id}`} className="block pr-8">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <h2 className="truncate text-base font-semibold text-ink">{dataset.name}</h2>
+                      <p className="mt-2 line-clamp-2 min-h-10 text-sm text-gray-500">
+                        {dataset.description || "未填写描述"}
+                      </p>
+                    </div>
+                    <span className="rounded-md border border-line bg-gray-50 px-2 py-1 text-xs text-gray-600">
+                      {dataset.task_type || "other"}
+                    </span>
                   </div>
-                  <span className="rounded-md border border-line bg-gray-50 px-2 py-1 text-xs text-gray-600">
-                    {dataset.task_type || "other"}
-                  </span>
-                </div>
-                <div className="mt-5 flex items-center justify-between text-sm text-gray-500">
-                  <span className="inline-flex items-center gap-1.5">
-                    <Database size={15} />
-                    {dataset.sample_count} 样本
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <Calendar size={15} />
-                    {formatDate(dataset.created_at)}
-                  </span>
-                </div>
-              </Link>
+                  <div className="mt-5 flex flex-wrap items-center justify-between gap-2 text-sm text-gray-500">
+                    <span className="inline-flex items-center gap-1.5">
+                      <Database size={15} />
+                      {dataset.sample_count} 样本
+                    </span>
+                    {dataset.auto_scan_on_open && (
+                      <span className="inline-flex items-center gap-1.5 rounded-md bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700">
+                        <RefreshCw size={13} />
+                        自动扫描
+                      </span>
+                    )}
+                    <span className="inline-flex items-center gap-1.5">
+                      <Calendar size={15} />
+                      {formatDate(dataset.created_at)}
+                    </span>
+                  </div>
+                </Link>
+              </div>
             ))}
           </div>
         )}
       </section>
 
       <CreateDatasetModal open={modalOpen} onClose={() => setModalOpen(false)} onCreate={handleCreate} />
+      <DatasetSettingsModal
+        dataset={settingsDataset}
+        open={Boolean(settingsDataset)}
+        saving={savingSettings}
+        deleting={deletingDataset}
+        onClose={() => setSettingsDataset(null)}
+        onSave={handleSettingsSave}
+        onDelete={handleSettingsDelete}
+      />
     </main>
   );
 }

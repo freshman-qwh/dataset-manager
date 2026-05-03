@@ -10,6 +10,7 @@ export interface Dataset {
   owner: string | null;
   project: string | null;
   notes: string | null;
+  auto_scan_on_open: boolean;
   sample_count: number;
   created_at: string;
   updated_at: string;
@@ -26,6 +27,7 @@ export interface DatasetCreate {
   owner?: string | null;
   project?: string | null;
   notes?: string | null;
+  auto_scan_on_open?: boolean;
 }
 
 export interface Tag {
@@ -61,6 +63,7 @@ export interface Sample {
   file_modified_at: string | null;
   last_scanned_at: string | null;
   split: string | null;
+  review_status: string;
   notes: string | null;
   metadata: Record<string, unknown>;
   tags: Tag[];
@@ -79,6 +82,7 @@ export interface SampleListResponse {
 
 export interface SampleUpdate {
   split?: string | null;
+  review_status?: string | null;
   notes?: string | null;
   tags?: string[];
 }
@@ -94,6 +98,13 @@ export interface BatchSampleUpdateResult {
   dataset_id: number;
   requested: number;
   updated: number;
+  skipped: number;
+}
+
+export interface SampleDeleteResult {
+  dataset_id: number;
+  requested: number;
+  deleted: number;
   skipped: number;
 }
 
@@ -116,9 +127,11 @@ export interface DatasetStats {
   by_extension: Record<string, number>;
   by_status: Record<string, number>;
   by_split: Record<string, number>;
+  by_review_status: Record<string, number>;
   tag_counts: Record<string, number>;
   duplicate_groups: number;
   duplicate_samples: number;
+  unlabeled_samples: number;
 }
 
 export interface ScanResult {
@@ -138,8 +151,10 @@ export interface SampleQuery {
   datasetId: number;
   search?: string;
   fileType?: string;
+  fileStatus?: string;
   tag?: string;
   split?: string;
+  reviewStatus?: string;
   page?: number;
   pageSize?: number;
   sortBy?: string;
@@ -192,4 +207,43 @@ export interface ExportTemplateResponse {
   format: string;
   description: string;
   payload: Record<string, unknown>;
+}
+
+export interface SplitPlanRequest {
+  train_ratio: number;
+  val_ratio: number;
+  test_ratio: number;
+  include_test: boolean;
+  stratify_by_tags: boolean;
+  normal_only: boolean;
+  only_unassigned: boolean;
+  seed: number;
+}
+
+export interface SplitPlanResult {
+  dataset_id: number;
+  requested: number;
+  updated: number;
+  train: number;
+  val: number;
+  test: number;
+  unassigned: number;
+  stratify_by_tags: boolean;
+  include_test: boolean;
+  seed: number;
+  warnings: string[];
+}
+
+export interface MissingSampleRepairRequest {
+  root_path: string;
+  update_dataset_root: boolean;
+}
+
+export interface MissingSampleRepairResult {
+  dataset_id: number;
+  root_path: string;
+  checked: number;
+  repaired: number;
+  skipped: number;
+  errors: string[];
 }

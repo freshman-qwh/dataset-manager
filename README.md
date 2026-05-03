@@ -11,6 +11,15 @@
 - 样本详情、标签编辑、备注、split 更新和批量操作
 - 标签体系管理：颜色、描述、层级和别名
 - 重复样本识别：按 hash 聚合重复文件
+- 审查状态底层字段：未标注、审查中、已通过、已拒绝
+- 数据集体检：集中检查缺失文件、重复样本、未标注样本和划分覆盖
+- 异常统计卡：缺失/重复有问题时变色，点击后提供对应筛选或修复入口
+- 样本统计卡支持按全部类型、图片、视频快速筛选
+- 标签统计卡：展示各标签命中数量、未标注样本数，并支持按标签快速筛选
+- 数据集随机/分层划分：支持 train/val/test 比例、是否划出 test、标签分层和固定随机种子；极端比例导致验证集或测试集名额不足时会提示至少需要的名额数量
+- 缺失文件修复：单文件重新定位和按新根目录批量重新挂载
+- 打开数据集自动扫描设置：进入详情页时可自动执行一次增量扫描
+- 样本记录删除：单选/多选删除数据库元数据，不删除本地原始文件
 - CSV/JSON 元数据导入：批量写入标签、split、备注和自定义属性
 - 数据集统计、manifest JSON 导出、CSV 标签表下载和 COCO/YOLO 格式骨架
 - React + TypeScript + Vite + Tailwind 前端
@@ -122,12 +131,17 @@ DELETE /api/datasets/{id}
 POST   /api/datasets/{id}/scan
 GET    /api/datasets/{id}/samples
 PATCH  /api/datasets/{id}/samples/batch
+POST   /api/datasets/{id}/samples/delete
+POST   /api/datasets/{id}/repair-missing
+POST   /api/datasets/{id}/split-plan
 GET    /api/datasets/{id}/duplicates
 GET    /api/datasets/{id}/tags
 POST   /api/datasets/{id}/tags
 POST   /api/datasets/{id}/import-metadata
 GET    /api/samples/{id}
 PATCH  /api/samples/{id}
+DELETE /api/samples/{id}
+PATCH  /api/samples/{id}/repair
 GET    /api/samples/{id}/file
 GET    /api/samples/{id}/preview
 PATCH  /api/tags/{id}
@@ -169,6 +183,12 @@ JSON 可以是数组，也可以是包含 `samples` 数组的对象：
 - `CSV 标签表` 面向样本级标签和表格流转，适合人工检查或再次导入。
 - `COCO 骨架` 和 `YOLO 骨架` 目前只导出图片、类别和建议路径。由于系统尚未实现 bbox、segmentation 等标注模型，它们还不是完整标准标注导出。
 - 前端导出会先显示预览弹窗，确认后再下载文件。
+
+## 删除与修复边界
+
+- 删除样本记录只删除 SQLite 中的样本元数据和标签关联，不删除本地原始文件。
+- 缺失文件修复只更新数据库中的路径、hash、大小、类型和文件状态，不移动、不重命名、不覆盖本地文件。
+- 批量修复缺失文件时，系统按样本 `relative_path` 在新根目录下查找文件。
 
 ## 配置
 
