@@ -1,6 +1,7 @@
 from sqlmodel import Session
 
 from app.services.dataset_service import get_dataset_or_404
+from app.services import annotation_service
 from app.services.sample_service import get_filtered_samples
 from app.services.stats_service import get_dataset_stats
 
@@ -33,6 +34,8 @@ def export_manifest(
         sort_order=sort_order,
     )
     stats = get_dataset_stats(session, dataset_id)
+    sample_ids = [sample.id for sample in samples if sample.id is not None]
+    annotations = annotation_service.annotations_by_sample(session, sample_ids)
 
     return {
         "dataset": {
@@ -82,6 +85,24 @@ def export_manifest(
                 "notes": sample.notes,
                 "metadata_json": sample.metadata_json,
                 "tags": [tag.name for tag in sample.tags],
+                "annotations": [
+                    {
+                        "id": annotation.id,
+                        "label": annotation.label,
+                        "tag_id": annotation.tag_id,
+                        "shape_type": annotation.shape_type,
+                        "points": annotation.points,
+                        "flags": annotation.flags,
+                        "attributes": annotation.attributes,
+                        "group_id": annotation.group_id,
+                        "z_order": annotation.z_order,
+                        "locked": annotation.locked,
+                        "hidden": annotation.hidden,
+                        "source": annotation.source,
+                        "notes": annotation.notes,
+                    }
+                    for annotation in annotations.get(sample.id or 0, [])
+                ],
             }
             for sample in samples
         ],

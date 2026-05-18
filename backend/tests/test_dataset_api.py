@@ -1,4 +1,5 @@
 from pathlib import Path
+import base64
 
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
@@ -6,6 +7,11 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app.core.database import get_session
 from app.main import app
+
+
+PNG_1X1 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+)
 
 
 def make_client():
@@ -138,6 +144,104 @@ def test_dataset_scan_batch_and_export(tmp_path: Path):
         assert manifest["exported_sample_count"] == 1
         assert manifest["samples"][0]["split"] == "train"
         assert manifest["samples"][0]["tags"] == ["accepted"]
+
+    app.dependency_overrides.clear()
+
+
+def test_sample_annotations_replace_list_and_manifest_export(tmp_path: Path):
+    data_root = tmp_path / "annotated"
+    data_root.mkdir()
+    image_file = data_root / "sample.png"
+    image_file.write_bytes(PNG_1X1)
+
+    with make_client() as client:
+        dataset = client.post("/api/datasets", json={"name": "Annotated", "root_path": str(data_root)}).json()
+        scan = client.post(f"/api/datasets/{dataset['id']}/scan", json={"folder_path": str(data_root)})
+        assert scan.status_code == 200
+        assert scan.json()["imported"] == 1
+
+        sample = client.get(f"/api/datasets/{dataset['id']}/samples").json()["items"][0]
+        payload = {
+            "annotations": [
+                {
+                    "label": "scratch",
+                    "shape_type": "rectangle",
+                    "points": [0, 0, 1, 1],
+                    "attributes": {"severity": "low"},
+                    "z_order": 0,
+                },
+                {
+                    "label": "edge",
+                    "shape_type": "polygon",
+                    "points": [0, 0, 1, 0, 1, 1],
+                    "z_order": 1,
+                    "notes": "corner area",
+                },
+            ]
+        }
+
+        saved = client.put(f"/api/samples/{sample['id']}/annotations", json=payload)
+        assert saved.status_code == 200
+        saved_payload = saved.json()
+        assert [item["label"] for item in saved_payload] == ["scratch", "edge"]
+        assert saved_payload[0]["attributes"] == {"severity": "low"}
+
+        listed = client.get(f"/api/samples/{sample['id']}/annotations")
+        assert listed.status_code == 200
+        assert len(listed.json()) == 2
+
+        refreshed_sample = client.get(f"/api/samples/{sample['id']}").json()
+        assert refreshed_sample["review_status"] == "in_review"
+
+        manifest = client.get(f"/api/datasets/{dataset['id']}/export-manifest").json()
+        annotations = manifest["samples"][0]["annotations"]
+        assert annotations[0]["label"] == "scratch"
+        assert annotations[0]["shape_type"] == "rectangle"
+        assert annotations[1]["notes"] == "corner area"
+
+        labelme = client.post(f"/api/samples/{sample['id']}/annotations/export-labelme")
+        assert labelme.status_code == 200
+        assert labelme.json()["imagePath"] == "sample.png"
+        assert labelme.json()["imageWidth"] == 1
+        assert labelme.json()["shapes"][0]["points"] == [[0.0, 0.0], [1.0, 1.0]]
+
+        tags = client.get(f"/api/datasets/{dataset['id']}/tags").json()
+        assert {tag["name"] for tag in tags} >= {"scratch", "edge"}
+
+    app.dependency_overrides.clear()
+
+
+def test_sample_annotations_validate_shape_and_image_type(tmp_path: Path):
+    data_root = tmp_path / "annotation-validation"
+    data_root.mkdir()
+    table_file = data_root / "rows.csv"
+    table_file.write_text("id,value\n1,2\n", encoding="utf-8")
+    image_file = data_root / "sample.png"
+    image_file.write_bytes(PNG_1X1)
+
+    with make_client() as client:
+        dataset = client.post("/api/datasets", json={"name": "Validation", "root_path": str(data_root)}).json()
+        scan = client.post(f"/api/datasets/{dataset['id']}/scan", json={"folder_path": str(data_root)})
+        assert scan.status_code == 200
+
+        samples = client.get(
+            f"/api/datasets/{dataset['id']}/samples",
+            params={"sort_by": "filename", "sort_order": "asc"},
+        ).json()["items"]
+        table_sample = next(sample for sample in samples if sample["file_type"] == "table")
+        image_sample = next(sample for sample in samples if sample["file_type"] == "image")
+
+        rejected_type = client.put(
+            f"/api/samples/{table_sample['id']}/annotations",
+            json={"annotations": [{"label": "bad", "shape_type": "point", "points": [1, 1]}]},
+        )
+        assert rejected_type.status_code == 400
+
+        rejected_shape = client.put(
+            f"/api/samples/{image_sample['id']}/annotations",
+            json={"annotations": [{"label": "bad", "shape_type": "rectangle", "points": [1, 1, 0, 0]}]},
+        )
+        assert rejected_shape.status_code == 400
 
     app.dependency_overrides.clear()
 

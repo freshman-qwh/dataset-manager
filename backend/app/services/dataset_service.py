@@ -57,8 +57,11 @@ def update_dataset(session: Session, dataset_id: int, payload: DatasetUpdate) ->
 
 
 def delete_dataset(session: Session, dataset_id: int) -> None:
+    from app.services import annotation_service
+
     dataset = get_dataset_or_404(session, dataset_id)
     samples = session.exec(select(Sample).where(Sample.dataset_id == dataset_id)).all()
+    annotation_service.delete_sample_annotations(session, [sample.id for sample in samples if sample.id is not None])
     for sample in samples:
         sample.tags.clear()
         session.add(sample)

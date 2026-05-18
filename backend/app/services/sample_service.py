@@ -412,6 +412,9 @@ def get_sample_preview(sample: Sample) -> SamplePreview:
 
 
 def _delete_samples(session: Session, samples: list[Sample]) -> None:
+    from app.services import annotation_service
+
+    annotation_service.delete_sample_annotations(session, [sample.id for sample in samples if sample.id is not None])
     for sample in samples:
         # Metadata-only delete: detach tag links and remove the database record.
         sample.tags.clear()

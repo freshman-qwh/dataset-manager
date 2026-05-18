@@ -1,6 +1,8 @@
 import axios from "axios";
 
 import type {
+  AnnotationObject,
+  AnnotationReplaceRequest,
   Dataset,
   DatasetCreate,
   DatasetStats,
@@ -126,6 +128,22 @@ export async function listSamples(params: SampleQuery): Promise<SampleListRespon
 export async function getSample(sampleId: number): Promise<Sample> {
   const { data } = await client.get<Sample>(`/samples/${sampleId}`);
   return data;
+}
+
+export async function listSampleAnnotations(sampleId: number): Promise<AnnotationObject[]> {
+  const { data } = await client.get<Omit<AnnotationObject, "client_id">[]>(`/samples/${sampleId}/annotations`);
+  return data.map((item) => ({ ...item, client_id: `server-${item.id}` }));
+}
+
+export async function replaceSampleAnnotations(
+  sampleId: number,
+  payload: AnnotationReplaceRequest
+): Promise<AnnotationObject[]> {
+  const { data } = await client.put<Omit<AnnotationObject, "client_id">[]>(
+    `/samples/${sampleId}/annotations`,
+    payload
+  );
+  return data.map((item) => ({ ...item, client_id: `server-${item.id}` }));
 }
 
 export async function updateSample(sampleId: number, payload: SampleUpdate): Promise<Sample> {

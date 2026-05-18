@@ -1,4 +1,4 @@
-import { Save, Trash2, Wrench, X } from "lucide-react";
+import { PencilLine, Save, Trash2, Wrench, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { getSampleFileUrl, getSamplePreview } from "../api/client";
@@ -15,6 +15,7 @@ interface SampleDetailPanelProps {
   onSave: (payload: { split: string | null; notes: string | null; tags: string[] }) => Promise<void>;
   onRepair: (filePath: string) => Promise<void>;
   onDelete: () => Promise<void>;
+  onAnnotate?: (sample: Sample) => void;
 }
 
 function formatBytes(value: number): string {
@@ -36,7 +37,8 @@ export default function SampleDetailPanel({
   onClose,
   onSave,
   onRepair,
-  onDelete
+  onDelete,
+  onAnnotate
 }: SampleDetailPanelProps) {
   const [split, setSplit] = useState("");
   const [notes, setNotes] = useState("");
@@ -219,6 +221,17 @@ export default function SampleDetailPanel({
         </div>
       </div>
       <div className="border-t border-line px-5 py-4">
+        {onAnnotate && sample.file_type === "image" && (
+          <button
+            type="button"
+            onClick={() => onAnnotate(sample)}
+            disabled={sample.file_status !== "normal"}
+            className="mb-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-line bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300"
+          >
+            <PencilLine size={17} />
+            打开标注工作区
+          </button>
+        )}
         <div className="flex gap-2">
           <button
             type="button"

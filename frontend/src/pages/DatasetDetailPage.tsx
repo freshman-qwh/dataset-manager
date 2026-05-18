@@ -262,6 +262,10 @@ export default function DatasetDetailPage() {
     setSelected(await getSample(sample.id));
   }
 
+  function handleAnnotate(sample: Sample) {
+    navigate(`/datasets/${datasetId}/annotate?sample=${sample.id}`);
+  }
+
   async function handleSave(payload: { split: string | null; notes: string | null; tags: string[] }) {
     if (!selected) {
       return;
@@ -800,6 +804,7 @@ export default function DatasetDetailPage() {
           selectedSampleIds={selectedSampleIds}
           onSelect={handleSelect}
           onToggleSelect={handleToggleSelect}
+          onAnnotate={handleAnnotate}
         />
       </section>
 
@@ -820,6 +825,7 @@ export default function DatasetDetailPage() {
         onSave={handleSave}
         onRepair={handleRepairCurrentSample}
         onDelete={handleDeleteCurrentSample}
+        onAnnotate={handleAnnotate}
       />
       <DatasetSettingsModal
         dataset={dataset}
