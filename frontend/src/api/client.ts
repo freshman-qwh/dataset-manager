@@ -18,6 +18,7 @@ import type {
   Sample,
   SampleDeleteResult,
   SampleListResponse,
+  SampleNavigationResponse,
   SampleQuery,
   SamplePreview,
   SampleUpdate,
@@ -118,6 +119,23 @@ export async function listSamples(params: SampleQuery): Promise<SampleListRespon
       review_status: reviewStatus || undefined,
       page,
       page_size: pageSize,
+      sort_by: sortBy,
+      sort_order: sortOrder
+    }
+  });
+  return data;
+}
+
+export async function getSampleNavigation(params: Omit<SampleQuery, "fileType" | "page" | "pageSize"> & { sampleId?: number | null }): Promise<SampleNavigationResponse> {
+  const { datasetId, sampleId, search, fileStatus, tag, split, reviewStatus, sortBy, sortOrder } = params;
+  const { data } = await client.get<SampleNavigationResponse>(`/datasets/${datasetId}/samples/navigation`, {
+    params: {
+      sample_id: sampleId || undefined,
+      search: search || undefined,
+      file_status: fileStatus || undefined,
+      tag: tag || undefined,
+      split: split || undefined,
+      review_status: reviewStatus || undefined,
       sort_by: sortBy,
       sort_order: sortOrder
     }

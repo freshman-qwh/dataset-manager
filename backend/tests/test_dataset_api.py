@@ -192,6 +192,19 @@ def test_sample_annotations_replace_list_and_manifest_export(tmp_path: Path):
 
         refreshed_sample = client.get(f"/api/samples/{sample['id']}").json()
         assert refreshed_sample["review_status"] == "in_review"
+        assert {tag["name"] for tag in refreshed_sample["tags"]} == {"scratch", "edge"}
+
+        stats = client.get(f"/api/stats/datasets/{dataset['id']}").json()
+        assert stats["tag_counts"]["scratch"] == 1
+        assert stats["tag_counts"]["edge"] == 1
+        assert stats["annotated_samples"] == 1
+        assert stats["annotation_count"] == 2
+        assert stats["by_annotation_label"] == {"scratch": 1, "edge": 1}
+        filtered_by_annotation_label = client.get(
+            f"/api/datasets/{dataset['id']}/samples",
+            params={"tag": "scratch"},
+        ).json()
+        assert filtered_by_annotation_label["total"] == 1
 
         manifest = client.get(f"/api/datasets/{dataset['id']}/export-manifest").json()
         annotations = manifest["samples"][0]["annotations"]
@@ -207,6 +220,82 @@ def test_sample_annotations_replace_list_and_manifest_export(tmp_path: Path):
 
         tags = client.get(f"/api/datasets/{dataset['id']}/tags").json()
         assert {tag["name"] for tag in tags} >= {"scratch", "edge"}
+
+    app.dependency_overrides.clear()
+
+
+def test_duplicate_sample_filter_groups_hashes_together(tmp_path: Path):
+    data_root = tmp_path / "duplicate-groups"
+    data_root.mkdir()
+    payloads = {
+        "a_first.png": b"group-a",
+        "b_first.png": b"group-b",
+        "c_second.png": b"group-a",
+        "d_second.png": b"group-b",
+        "unique.png": b"unique",
+    }
+    for filename, content in payloads.items():
+        (data_root / filename).write_bytes(content)
+
+    with make_client() as client:
+        dataset = client.post("/api/datasets", json={"name": "Duplicate Groups", "root_path": str(data_root)}).json()
+        scan = client.post(f"/api/datasets/{dataset['id']}/scan", json={"folder_path": str(data_root)})
+        assert scan.status_code == 200
+
+        duplicate_filtered = client.get(
+            f"/api/datasets/{dataset['id']}/samples",
+            params={"file_status": "duplicate", "sort_by": "filename", "sort_order": "asc", "page_size": 10},
+        )
+        assert duplicate_filtered.status_code == 200
+        items = duplicate_filtered.json()["items"]
+        hashes = [item["file_hash"] for item in items]
+        assert len(items) == 4
+        assert hashes[0] == hashes[1]
+        assert hashes[2] == hashes[3]
+        assert hashes[1] != hashes[2]
+        assert {item["file_status"] for item in items} == {"normal"}
+
+    app.dependency_overrides.clear()
+
+
+def test_sample_navigation_uses_context_and_skips_non_normal_images(tmp_path: Path):
+    data_root = tmp_path / "navigation"
+    data_root.mkdir()
+    for filename in ["a.png", "b.png", "c.png"]:
+        (data_root / filename).write_bytes(PNG_1X1)
+    (data_root / "rows.csv").write_text("id,value\n1,2\n", encoding="utf-8")
+
+    with make_client() as client:
+        dataset = client.post("/api/datasets", json={"name": "Navigation", "root_path": str(data_root)}).json()
+        scan = client.post(f"/api/datasets/{dataset['id']}/scan", json={"folder_path": str(data_root)})
+        assert scan.status_code == 200
+        (data_root / "b.png").unlink()
+        rescan = client.post(f"/api/datasets/{dataset['id']}/scan", json={"folder_path": str(data_root)})
+        assert rescan.status_code == 200
+
+        navigation = client.get(
+            f"/api/datasets/{dataset['id']}/samples/navigation",
+            params={"sort_by": "filename", "sort_order": "asc"},
+        )
+        assert navigation.status_code == 200
+        payload = navigation.json()
+        assert payload["total"] == 2
+        assert payload["current_index"] == 0
+        assert payload["current_sample"]["filename"] == "a.png"
+        assert payload["previous_sample"] is None
+        assert payload["next_sample"]["filename"] == "c.png"
+
+        second_navigation = client.get(
+            f"/api/datasets/{dataset['id']}/samples/navigation",
+            params={
+                "sample_id": payload["next_sample"]["id"],
+                "sort_by": "filename",
+                "sort_order": "asc",
+            },
+        ).json()
+        assert second_navigation["current_index"] == 1
+        assert second_navigation["previous_sample"]["filename"] == "a.png"
+        assert second_navigation["next_sample"] is None
 
     app.dependency_overrides.clear()
 

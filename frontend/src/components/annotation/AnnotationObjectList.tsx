@@ -51,6 +51,7 @@ export default function AnnotationObjectList({
                 >
                   <button
                     type="button"
+                    title="选择并聚焦对象"
                     onClick={() => onSelect(object.client_id)}
                     className="flex w-full items-start justify-between gap-3 text-left"
                   >
@@ -69,9 +70,8 @@ export default function AnnotationObjectList({
                     <div className="mt-3 space-y-3 border-t border-line pt-3">
                       <label className="block">
                         <span className="text-xs font-medium text-gray-500">类别</span>
-                        <input
+                        <select
                           value={object.label}
-                          list="annotation-object-labels"
                           onChange={(event) =>
                             onUpdate(object.client_id, {
                               label: event.target.value,
@@ -80,14 +80,18 @@ export default function AnnotationObjectList({
                                 null
                             })
                           }
-                          className="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm outline-none transition focus:border-gray-900"
-                        />
+                          className="mt-1 w-full rounded-lg border border-line bg-white px-3 py-2 text-sm outline-none transition focus:border-gray-900"
+                        >
+                          {object.label && !tags.some((tagItem) => tagItem.name === object.label) && (
+                            <option value={object.label}>{object.label}</option>
+                          )}
+                          {tags.map((tagItem) => (
+                            <option key={tagItem.id} value={tagItem.name}>
+                              {tagItem.name}
+                            </option>
+                          ))}
+                        </select>
                       </label>
-                      <datalist id="annotation-object-labels">
-                        {tags.map((tagItem) => (
-                          <option key={tagItem.id} value={tagItem.name} />
-                        ))}
-                      </datalist>
                       <label className="block">
                         <span className="text-xs font-medium text-gray-500">备注</span>
                         <textarea

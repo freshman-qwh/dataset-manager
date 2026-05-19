@@ -128,6 +128,7 @@ export default function DatasetDetailPage() {
   const [fileStatus, setFileStatus] = useState("");
   const [tag, setTag] = useState("");
   const [split, setSplit] = useState("");
+  const [reviewStatus, setReviewStatus] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(60);
   const [sortBy, setSortBy] = useState("created_at");
@@ -180,6 +181,7 @@ export default function DatasetDetailPage() {
       fileStatus,
       tag: debouncedTag,
       split,
+      reviewStatus,
       page,
       pageSize,
       sortBy,
@@ -190,7 +192,7 @@ export default function DatasetDetailPage() {
     if (nextSamples.page !== page) {
       setPage(nextSamples.page);
     }
-  }, [datasetId, debouncedSearch, debouncedTag, fileType, fileStatus, split, page, pageSize, sortBy, sortOrder]);
+  }, [datasetId, debouncedSearch, debouncedTag, fileType, fileStatus, split, reviewStatus, page, pageSize, sortBy, sortOrder]);
 
   useEffect(() => {
     if (!Number.isFinite(datasetId)) {
@@ -214,7 +216,13 @@ export default function DatasetDetailPage() {
   const unavailableCount = missingCount + permissionDeniedCount;
   const duplicateSampleCount = stats?.duplicate_samples ?? 0;
   const duplicateGroupCount = stats?.duplicate_groups ?? 0;
+  const annotatedSamples = stats?.annotated_samples ?? 0;
+  const annotationCount = stats?.annotation_count ?? 0;
   const tagCount = useMemo(() => Object.keys(stats?.tag_counts ?? {}).length, [stats]);
+  const annotationLabelRows = useMemo(
+    () => Object.entries(stats?.by_annotation_label ?? {}).sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0])).slice(0, 5),
+    [stats]
+  );
   const visibleSampleIds = useMemo(() => samples.map((sample) => sample.id), [samples]);
   const selectedVisibleCount = useMemo(
     () => visibleSampleIds.filter((sampleId) => selectedSampleIds.has(sampleId)).length,
@@ -225,7 +233,7 @@ export default function DatasetDetailPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, debouncedTag, fileType, fileStatus, split, sortBy, sortOrder]);
+  }, [debouncedSearch, debouncedTag, fileType, fileStatus, split, reviewStatus, sortBy, sortOrder]);
 
   useEffect(() => {
     if (!dataset?.auto_scan_on_open || !dataset.root_path || autoScannedDatasetIds.current.has(dataset.id)) {
@@ -263,7 +271,27 @@ export default function DatasetDetailPage() {
   }
 
   function handleAnnotate(sample: Sample) {
-    navigate(`/datasets/${datasetId}/annotate?sample=${sample.id}`);
+    const params = new URLSearchParams({
+      sample: String(sample.id),
+      sortBy,
+      sortOrder
+    });
+    if (debouncedSearch) {
+      params.set("search", debouncedSearch);
+    }
+    if (fileStatus) {
+      params.set("fileStatus", fileStatus);
+    }
+    if (debouncedTag) {
+      params.set("tag", debouncedTag);
+    }
+    if (split) {
+      params.set("split", split);
+    }
+    if (reviewStatus) {
+      params.set("reviewStatus", reviewStatus);
+    }
+    navigate(`/datasets/${datasetId}/annotate?${params.toString()}`);
   }
 
   async function handleSave(payload: { split: string | null; notes: string | null; tags: string[] }) {
@@ -459,6 +487,7 @@ export default function DatasetDetailPage() {
           fileStatus,
           tag: debouncedTag,
           split,
+          reviewStatus,
           sortBy,
           sortOrder
         })
@@ -493,12 +522,28 @@ export default function DatasetDetailPage() {
     setFileStatus("");
     setTag("");
     setSplit("");
+    setReviewStatus("");
+    setPage(1);
+  }
+
+  function applyGlobalFilters(nextFilters: {
+    fileType?: string;
+    fileStatus?: string;
+    tag?: string;
+    split?: string;
+    reviewStatus?: string;
+  }) {
+    setSearch("");
+    setFileType(nextFilters.fileType ?? "");
+    setFileStatus(nextFilters.fileStatus ?? "");
+    setTag(nextFilters.tag ?? "");
+    setSplit(nextFilters.split ?? "");
+    setReviewStatus(nextFilters.reviewStatus ?? "");
     setPage(1);
   }
 
   function filterFileType(nextFileType: string) {
-    setFileType(nextFileType);
-    setPage(1);
+    applyGlobalFilters({ fileType: nextFileType });
   }
 
   function toggleVisibleSamples() {
@@ -514,15 +559,13 @@ export default function DatasetDetailPage() {
   }
 
   function filterMissing(status: "missing" | "permission_denied" = "missing") {
-    setFileStatus(status);
-    setPage(1);
+    applyGlobalFilters({ fileStatus: status });
     setIssueModal(null);
     setQualityOpen(false);
   }
 
   function filterDuplicates() {
-    setFileStatus("duplicate");
-    setPage(1);
+    applyGlobalFilters({ fileStatus: "duplicate" });
     setIssueModal(null);
   }
 
@@ -594,7 +637,7 @@ export default function DatasetDetailPage() {
       <section className="mx-auto max-w-7xl space-y-5 px-5 py-6">
         {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-7">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-8">
           <StatCard
             label="样本"
             value={stats?.sample_count ?? 0}
@@ -625,6 +668,13 @@ export default function DatasetDetailPage() {
             onClick={() => setTagStatsOpen(true)}
           />
           <StatCard
+            label="标注"
+            value={annotatedSamples}
+            icon={<ClipboardCheck size={18} />}
+            tone={annotationCount > 0 ? "info" : "neutral"}
+            actionLabel={`${annotationCount} 对象`}
+          />
+          <StatCard
             label="缺失"
             value={unavailableCount}
             icon={<AlertTriangle size={18} />}
@@ -650,6 +700,36 @@ export default function DatasetDetailPage() {
           <span>未划分：{stats?.by_split.unassigned ?? 0}</span>
         </div>
 
+        <div className="grid gap-3 rounded-lg border border-line bg-white p-3 text-sm shadow-sm lg:grid-cols-[minmax(0,1fr)_minmax(280px,1.2fr)]">
+          <div className="flex flex-wrap items-center gap-2 text-gray-600">
+            <span className="font-medium text-ink">审查状态</span>
+            <button type="button" onClick={() => applyGlobalFilters({ reviewStatus: "unlabeled" })} className="rounded-md border border-line px-2.5 py-1 text-xs hover:bg-gray-50">
+              未标注 {stats?.by_review_status.unlabeled ?? 0}
+            </button>
+            <button type="button" onClick={() => applyGlobalFilters({ reviewStatus: "in_review" })} className="rounded-md border border-line px-2.5 py-1 text-xs hover:bg-gray-50">
+              待审核 {stats?.by_review_status.in_review ?? 0}
+            </button>
+            <button type="button" onClick={() => applyGlobalFilters({ reviewStatus: "approved" })} className="rounded-md border border-line px-2.5 py-1 text-xs hover:bg-gray-50">
+              已通过 {stats?.by_review_status.approved ?? 0}
+            </button>
+            <button type="button" onClick={() => applyGlobalFilters({ reviewStatus: "rejected" })} className="rounded-md border border-line px-2.5 py-1 text-xs hover:bg-gray-50">
+              已拒绝 {stats?.by_review_status.rejected ?? 0}
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-gray-600 lg:justify-end">
+            <span className="font-medium text-ink">标注类别</span>
+            {annotationLabelRows.length > 0 ? (
+              annotationLabelRows.map(([label, count]) => (
+                <button key={label} type="button" onClick={() => applyGlobalFilters({ tag: label })} className="rounded-md border border-line px-2.5 py-1 text-xs hover:bg-gray-50">
+                  {label} {count}
+                </button>
+              ))
+            ) : (
+              <span className="text-xs text-gray-400">暂无对象类别</span>
+            )}
+          </div>
+        </div>
+
         {lastScanResult && (
           <div className="grid gap-2 rounded-lg border border-line bg-white p-3 text-sm shadow-sm sm:grid-cols-3 xl:grid-cols-7">
             <span>扫描 {lastScanResult.scanned}</span>
@@ -668,11 +748,13 @@ export default function DatasetDetailPage() {
           fileStatus={fileStatus}
           tag={tag}
           split={split}
+          reviewStatus={reviewStatus}
           onSearchChange={setSearch}
           onFileTypeChange={setFileType}
           onFileStatusChange={setFileStatus}
           onTagChange={setTag}
           onSplitChange={setSplit}
+          onReviewStatusChange={setReviewStatus}
           onClear={clearFilters}
         />
 
@@ -854,13 +936,11 @@ export default function DatasetDetailPage() {
           setTagsOpen(true);
         }}
         onFilterTag={(tagName) => {
-          setTag(tagName);
-          setPage(1);
+          applyGlobalFilters({ tag: tagName });
           setTagStatsOpen(false);
         }}
         onFilterUnlabeled={() => {
-          setTag("__untagged__");
-          setPage(1);
+          applyGlobalFilters({ tag: "__untagged__" });
           setTagStatsOpen(false);
         }}
       />
@@ -902,13 +982,11 @@ export default function DatasetDetailPage() {
           filterMissing((stats?.by_status.missing ?? 0) > 0 ? "missing" : "permission_denied");
         }}
         onFilterUnassigned={() => {
-          setSplit("unassigned");
-          setPage(1);
+          applyGlobalFilters({ split: "unassigned" });
           setQualityOpen(false);
         }}
         onFilterUnlabeled={() => {
-          setTag("__untagged__");
-          setPage(1);
+          applyGlobalFilters({ tag: "__untagged__" });
           setQualityOpen(false);
         }}
         onOpenRepairMissing={() => {

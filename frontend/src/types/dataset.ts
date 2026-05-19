@@ -80,6 +80,16 @@ export interface SampleListResponse {
   sort_order: "asc" | "desc" | string;
 }
 
+export interface SampleNavigationResponse {
+  current_sample: Sample | null;
+  previous_sample: Sample | null;
+  next_sample: Sample | null;
+  current_index: number | null;
+  total: number;
+  sort_by: string;
+  sort_order: "asc" | "desc" | string;
+}
+
 export interface SampleUpdate {
   split?: string | null;
   review_status?: string | null;
@@ -160,6 +170,7 @@ export interface AnnotationReplaceItem {
 export interface AnnotationReplaceRequest {
   annotations: AnnotationReplaceItem[];
   review_status?: string | null;
+  sync_sample_tags?: boolean;
 }
 
 export interface DatasetStats {
@@ -175,6 +186,9 @@ export interface DatasetStats {
   duplicate_groups: number;
   duplicate_samples: number;
   unlabeled_samples: number;
+  annotated_samples: number;
+  annotation_count: number;
+  by_annotation_label: Record<string, number>;
 }
 
 export interface ScanResult {

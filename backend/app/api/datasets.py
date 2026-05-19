@@ -14,6 +14,7 @@ from app.schemas.sample import (
     MissingSampleRepairResult,
     SampleDeleteResult,
     SampleListResponse,
+    SampleNavigationResponse,
 )
 from app.schemas.scan import ScanRequest, ScanResult
 from app.schemas.split import SplitPlanRequest, SplitPlanResult
@@ -106,6 +107,34 @@ def list_dataset_samples(
         page_size,
         sort_by,
         sort_order,
+    )
+
+
+@router.get("/datasets/{dataset_id}/samples/navigation", response_model=SampleNavigationResponse)
+def dataset_sample_navigation(
+    dataset_id: int,
+    sample_id: int | None = Query(default=None),
+    search: str | None = Query(default=None),
+    file_status: str | None = Query(default=None),
+    tag: str | None = Query(default=None),
+    split: str | None = Query(default=None),
+    review_status: str | None = Query(default=None),
+    sort_by: str = Query(default="created_at"),
+    sort_order: str = Query(default="desc", pattern="^(asc|desc)$"),
+    session: Session = Depends(get_session),
+) -> SampleNavigationResponse:
+    dataset_service.get_dataset_or_404(session, dataset_id)
+    return sample_service.get_sample_navigation(
+        session,
+        dataset_id,
+        sample_id=sample_id,
+        search=search,
+        file_status=file_status,
+        tag=tag,
+        split=split,
+        review_status=review_status,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
 
 

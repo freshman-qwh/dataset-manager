@@ -33,3 +33,4 @@ class AnnotationRead(AnnotationBase):
 class AnnotationReplaceRequest(BaseModel):
     annotations: list[AnnotationCreate] = Field(default_factory=list)
     review_status: str | None = Field(default=None, max_length=40)
+    sync_sample_tags: bool = True

@@ -66,8 +66,13 @@ def replace_sample_annotations(
 
     now = utc_now()
     created: list[Annotation] = []
+    annotation_tags: list[Tag] = []
+    seen_tag_ids: set[int] = set()
     for index, item in enumerate(payload.annotations):
         tag = _resolve_tag(session, sample.dataset_id, item)
+        if tag and tag.id is not None and tag.id not in seen_tag_ids:
+            annotation_tags.append(tag)
+            seen_tag_ids.add(tag.id)
         annotation = Annotation(
             sample_id=sample.id or 0,
             dataset_id=sample.dataset_id,
@@ -93,6 +98,8 @@ def replace_sample_annotations(
         sample.review_status = _validate_review_status(payload.review_status)
     elif created and sample.review_status == "unlabeled":
         sample.review_status = "in_review"
+    if payload.sync_sample_tags:
+        sample.tags = annotation_tags
     sample.updated_at = now
     session.add(sample)
     session.commit()

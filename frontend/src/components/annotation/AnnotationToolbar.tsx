@@ -47,8 +47,8 @@ export default function AnnotationToolbar({
   onDeleteActive
 }: AnnotationToolbarProps) {
   return (
-    <aside className="flex w-full flex-col gap-3 border-b border-line bg-white p-3 lg:w-20 lg:border-b-0 lg:border-r">
-      <div className="flex gap-2 lg:flex-col">
+    <aside className="flex w-full flex-col gap-3 border-b border-line bg-white p-3 lg:w-32 lg:border-b-0 lg:border-r">
+      <div className="flex gap-2 lg:flex-col lg:items-center">
         {tools.map((item) => (
           <button
             key={item.id}
@@ -66,7 +66,7 @@ export default function AnnotationToolbar({
         ))}
       </div>
       <div className="h-px bg-line lg:w-full" />
-      <div className="flex gap-2 lg:flex-col">
+      <div className="flex gap-2 lg:flex-col lg:items-center">
         <button
           type="button"
           title="撤销"
@@ -96,20 +96,25 @@ export default function AnnotationToolbar({
         </button>
       </div>
       <div className="h-px bg-line lg:w-full" />
-      <label className="min-w-48 flex-1 lg:min-w-0 lg:flex-none">
+      <label className="min-w-48 flex-1 lg:w-full lg:min-w-0 lg:flex-none">
         <span className="sr-only">当前类别</span>
-        <input
+        <span aria-hidden="true" className="mb-1 hidden text-[11px] font-medium text-gray-500 lg:block">
+          当前类别
+        </span>
+        <select
           value={label}
-          list="annotation-label-options"
+          title={label}
           onChange={(event) => onLabelChange(event.target.value)}
-          className="h-10 w-full rounded-lg border border-line px-3 text-sm outline-none transition focus:border-gray-900 lg:w-14 lg:px-2"
-          placeholder="类别"
-        />
-        <datalist id="annotation-label-options">
+          className="h-10 w-full rounded-lg border border-line bg-white px-3 text-sm outline-none transition focus:border-gray-900 lg:px-2"
+        >
+          {label && !tags.some((tag) => tag.name === label) && <option value={label}>{label}</option>}
+          {tags.length === 0 && <option value={label || "object"}>{label || "object"}</option>}
           {tags.map((tag) => (
-            <option key={tag.id} value={tag.name} />
+            <option key={tag.id} value={tag.name}>
+              {tag.name}
+            </option>
           ))}
-        </datalist>
+        </select>
       </label>
       <button
         type="button"

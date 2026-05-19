@@ -49,6 +49,22 @@ interface DraftShape {
   points: number[];
 }
 
+export interface AnnotationDraftState {
+  active: boolean;
+  shapeType: AnnotationShapeType | null;
+  canCommit: boolean;
+}
+
+export interface AnnotationDraftCommand {
+  id: number;
+  action: "commit" | "cancel";
+}
+
+export interface AnnotationFocusCommand {
+  id: number;
+  clientId: string;
+}
+
 interface AnnotationCanvasProps {
   imageUrl: string;
   objects: AnnotationObject[];
@@ -62,6 +78,11 @@ interface AnnotationCanvasProps {
   onActiveObjectChange: (clientId: string | null) => void;
   onStatusChange: (status: string) => void;
   onDeleteActive: () => void;
+  draftCommand?: AnnotationDraftCommand | null;
+  focusCommand?: AnnotationFocusCommand | null;
+  onDraftStateChange?: (state: AnnotationDraftState) => void;
+  onDraftCommandHandled?: (commandId: number) => void;
+  onFocusCommandHandled?: (commandId: number) => void;
 }
 
 const fallbackColors = ["#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c", "#0891b2", "#be123c"];
@@ -149,6 +170,41 @@ function clampPoint(point: Point, imageSize: Size | null): Point {
   };
 }
 
+function canCommitDraft(draft: DraftShape | null): boolean {
+  if (!draft) {
+    return false;
+  }
+  if (draft.shape_type === "polygon") {
+    return draft.points.length >= 6;
+  }
+  if (draft.shape_type === "rectangle") {
+    const [xtl, ytl, xbr, ybr] = normalizeRectangle(draft.points);
+    return xbr - xtl >= 3 && ybr - ytl >= 3;
+  }
+  return false;
+}
+
+function getObjectBounds(object: AnnotationObject): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  const vertices = getObjectVertices(object);
+  if (!vertices.length) {
+    return null;
+  }
+  return vertices.reduce(
+    (bounds, point) => ({
+      minX: Math.min(bounds.minX, point.x),
+      minY: Math.min(bounds.minY, point.y),
+      maxX: Math.max(bounds.maxX, point.x),
+      maxY: Math.max(bounds.maxY, point.y)
+    }),
+    {
+      minX: vertices[0].x,
+      minY: vertices[0].y,
+      maxX: vertices[0].x,
+      maxY: vertices[0].y
+    }
+  );
+}
+
 export default function AnnotationCanvas({
   imageUrl,
   objects,
@@ -161,17 +217,26 @@ export default function AnnotationCanvas({
   onObjectsCommit,
   onActiveObjectChange,
   onStatusChange,
-  onDeleteActive
+  onDeleteActive,
+  draftCommand = null,
+  focusCommand = null,
+  onDraftStateChange,
+  onDraftCommandHandled,
+  onFocusCommandHandled
 }: AnnotationCanvasProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const objectsRef = useRef<AnnotationObject[]>(objects);
   const dragRef = useRef<DragState | null>(null);
+  const handledDraftCommandIdRef = useRef<number | null>(null);
+  const handledFocusCommandIdRef = useRef<number | null>(null);
   const [viewport, setViewport] = useState<Size>({ width: 0, height: 0 });
   const [imageSize, setImageSize] = useState<Size | null>(null);
   const [transform, setTransform] = useState<Transform>({ scale: 1, translateX: 0, translateY: 0 });
   const [draft, setDraft] = useState<DraftShape | null>(null);
   const [fitKey, setFitKey] = useState(0);
+  const [imageError, setImageError] = useState(false);
+  const [imageReloadToken, setImageReloadToken] = useState(0);
 
   useEffect(() => {
     objectsRef.current = objects;
@@ -181,6 +246,8 @@ export default function AnnotationCanvas({
     setDraft(null);
     dragRef.current = null;
     setImageSize(null);
+    setImageError(false);
+    setImageReloadToken(0);
     setTransform({ scale: 1, translateX: 0, translateY: 0 });
     setFitKey((value) => value + 1);
   }, [imageUrl]);
@@ -216,9 +283,88 @@ export default function AnnotationCanvas({
     });
   }, [imageSize, viewport]);
 
+  function commitDraftShape(currentDraft: DraftShape | null): boolean {
+    if (!canCommitDraft(currentDraft)) {
+      return false;
+    }
+    if (currentDraft?.shape_type === "polygon") {
+      commitNewObject("polygon", currentDraft.points);
+      setDraft(null);
+      return true;
+    }
+    if (currentDraft?.shape_type === "rectangle") {
+      const [xtl, ytl, xbr, ybr] = normalizeRectangle(currentDraft.points);
+      commitNewObject("rectangle", [xtl, ytl, xbr, ybr]);
+      setDraft(null);
+      return true;
+    }
+    return false;
+  }
+
+  function focusObject(clientId: string): boolean {
+    if (!imageSize || viewport.width <= 0 || viewport.height <= 0) {
+      return false;
+    }
+    const object = objectsRef.current.find((item) => item.client_id === clientId);
+    if (!object) {
+      return false;
+    }
+    const bounds = getObjectBounds(object);
+    if (!bounds) {
+      return false;
+    }
+    const centerX = (bounds.minX + bounds.maxX) / 2;
+    const centerY = (bounds.minY + bounds.maxY) / 2;
+    const objectWidth = Math.max(bounds.maxX - bounds.minX, imageSize.width * 0.04, 12);
+    const objectHeight = Math.max(bounds.maxY - bounds.minY, imageSize.height * 0.04, 12);
+    const fittedScale = Math.min((viewport.width - 96) / objectWidth, (viewport.height - 96) / objectHeight);
+    const nextScale = Math.min(Math.max(fittedScale, transform.scale, 0.05), 12);
+    setTransform({
+      scale: nextScale,
+      translateX: viewport.width / 2 - centerX * nextScale,
+      translateY: viewport.height / 2 - centerY * nextScale
+    });
+    return true;
+  }
+
   useEffect(() => {
     fitImage();
   }, [fitImage, fitKey]);
+
+  useEffect(() => {
+    onDraftStateChange?.({
+      active: Boolean(draft),
+      shapeType: draft?.shape_type ?? null,
+      canCommit: canCommitDraft(draft)
+    });
+  }, [draft, onDraftStateChange]);
+
+  useEffect(() => {
+    if (!draftCommand || handledDraftCommandIdRef.current === draftCommand.id) {
+      return;
+    }
+    handledDraftCommandIdRef.current = draftCommand.id;
+    if (draftCommand.action === "cancel") {
+      setDraft(null);
+      dragRef.current = null;
+      onDraftCommandHandled?.(draftCommand.id);
+      return;
+    }
+    commitDraftShape(draft);
+    dragRef.current = null;
+    onDraftCommandHandled?.(draftCommand.id);
+  }, [draftCommand, draft, onDraftCommandHandled]);
+
+  useEffect(() => {
+    if (!focusCommand || handledFocusCommandIdRef.current === focusCommand.id) {
+      return;
+    }
+    if (!focusObject(focusCommand.clientId)) {
+      return;
+    }
+    handledFocusCommandIdRef.current = focusCommand.id;
+    onFocusCommandHandled?.(focusCommand.id);
+  }, [focusCommand, imageSize, viewport, onFocusCommandHandled]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -227,6 +373,10 @@ export default function AnnotationCanvas({
         return;
       }
       if (event.key === "Escape") {
+        if (draft || dragRef.current?.type === "drawing-rectangle") {
+          event.preventDefault();
+          onStatusChange("已取消当前绘制草稿");
+        }
         setDraft(null);
         dragRef.current = null;
       } else if (event.key === "Backspace" && draft?.shape_type === "polygon") {
@@ -242,8 +392,7 @@ export default function AnnotationCanvas({
         onDeleteActive();
       } else if (event.key === "Enter" && draft?.shape_type === "polygon" && draft.points.length >= 6) {
         event.preventDefault();
-        commitNewObject("polygon", draft.points);
-        setDraft(null);
+        commitDraftShape(draft);
       }
     }
     window.addEventListener("keydown", handleKeyDown);
@@ -327,8 +476,7 @@ export default function AnnotationCanvas({
       if (currentDraft?.points.length) {
         const first = { x: currentDraft.points[0], y: currentDraft.points[1] };
         if (currentDraft.points.length >= 6 && distance(first, point) <= 10 / transform.scale) {
-          commitNewObject("polygon", currentDraft.points);
-          setDraft(null);
+          commitDraftShape(currentDraft);
           return;
         }
       }
@@ -428,10 +576,7 @@ export default function AnnotationCanvas({
       return;
     }
     if (drag.type === "drawing-rectangle" && draft?.shape_type === "rectangle") {
-      const [xtl, ytl, xbr, ybr] = normalizeRectangle(draft.points);
-      if (xbr - xtl >= 3 && ybr - ytl >= 3) {
-        commitNewObject("rectangle", [xtl, ytl, xbr, ybr]);
-      }
+      commitDraftShape(draft);
       setDraft(null);
     } else if (drag.type === "object" || drag.type === "vertex") {
       onObjectsCommit(objectsRef.current, drag.previousObjects);
@@ -467,31 +612,53 @@ export default function AnnotationCanvas({
     [objects]
   );
   const vertexRadius = Math.max(4 / transform.scale, 1.5);
+  const imageSrc = imageReloadToken
+    ? `${imageUrl}${imageUrl.includes("?") ? "&" : "?"}reload=${imageReloadToken}`
+    : imageUrl;
 
   return (
     <div ref={wrapperRef} className="relative min-h-0 flex-1 overflow-hidden bg-gray-100">
+      <img
+        key={imageSrc}
+        src={imageSrc}
+        alt=""
+        className="pointer-events-none absolute left-0 top-0 max-w-none select-none"
+        style={{
+          width: imageSize?.width,
+          height: imageSize?.height,
+          opacity: imageSize && !imageError ? 1 : 0,
+          transform: `translate(${transform.translateX}px, ${transform.translateY}px) scale(${transform.scale})`,
+          transformOrigin: "top left"
+        }}
+        draggable={false}
+        onLoad={(event) => {
+          const image = event.currentTarget;
+          setImageError(false);
+          setImageSize({ width: image.naturalWidth, height: image.naturalHeight });
+          setFitKey((value) => value + 1);
+        }}
+        onError={() => {
+          setImageError(true);
+          setImageSize(null);
+          onStatusChange("图片加载失败");
+        }}
+      />
       <svg
         ref={svgRef}
-        className="h-full w-full touch-none"
+        className="absolute inset-0 h-full w-full touch-none"
         onPointerDown={handleBackgroundPointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
         onWheel={handleWheel}
       >
+        <defs>
+          <filter id="annotation-active-glow" x="-30%" y="-30%" width="160%" height="160%">
+            <feDropShadow dx="0" dy="0" stdDeviation="4" floodColor="#111827" floodOpacity="0.35" />
+          </filter>
+        </defs>
         <g transform={`translate(${transform.translateX} ${transform.translateY}) scale(${transform.scale})`}>
-          {imageSize && (
-            <image
-              href={imageUrl}
-              x={0}
-              y={0}
-              width={imageSize.width}
-              height={imageSize.height}
-              preserveAspectRatio="none"
-              pointerEvents="none"
-            />
-          )}
-          {sortedObjects.map(({ object, index }) => {
+          {imageSize && sortedObjects.map(({ object, index }) => {
             if (object.hidden) {
               return null;
             }
@@ -502,6 +669,7 @@ export default function AnnotationCanvas({
               strokeWidth: active ? 3 : 2,
               vectorEffect: "non-scaling-stroke" as const,
               opacity: object.locked ? 0.55 : 1,
+              filter: active ? "url(#annotation-active-glow)" : undefined,
               onPointerDown: (event: PointerEvent<SVGElement>) => handleObjectPointerDown(event, object)
             };
             return (
@@ -557,7 +725,7 @@ export default function AnnotationCanvas({
               </g>
             );
           })}
-          {draft?.shape_type === "rectangle" && (
+          {imageSize && draft?.shape_type === "rectangle" && (
             <rect
               x={normalizeRectangle(draft.points)[0]}
               y={normalizeRectangle(draft.points)[1]}
@@ -571,7 +739,7 @@ export default function AnnotationCanvas({
               pointerEvents="none"
             />
           )}
-          {draft?.shape_type === "polygon" && (
+          {imageSize && draft?.shape_type === "polygon" && (
             <g pointerEvents="none">
               <polyline
                 points={polygonPoints(draft.points)}
@@ -597,16 +765,23 @@ export default function AnnotationCanvas({
           )}
         </g>
       </svg>
-      <img
-        src={imageUrl}
-        alt=""
-        className="hidden"
-        onLoad={(event) => {
-          const image = event.currentTarget;
-          setImageSize({ width: image.naturalWidth, height: image.naturalHeight });
-          setFitKey((value) => value + 1);
-        }}
-      />
+      {!imageSize && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-gray-500">
+          {imageError ? "图片加载失败" : "图片加载中"}
+        </div>
+      )}
+      {imageError && (
+        <button
+          type="button"
+          onClick={() => {
+            setImageError(false);
+            setImageReloadToken(Date.now());
+          }}
+          className="absolute left-1/2 top-1/2 mt-8 -translate-x-1/2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+        >
+          重试加载
+        </button>
+      )}
       <button
         type="button"
         onClick={fitImage}
@@ -617,10 +792,7 @@ export default function AnnotationCanvas({
       {tool === "polygon" && draft?.shape_type === "polygon" && draft.points.length >= 6 && (
         <button
           type="button"
-          onClick={() => {
-            commitNewObject("polygon", draft.points);
-            setDraft(null);
-          }}
+          onClick={() => commitDraftShape(draft)}
           className="absolute bottom-4 left-4 rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-gray-800"
         >
           完成多边形
