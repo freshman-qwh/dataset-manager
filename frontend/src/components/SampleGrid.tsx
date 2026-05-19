@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckSquare, Database, FileText, Image as ImageIcon, Square, Video } from "lucide-react";
+import { AlertTriangle, CheckSquare, Database, FileText, Image as ImageIcon, PencilLine, Square, Video } from "lucide-react";
 
 import { getSampleFileUrl } from "../api/client";
 import type { Sample } from "../types/dataset";
@@ -10,6 +10,7 @@ interface SampleGridProps {
   selectedSampleIds: Set<number>;
   onSelect: (sample: Sample) => void;
   onToggleSelect: (sampleId: number) => void;
+  onAnnotate?: (sample: Sample) => void;
 }
 
 function formatBytes(value: number): string {
@@ -70,7 +71,14 @@ function statusLabel(status: string): string {
   return "正常";
 }
 
-export default function SampleGrid({ samples, selectedId, selectedSampleIds, onSelect, onToggleSelect }: SampleGridProps) {
+export default function SampleGrid({
+  samples,
+  selectedId,
+  selectedSampleIds,
+  onSelect,
+  onToggleSelect,
+  onAnnotate
+}: SampleGridProps) {
   if (samples.length === 0) {
     return (
       <div className="flex min-h-72 items-center justify-center rounded-lg border border-dashed border-line bg-white text-sm text-gray-500">
@@ -107,7 +115,11 @@ export default function SampleGrid({ samples, selectedId, selectedSampleIds, onS
               <div className="aspect-[4/3] overflow-hidden bg-gray-50">
                 <FilePreview sample={sample} />
               </div>
-              <div className="space-y-2 p-3">
+            </button>
+          </div>
+          <div className="space-y-2 p-3">
+            <div className="flex items-start gap-2">
+              <button type="button" onClick={() => onSelect(sample)} className="min-w-0 flex-1 text-left">
                 <div className="flex items-center gap-2">
                   {sample.file_type === "image" ? (
                     <ImageIcon className="shrink-0 text-gray-400" size={16} />
@@ -118,35 +130,45 @@ export default function SampleGrid({ samples, selectedId, selectedSampleIds, onS
                   )}
                   <div className="min-w-0 truncate text-sm font-medium text-ink">{sample.filename}</div>
                 </div>
-                <div className="flex items-center justify-between text-xs text-gray-500">
-                  <span>{sample.extension || sample.file_type}</span>
-                  <span>{formatBytes(sample.file_size)}</span>
+                <div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 text-xs text-gray-500">
+                  <span className="min-w-0 truncate">{sample.extension || sample.file_type}</span>
+                  <span className="shrink-0 whitespace-nowrap tabular-nums">{formatBytes(sample.file_size)}</span>
                 </div>
-                {(sample.split || sample.tags.length > 0) && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {sample.split && (
-                      <span className="rounded-md border border-gray-900 bg-gray-900 px-2 py-0.5 text-xs font-medium text-white">
-                        {sample.split}
-                      </span>
-                    )}
-                    {sample.tags.slice(0, 3).map((tagItem) => (
-                      <span
-                        key={tagItem.id}
-                        className="rounded-md border border-line bg-gray-50 px-2 py-0.5 text-xs text-gray-600"
-                        style={tagChipStyle(tagItem.color)}
-                      >
-                        {tagItem.name}
-                      </span>
-                    ))}
-                    {sample.tags.length > 3 && (
-                      <span className="rounded-md border border-line bg-gray-50 px-2 py-0.5 text-xs text-gray-500">
-                        +{sample.tags.length - 3}
-                      </span>
-                    )}
-                  </div>
+              </button>
+              {onAnnotate && sample.file_type === "image" && sample.file_status === "normal" && (
+                <button
+                  type="button"
+                  title="打开标注工作区"
+                  onClick={() => onAnnotate(sample)}
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line bg-white text-gray-800 shadow-sm hover:bg-gray-50"
+                >
+                  <PencilLine size={17} />
+                </button>
+              )}
+            </div>
+            {(sample.split || sample.tags.length > 0) && (
+              <div className="flex flex-wrap gap-1.5">
+                {sample.split && (
+                  <span className="rounded-md border border-gray-900 bg-gray-900 px-2 py-0.5 text-xs font-medium text-white">
+                    {sample.split}
+                  </span>
+                )}
+                {sample.tags.slice(0, 3).map((tagItem) => (
+                  <span
+                    key={tagItem.id}
+                    className="rounded-md border border-line bg-gray-50 px-2 py-0.5 text-xs text-gray-600"
+                    style={tagChipStyle(tagItem.color)}
+                  >
+                    {tagItem.name}
+                  </span>
+                ))}
+                {sample.tags.length > 3 && (
+                  <span className="rounded-md border border-line bg-gray-50 px-2 py-0.5 text-xs text-gray-500">
+                    +{sample.tags.length - 3}
+                  </span>
                 )}
               </div>
-            </button>
+            )}
           </div>
         </div>
       ))}

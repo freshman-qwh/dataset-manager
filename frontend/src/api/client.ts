@@ -1,6 +1,8 @@
 import axios from "axios";
 
 import type {
+  AnnotationObject,
+  AnnotationReplaceRequest,
   Dataset,
   DatasetCreate,
   DatasetStats,
@@ -16,6 +18,7 @@ import type {
   Sample,
   SampleDeleteResult,
   SampleListResponse,
+  SampleNavigationResponse,
   SampleQuery,
   SamplePreview,
   SampleUpdate,
@@ -123,9 +126,42 @@ export async function listSamples(params: SampleQuery): Promise<SampleListRespon
   return data;
 }
 
+export async function getSampleNavigation(params: Omit<SampleQuery, "fileType" | "page" | "pageSize"> & { sampleId?: number | null }): Promise<SampleNavigationResponse> {
+  const { datasetId, sampleId, search, fileStatus, tag, split, reviewStatus, sortBy, sortOrder } = params;
+  const { data } = await client.get<SampleNavigationResponse>(`/datasets/${datasetId}/samples/navigation`, {
+    params: {
+      sample_id: sampleId || undefined,
+      search: search || undefined,
+      file_status: fileStatus || undefined,
+      tag: tag || undefined,
+      split: split || undefined,
+      review_status: reviewStatus || undefined,
+      sort_by: sortBy,
+      sort_order: sortOrder
+    }
+  });
+  return data;
+}
+
 export async function getSample(sampleId: number): Promise<Sample> {
   const { data } = await client.get<Sample>(`/samples/${sampleId}`);
   return data;
+}
+
+export async function listSampleAnnotations(sampleId: number): Promise<AnnotationObject[]> {
+  const { data } = await client.get<Omit<AnnotationObject, "client_id">[]>(`/samples/${sampleId}/annotations`);
+  return data.map((item) => ({ ...item, client_id: `server-${item.id}` }));
+}
+
+export async function replaceSampleAnnotations(
+  sampleId: number,
+  payload: AnnotationReplaceRequest
+): Promise<AnnotationObject[]> {
+  const { data } = await client.put<Omit<AnnotationObject, "client_id">[]>(
+    `/samples/${sampleId}/annotations`,
+    payload
+  );
+  return data.map((item) => ({ ...item, client_id: `server-${item.id}` }));
 }
 
 export async function updateSample(sampleId: number, payload: SampleUpdate): Promise<Sample> {

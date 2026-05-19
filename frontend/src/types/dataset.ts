@@ -80,6 +80,16 @@ export interface SampleListResponse {
   sort_order: "asc" | "desc" | string;
 }
 
+export interface SampleNavigationResponse {
+  current_sample: Sample | null;
+  previous_sample: Sample | null;
+  next_sample: Sample | null;
+  current_index: number | null;
+  total: number;
+  sort_by: string;
+  sort_order: "asc" | "desc" | string;
+}
+
 export interface SampleUpdate {
   split?: string | null;
   review_status?: string | null;
@@ -119,6 +129,50 @@ export interface SamplePreview {
   error: string | null;
 }
 
+export type AnnotationShapeType = "rectangle" | "polygon" | "point" | "points";
+
+export interface AnnotationObject {
+  id?: number;
+  sample_id?: number;
+  dataset_id?: number;
+  client_id: string;
+  label: string;
+  tag_id: number | null;
+  shape_type: AnnotationShapeType;
+  points: number[];
+  flags: Record<string, boolean>;
+  attributes: Record<string, unknown>;
+  group_id: number | null;
+  z_order: number;
+  locked: boolean;
+  hidden: boolean;
+  source: "manual" | "file" | "auto" | string;
+  notes: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface AnnotationReplaceItem {
+  label: string;
+  tag_id?: number | null;
+  shape_type: AnnotationShapeType;
+  points: number[];
+  flags?: Record<string, boolean>;
+  attributes?: Record<string, unknown>;
+  group_id?: number | null;
+  z_order?: number;
+  locked?: boolean;
+  hidden?: boolean;
+  source?: string;
+  notes?: string | null;
+}
+
+export interface AnnotationReplaceRequest {
+  annotations: AnnotationReplaceItem[];
+  review_status?: string | null;
+  sync_sample_tags?: boolean;
+}
+
 export interface DatasetStats {
   dataset_id: number;
   sample_count: number;
@@ -132,6 +186,9 @@ export interface DatasetStats {
   duplicate_groups: number;
   duplicate_samples: number;
   unlabeled_samples: number;
+  annotated_samples: number;
+  annotation_count: number;
+  by_annotation_label: Record<string, number>;
 }
 
 export interface ScanResult {

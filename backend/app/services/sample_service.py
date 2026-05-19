@@ -16,6 +16,7 @@ from app.schemas.sample import (
     MissingSampleRepairResult,
     SampleDeleteResult,
     SampleListResponse,
+    SampleNavigationResponse,
     SamplePreview,
     SampleRepairRequest,
     SampleRead,
@@ -135,7 +136,10 @@ def get_filtered_samples(
 
     sort_field = sort_by if sort_by in SORTABLE_SAMPLE_FIELDS else "created_at"
     reverse = sort_order.lower() != "asc"
-    return sorted(samples, key=lambda sample: _sample_sort_value(sample, sort_field), reverse=reverse)
+    sorted_samples = sorted(samples, key=lambda sample: _sample_sort_value(sample, sort_field), reverse=reverse)
+    if duplicate_only:
+        return _group_duplicate_samples(sorted_samples)
+    return sorted_samples
 
 
 def list_samples(
@@ -176,6 +180,58 @@ def list_samples(
         total=len(samples),
         page=safe_page,
         page_size=safe_page_size,
+        sort_by=safe_sort_by,
+        sort_order=safe_sort_order,
+    )
+
+
+def get_sample_navigation(
+    session: Session,
+    dataset_id: int,
+    sample_id: int | None = None,
+    search: str | None = None,
+    file_status: str | None = None,
+    tag: str | None = None,
+    split: str | None = None,
+    review_status: str | None = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+) -> SampleNavigationResponse:
+    safe_sort_by = sort_by if sort_by in SORTABLE_SAMPLE_FIELDS else "created_at"
+    safe_sort_order = "asc" if sort_order.lower() == "asc" else "desc"
+    context_status = "duplicate" if file_status == "duplicate" else "normal"
+    samples = get_filtered_samples(
+        session,
+        dataset_id,
+        search=search,
+        file_type="image",
+        file_status=context_status,
+        tag=tag,
+        split=split,
+        review_status=review_status,
+        sort_by=safe_sort_by,
+        sort_order=safe_sort_order,
+    )
+    # The duplicate status is a virtual filter. Keep the annotation workspace
+    # constrained to normal image files after duplicate hash filtering.
+    samples = [sample for sample in samples if sample.file_type == "image" and sample.file_status == "normal"]
+
+    current_index: int | None = None
+    if sample_id is not None:
+        current_index = next((index for index, sample in enumerate(samples) if sample.id == sample_id), None)
+    elif samples:
+        current_index = 0
+
+    current_sample = samples[current_index] if current_index is not None else None
+    previous_sample = samples[current_index - 1] if current_index is not None and current_index > 0 else None
+    next_sample = samples[current_index + 1] if current_index is not None and current_index < len(samples) - 1 else None
+
+    return SampleNavigationResponse(
+        current_sample=to_sample_read(current_sample) if current_sample else None,
+        previous_sample=to_sample_read(previous_sample) if previous_sample else None,
+        next_sample=to_sample_read(next_sample) if next_sample else None,
+        current_index=current_index,
+        total=len(samples),
         sort_by=safe_sort_by,
         sort_order=safe_sort_order,
     )
@@ -412,6 +468,9 @@ def get_sample_preview(sample: Sample) -> SamplePreview:
 
 
 def _delete_samples(session: Session, samples: list[Sample]) -> None:
+    from app.services import annotation_service
+
+    annotation_service.delete_sample_annotations(session, [sample.id for sample in samples if sample.id is not None])
     for sample in samples:
         # Metadata-only delete: detach tag links and remove the database record.
         sample.tags.clear()
@@ -499,6 +558,17 @@ def _sample_sort_value(sample: Sample, sort_by: str):
     if isinstance(value, str):
         return value.casefold()
     return value
+
+
+def _group_duplicate_samples(samples: list[Sample]) -> list[Sample]:
+    grouped: dict[str, list[Sample]] = {}
+    group_order: list[str] = []
+    for sample in samples:
+        if sample.file_hash not in grouped:
+            grouped[sample.file_hash] = []
+            group_order.append(sample.file_hash)
+        grouped[sample.file_hash].append(sample)
+    return [sample for file_hash in group_order for sample in grouped[file_hash]]
 
 
 def _metadata_from_json(value: str | None) -> dict[str, object]:

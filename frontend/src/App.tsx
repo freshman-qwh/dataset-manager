@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 
+import AnnotationPage from "./pages/AnnotationPage";
 import DatasetDetailPage from "./pages/DatasetDetailPage";
 import DatasetListPage from "./pages/DatasetListPage";
 
@@ -8,6 +9,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<DatasetListPage />} />
       <Route path="/datasets/:datasetId" element={<DatasetDetailPage />} />
+      <Route path="/datasets/:datasetId/annotate" element={<AnnotationPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

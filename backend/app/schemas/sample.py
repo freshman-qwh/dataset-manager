@@ -99,3 +99,13 @@ class SampleListResponse(BaseModel):
     page_size: int
     sort_by: str
     sort_order: str
+
+
+class SampleNavigationResponse(BaseModel):
+    current_sample: SampleRead | None = None
+    previous_sample: SampleRead | None = None
+    next_sample: SampleRead | None = None
+    current_index: int | None = None
+    total: int
+    sort_by: str
+    sort_order: str

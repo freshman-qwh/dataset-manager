@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DatasetStats(BaseModel):
@@ -14,3 +14,6 @@ class DatasetStats(BaseModel):
     duplicate_groups: int = 0
     duplicate_samples: int = 0
     unlabeled_samples: int = 0
+    annotated_samples: int = 0
+    annotation_count: int = 0
+    by_annotation_label: dict[str, int] = Field(default_factory=dict)
