@@ -1,4 +1,13 @@
-import { type PointerEvent, useCallback, useEffect, useMemo, useRef, useState, type WheelEvent } from "react";
+import {
+  type DragEvent,
+  type PointerEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type WheelEvent
+} from "react";
 
 import type { AnnotationObject, AnnotationShapeType, Tag } from "../../types/dataset";
 import type { AnnotationTool } from "./AnnotationToolbar";
@@ -18,6 +27,8 @@ interface Transform {
   translateX: number;
   translateY: number;
 }
+
+type FocusObjectResult = "focused" | "not-ready" | "missing";
 
 type DragState =
   | {
@@ -230,6 +241,10 @@ export default function AnnotationCanvas({
   const dragRef = useRef<DragState | null>(null);
   const handledDraftCommandIdRef = useRef<number | null>(null);
   const handledFocusCommandIdRef = useRef<number | null>(null);
+  const previewFrameRef = useRef<number | null>(null);
+  const pendingPreviewObjectsRef = useRef<AnnotationObject[] | null>(null);
+  const statusFrameRef = useRef<number | null>(null);
+  const pendingStatusRef = useRef<string | null>(null);
   const [viewport, setViewport] = useState<Size>({ width: 0, height: 0 });
   const [imageSize, setImageSize] = useState<Size | null>(null);
   const [transform, setTransform] = useState<Transform>({ scale: 1, translateX: 0, translateY: 0 });
@@ -239,12 +254,32 @@ export default function AnnotationCanvas({
   const [imageReloadToken, setImageReloadToken] = useState(0);
 
   useEffect(() => {
+    if (dragRef.current) {
+      return;
+    }
     objectsRef.current = objects;
   }, [objects]);
+
+  useEffect(
+    () => () => {
+      if (previewFrameRef.current !== null) {
+        window.cancelAnimationFrame(previewFrameRef.current);
+      }
+      if (statusFrameRef.current !== null) {
+        window.cancelAnimationFrame(statusFrameRef.current);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     setDraft(null);
     dragRef.current = null;
+    pendingPreviewObjectsRef.current = null;
+    if (previewFrameRef.current !== null) {
+      window.cancelAnimationFrame(previewFrameRef.current);
+      previewFrameRef.current = null;
+    }
     setImageSize(null);
     setImageError(false);
     setImageReloadToken(0);
@@ -301,17 +336,17 @@ export default function AnnotationCanvas({
     return false;
   }
 
-  function focusObject(clientId: string): boolean {
-    if (!imageSize || viewport.width <= 0 || viewport.height <= 0) {
-      return false;
-    }
+  function focusObject(clientId: string): FocusObjectResult {
     const object = objectsRef.current.find((item) => item.client_id === clientId);
     if (!object) {
-      return false;
+      return "missing";
     }
     const bounds = getObjectBounds(object);
     if (!bounds) {
-      return false;
+      return "missing";
+    }
+    if (!imageSize || viewport.width <= 0 || viewport.height <= 0) {
+      return "not-ready";
     }
     const centerX = (bounds.minX + bounds.maxX) / 2;
     const centerY = (bounds.minY + bounds.maxY) / 2;
@@ -324,7 +359,7 @@ export default function AnnotationCanvas({
       translateX: viewport.width / 2 - centerX * nextScale,
       translateY: viewport.height / 2 - centerY * nextScale
     });
-    return true;
+    return "focused";
   }
 
   useEffect(() => {
@@ -359,12 +394,13 @@ export default function AnnotationCanvas({
     if (!focusCommand || handledFocusCommandIdRef.current === focusCommand.id) {
       return;
     }
-    if (!focusObject(focusCommand.clientId)) {
+    const focusResult = focusObject(focusCommand.clientId);
+    if (focusResult === "not-ready") {
       return;
     }
     handledFocusCommandIdRef.current = focusCommand.id;
     onFocusCommandHandled?.(focusCommand.id);
-  }, [focusCommand, imageSize, viewport, onFocusCommandHandled]);
+  }, [focusCommand, imageSize, objects, viewport, onFocusCommandHandled]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -449,7 +485,46 @@ export default function AnnotationCanvas({
     onActiveObjectChange(nextObject.client_id);
   }
 
+  function scheduleStatusChange(nextStatus: string) {
+    pendingStatusRef.current = nextStatus;
+    if (statusFrameRef.current !== null) {
+      return;
+    }
+    statusFrameRef.current = window.requestAnimationFrame(() => {
+      statusFrameRef.current = null;
+      const pendingStatus = pendingStatusRef.current;
+      pendingStatusRef.current = null;
+      if (pendingStatus !== null) {
+        onStatusChange(pendingStatus);
+      }
+    });
+  }
+
+  function scheduleObjectsPreview(nextObjects: AnnotationObject[]) {
+    pendingPreviewObjectsRef.current = nextObjects;
+    if (previewFrameRef.current !== null) {
+      return;
+    }
+    previewFrameRef.current = window.requestAnimationFrame(() => {
+      previewFrameRef.current = null;
+      const pendingObjects = pendingPreviewObjectsRef.current;
+      pendingPreviewObjectsRef.current = null;
+      if (pendingObjects) {
+        onObjectsPreview(pendingObjects);
+      }
+    });
+  }
+
+  function cancelPendingObjectsPreview() {
+    pendingPreviewObjectsRef.current = null;
+    if (previewFrameRef.current !== null) {
+      window.cancelAnimationFrame(previewFrameRef.current);
+      previewFrameRef.current = null;
+    }
+  }
+
   function handleBackgroundPointerDown(event: PointerEvent<SVGSVGElement>) {
+    event.preventDefault();
     if (!imageSize) {
       return;
     }
@@ -491,6 +566,7 @@ export default function AnnotationCanvas({
   }
 
   function handleObjectPointerDown(event: PointerEvent<SVGElement>, object: AnnotationObject) {
+    event.preventDefault();
     if (tool !== "select" || object.locked) {
       return;
     }
@@ -506,6 +582,7 @@ export default function AnnotationCanvas({
   }
 
   function handleVertexPointerDown(event: PointerEvent<SVGCircleElement>, object: AnnotationObject, vertexIndex: number) {
+    event.preventDefault();
     if (tool !== "select" || object.locked) {
       return;
     }
@@ -523,7 +600,7 @@ export default function AnnotationCanvas({
 
   function handlePointerMove(event: PointerEvent<SVGSVGElement>) {
     const imagePoint = clientToImage(event);
-    onStatusChange(
+    scheduleStatusChange(
       imageSize
         ? `x ${imagePoint.x.toFixed(1)} / y ${imagePoint.y.toFixed(1)} · ${(transform.scale * 100).toFixed(0)}%`
         : "图片加载中"
@@ -531,9 +608,6 @@ export default function AnnotationCanvas({
 
     const drag = dragRef.current;
     if (!drag) {
-      if (draft?.shape_type === "polygon") {
-        setDraft((current) => (current ? { ...current } : current));
-      }
       return;
     }
 
@@ -567,7 +641,7 @@ export default function AnnotationCanvas({
       return updateVertex(object, drag.vertexIndex, { x: imagePoint.x, y: imagePoint.y });
     });
     objectsRef.current = nextObjects;
-    onObjectsPreview(nextObjects);
+    scheduleObjectsPreview(nextObjects);
   }
 
   function handlePointerUp(event: PointerEvent<SVGSVGElement>) {
@@ -579,6 +653,7 @@ export default function AnnotationCanvas({
       commitDraftShape(draft);
       setDraft(null);
     } else if (drag.type === "object" || drag.type === "vertex") {
+      cancelPendingObjectsPreview();
       onObjectsCommit(objectsRef.current, drag.previousObjects);
     }
     dragRef.current = null;
@@ -651,6 +726,7 @@ export default function AnnotationCanvas({
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
         onWheel={handleWheel}
+        onDragStart={(event) => event.preventDefault()}
       >
         <defs>
           <filter id="annotation-active-glow" x="-30%" y="-30%" width="160%" height="160%">
@@ -670,6 +746,7 @@ export default function AnnotationCanvas({
               vectorEffect: "non-scaling-stroke" as const,
               opacity: object.locked ? 0.55 : 1,
               filter: active ? "url(#annotation-active-glow)" : undefined,
+              onDragStart: (event: DragEvent<SVGElement>) => event.preventDefault(),
               onPointerDown: (event: PointerEvent<SVGElement>) => handleObjectPointerDown(event, object)
             };
             return (

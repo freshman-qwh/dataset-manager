@@ -49,6 +49,15 @@ interface PendingAction {
   cancelLabel?: string;
 }
 
+interface KeyboardShortcutActions {
+  requestSave: () => void;
+  undoAndMarkDirty: () => void;
+  redoAndMarkDirty: () => void;
+  changeTool: (tool: AnnotationTool) => void;
+  switchPrevious: () => void;
+  switchNext: () => void;
+}
+
 function normalizeObjects(objects: AnnotationObject[]): AnnotationObject[] {
   return objects.map((object, index) => ({ ...object, z_order: index }));
 }
@@ -98,6 +107,7 @@ export default function AnnotationPage() {
   const focusCommandIdRef = useRef(0);
   const actionAfterDraftRef = useRef<DeferredAction | null>(null);
   const sampleRef = useRef<Sample | null>(null);
+  const keyboardShortcutsRef = useRef<KeyboardShortcutActions | null>(null);
 
   const navigationQuery = useMemo(() => {
     const context = new URLSearchParams(searchParamsText);
@@ -248,36 +258,39 @@ export default function AnnotationPage() {
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
         return;
       }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+      const actions = keyboardShortcutsRef.current;
+      if (!actions) {
+        return;
+      }
+      const key = event.key.toLowerCase();
+      if ((event.ctrlKey || event.metaKey) && key === "s") {
         event.preventDefault();
-        requestSave();
-      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+        actions.requestSave();
+      } else if ((event.ctrlKey || event.metaKey) && key === "z") {
         event.preventDefault();
-        undo();
-        markDirty();
-      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") {
+        actions.undoAndMarkDirty();
+      } else if ((event.ctrlKey || event.metaKey) && key === "y") {
         event.preventDefault();
-        redo();
-        markDirty();
-      } else if (event.key.toLowerCase() === "v") {
-        handleToolChange("select");
-      } else if (event.key.toLowerCase() === "r") {
-        handleToolChange("rectangle");
-      } else if (event.key.toLowerCase() === "p") {
-        handleToolChange("polygon");
-      } else if (event.key.toLowerCase() === "h") {
-        handleToolChange("pan");
+        actions.redoAndMarkDirty();
+      } else if (key === "v") {
+        actions.changeTool("select");
+      } else if (key === "r") {
+        actions.changeTool("rectangle");
+      } else if (key === "p") {
+        actions.changeTool("polygon");
+      } else if (key === "h") {
+        actions.changeTool("pan");
       } else if (event.key === "[") {
         event.preventDefault();
-        switchSample(previousSample);
+        actions.switchPrevious();
       } else if (event.key === "]") {
         event.preventDefault();
-        switchSample(nextSample);
+        actions.switchNext();
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  });
+  }, []);
 
   function commitObjects(nextObjects: AnnotationObject[], previousObjects = objects) {
     commit(normalizeObjects(nextObjects), normalizeObjects(previousObjects));
@@ -498,6 +511,21 @@ export default function AnnotationPage() {
   function handleFocusCommandHandled(commandId: number) {
     setFocusCommand((current) => (current?.id === commandId ? null : current));
   }
+
+  keyboardShortcutsRef.current = {
+    requestSave,
+    undoAndMarkDirty: () => {
+      undo();
+      markDirty();
+    },
+    redoAndMarkDirty: () => {
+      redo();
+      markDirty();
+    },
+    changeTool: handleToolChange,
+    switchPrevious: () => switchSample(previousSample),
+    switchNext: () => switchSample(nextSample)
+  };
 
   if (loading) {
     return (

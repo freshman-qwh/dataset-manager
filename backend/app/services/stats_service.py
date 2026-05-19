@@ -1,3 +1,4 @@
+from sqlalchemy import distinct, func
 from sqlmodel import Session, select
 
 from app.models.annotation import Annotation
@@ -17,7 +18,6 @@ def get_dataset_stats(session: Session, dataset_id: int) -> DatasetStats:
     by_review_status: dict[str, int] = {}
     hash_counts: dict[str, int] = {}
     tag_counts: dict[str, int] = {}
-    by_annotation_label: dict[str, int] = {}
     total_size = 0
     unlabeled_samples = 0
 
@@ -37,10 +37,18 @@ def get_dataset_stats(session: Session, dataset_id: int) -> DatasetStats:
             tag_counts[tag.name] = tag_counts.get(tag.name, 0) + 1
 
     duplicate_counts = [count for count in hash_counts.values() if count > 1]
-    annotations = session.exec(select(Annotation).where(Annotation.dataset_id == dataset_id)).all()
-    annotated_sample_ids = {annotation.sample_id for annotation in annotations}
-    for annotation in annotations:
-        by_annotation_label[annotation.label] = by_annotation_label.get(annotation.label, 0) + 1
+    annotation_count = session.exec(
+        select(func.count(Annotation.id)).where(Annotation.dataset_id == dataset_id)
+    ).one()
+    annotated_samples = session.exec(
+        select(func.count(distinct(Annotation.sample_id))).where(Annotation.dataset_id == dataset_id)
+    ).one()
+    annotation_label_rows = session.exec(
+        select(Annotation.label, func.count(Annotation.id))
+        .where(Annotation.dataset_id == dataset_id)
+        .group_by(Annotation.label)
+    ).all()
+    by_annotation_label = {label: int(count) for label, count in annotation_label_rows}
 
     return DatasetStats(
         dataset_id=dataset_id,
@@ -55,7 +63,7 @@ def get_dataset_stats(session: Session, dataset_id: int) -> DatasetStats:
         duplicate_groups=len(duplicate_counts),
         duplicate_samples=sum(duplicate_counts),
         unlabeled_samples=unlabeled_samples,
-        annotated_samples=len(annotated_sample_ids),
-        annotation_count=len(annotations),
+        annotated_samples=int(annotated_samples),
+        annotation_count=int(annotation_count),
         by_annotation_label=by_annotation_label,
     )
