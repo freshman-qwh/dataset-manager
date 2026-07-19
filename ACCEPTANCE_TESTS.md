@@ -2,6 +2,62 @@
 
 本文件记录人工验收重点。最新一轮放在最前，历史步骤合并为核心回归清单，避免验收文档过长。
 
+## [v0.4.0 Phase 2 批次 C2 labelme 导入导出] - 2026-05-19
+
+验收范围：
+
+- labelme JSON 单文件导入
+- labelme JSON 目录导入
+- dry-run、replace、append 策略
+- labelme 单样本导出和数据集 ZIP 导出
+
+步骤：
+
+1. 准备一个包含正常图片样本的数据集，并准备一个 labelme JSON，包含 rectangle、polygon、point、points 四类 shape。
+2. 调用 `POST /api/datasets/{dataset_id}/annotations/import-labelme`，传入 `mode=file`、`sample_id` 和 `dry_run=true`，确认响应中 `created_annotations` 数量正确，但刷新样本标注仍为空或保持原状。
+3. 用同一 JSON 再调用一次，设置 `dry_run=false`、`strategy=replace`，确认样本标注被写入 SQLite，四类 shape 坐标能在标注 API 中恢复，样本标签同步为对象类别。
+4. 调用 `POST /api/samples/{sample_id}/annotations/export-labelme`，确认导出的 `shapes` 中 rectangle、polygon、point、points 坐标均为 labelme 二维点数组，`imageWidth/imageHeight` 与图片尺寸一致。
+5. 准备一个 labelme JSON 目录，至少包含一个 `imagePath` 为相对路径的文件，以及一个包含不支持 shape_type 的文件；调用目录导入，确认匹配到对应样本，不支持 shape 被 warning 跳过。
+6. 对已有标注的样本用 `strategy=append` 导入一个新 shape，确认旧对象仍存在，新对象追加到对象列表末尾。
+7. 调用 `GET /api/datasets/{dataset_id}/annotation-export?format=labelme`，确认下载 ZIP 中包含 `annotations/*.json` 和 `export_report.json`，默认跳过空标注图片。
+
+通过标准：
+
+- labelme 导入只写 SQLite 标注元数据和样本标签关系，不移动、重命名、删除、覆盖原始图片，也不修改导入 JSON 文件。
+- dry-run 不产生任何数据库写入。
+- replace 会用导入 JSON 替换目标样本现有 annotation；append 会保留旧对象并追加新对象。
+- rectangle 会规范为 `[xtl, ytl, xbr, ybr]`，导出 labelme 时再转回两个二维点；polygon、point、points 坐标保持原图像素坐标语义。
+- 目录导入能按 `imagePath` / 相对路径 / 文件名匹配样本；无法匹配或匹配歧义时返回 error。
+- ZIP 导出默认只包含有标注图片，报告中统计导出文件数和跳过的空标注样本数。
+
+## [v0.4.0 Phase 2 批次 C1 导出预检框架] - 2026-05-19
+
+验收范围：
+
+- 标注导出预检 API
+- YOLO detection 与 YOLO segmentation 的格式兼容提示
+- 越界坐标和无可导出对象阻断
+
+步骤：
+
+1. 准备一个包含正常图片样本的数据集，至少创建 rectangle、polygon 和 point 三类标注对象。
+2. 调用 `POST /api/datasets/{dataset_id}/annotation-export-precheck`，请求体为 `{"format":"yolo_detection"}`。
+3. 确认响应中 `blocked=false`，rectangle 和 polygon 计入 `exportable_object_count`，point 计入 `skipped_object_count`。
+4. 确认 issues 中包含 `POLYGON_TO_BBOX` warning 和 `INCOMPATIBLE_SHAPE_SKIPPED` warning，说明 polygon 会有损转 bbox，point 不导出。
+5. 调用同一接口，请求体为 `{"format":"yolo_segmentation"}`，确认 rectangle 和 polygon 可导出，issues 中包含 `RECTANGLE_TO_POLYGON` warning。
+6. 准备一个只有 point 标注的样本，调用 `yolo_detection` 预检，确认 `blocked=true` 且包含 `NO_EXPORTABLE_OBJECTS`。
+7. 准备一个坐标超出图片宽高的 rectangle 标注，调用任一导出预检，确认 `blocked=true` 且包含 `COORDINATES_OUT_OF_BOUNDS`。
+8. 在大数据集上运行预检时，如果 `info_count` 很大且 `truncated_issue_count > 0`，确认 `issues` 明细仍优先展示 error/warning，而不是只展示 `EMPTY_SAMPLE_SKIPPED`。
+
+通过标准：
+
+- 预检只读取样本、图片尺寸和 SQLite 标注元数据，不移动、重命名、删除或覆盖原始图片。
+- detection 格式下 polygon 会被识别为 bbox 有损转换，而不是静默当作 polygon 导出。
+- segmentation 格式下 polygon 可直接导出，rectangle 转四点 polygon 会提示 warning。
+- 无可导出对象、越界坐标、图片尺寸不可读等问题会阻断后续真实导出。
+- 响应中的 class map 稳定按类别名排序，为后续 COCO/YOLO/VOC 真实导出复用。
+- issues 明细最多返回有限条数时，关键 error/warning 不会被大量空样本 info 淹没。
+
 ## [v0.4.0 Phase 2 标注拖拽稳定性修复] - 2026-05-19
 
 验收范围：

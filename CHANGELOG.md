@@ -2,6 +2,26 @@
 
 本文件记录每个版本的日期、版本号和主要更新。
 
+## [v0.4.0 Phase 2 批次 C2 labelme 导入导出] - 2026-05-19
+
+主要更新：
+
+- 新增 `POST /api/datasets/{dataset_id}/annotations/import-labelme`，支持单文件或目录导入 labelme JSON，提供 dry-run、replace 和 append 策略。
+- labelme 导入支持 rectangle、polygon、point、points 四类 shape 映射到 SQLite annotation 元数据，并按 imagePath、相对路径、文件名或 JSON 文件名匹配样本。
+- 导入时会跳过不支持的 labelme shape，提示图片尺寸不匹配、重复样本匹配、缺失样本匹配和无效 shape 等问题，不写回原始图片或 labelme 文件。
+- 新增 `GET /api/datasets/{dataset_id}/annotation-export?format=labelme`，可导出 labelme JSON ZIP 和 `export_report.json`，默认跳过空标注图片。
+- 补充 labelme 导入、单样本导出和数据集 ZIP 导出测试，覆盖 dry-run、replace、append、目录匹配、未知 shape warning 和四类 shape 坐标转换。
+
+## [v0.4.0 Phase 2 批次 C1 导出预检框架] - 2026-05-19
+
+主要更新：
+
+- 新增标注几何转换工具，统一 rectangle/polygon bbox、polygon area、rectangle 转 polygon 和 YOLO 归一化坐标计算。
+- 新增 `POST /api/datasets/{dataset_id}/annotation-export-precheck`，为 labelme、COCO detection/segmentation、YOLO detection/segmentation 和 Pascal VOC 后续真实导出提供统一预检。
+- 预检会返回类别映射、可导出对象数、跳过对象数、error/warning/info 问题列表，并识别 polygon 转 bbox、rectangle 转 segmentation polygon、point/points 不兼容、越界坐标和无可导出对象。
+- 预检 issues 明细按 error、warning、info 优先级截断，避免大数据集中的空样本 info 淹没 polygon/bbox 转换等关键 warning。
+- 补充导出预检后端测试，覆盖检测/分割格式兼容、无可导出对象阻断和越界坐标阻断。
+
 ## [v0.4.0 Phase 2 标注拖拽稳定性修复] - 2026-05-19
 
 主要更新：

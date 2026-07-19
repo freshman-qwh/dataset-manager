@@ -2,7 +2,7 @@
 
 本文件用于每轮迭代审查、问题归类和范围控制。
 
-规划依据：`docs/annotation-interface-integration.md`。后续任务按“先让当前标注工作区高频可用，再做格式兼容，再做质量与工程能力”的顺序推进。
+规划依据：`docs/annotation-interface-integration.md`。批次 C 格式兼容与导出契约详见 `docs/annotation-format-export-contract.md`。后续任务按“先让当前标注工作区高频可用，再做格式兼容，再做质量与工程能力”的顺序推进。
 
 状态说明：
 
@@ -76,12 +76,13 @@
 
 目标：先把单样本标注格式和常见训练格式打通，再扩展复杂格式。
 
-- [ ] `P1` `新增` labelme JSON 导入：支持导入单样本或目录下 labelme JSON，写入 SQLite annotation 元数据，不写回原始图片。
-- [ ] `P1` `优化` labelme 导出验收：确认 rectangle、polygon、point、points 到 labelme `shapes` 的二维坐标转换和 `imageHeight/imageWidth` 完整可靠。
+- [x] `P1` `工程/新增` C1 几何工具与导出预检框架：新增 rectangle/polygon bbox、area、YOLO 归一化等纯几何转换工具，并提供后端导出预检 API，能识别 polygon 转 bbox、rectangle 转 segmentation polygon、point/points 不兼容、越界坐标和无可导出对象。
+- [x] `P1` `新增` labelme JSON 导入：支持导入单样本或目录下 labelme JSON，支持 dry-run、replace/append，写入 SQLite annotation 元数据，不写回原始图片。
+- [x] `P1` `优化` labelme 导出验收：确认 rectangle、polygon、point、points 到 labelme `shapes` 的二维坐标转换和 `imageHeight/imageWidth` 完整可靠，并补充 labelme 数据集 ZIP 导出。
 - [ ] `P1` `新增` COCO detection/segmentation 真实导出：定义 category 映射、image id、bbox、segmentation、area、iscrowd 等字段契约。
-- [ ] `P1` `新增` YOLO bbox 导出：将 rectangle 转为归一化中心点格式，明确 polygon/point 暂不支持或输出边界。
+- [ ] `P1` `新增` YOLO detection/segmentation 导出：detection 输出归一化 bbox，rectangle 直接导出、polygon 转外接 bbox 并预检 warning；segmentation 输出归一化 polygon 顶点，rectangle 可转 4 点 polygon 并预检 warning；point/points 默认不导出。
 - [ ] `P2` `新增` Pascal VOC bbox 导出：覆盖 rectangle 场景，作为传统检测格式补充。
-- [ ] `P2` `优化` 导出预检：导出前提示空标注、无类别映射、非 bbox 形状不兼容等问题。
+- [~] `P2` `优化` 导出预检：后端预检 API 已完成；后续在导出向导中接入前端提示空标注、无类别映射、非 bbox 形状不兼容等问题。
 
 ## 批次 D：标注质量检查
 

@@ -147,6 +147,10 @@ def export_labelme_annotation(session: Session, sample_id: int) -> dict[str, obj
     }
 
 
+def validate_annotation(item: AnnotationCreate) -> None:
+    _validate_annotation(item)
+
+
 def _to_labelme_shape(annotation: AnnotationRead) -> dict[str, object]:
     return {
         "label": annotation.label,
