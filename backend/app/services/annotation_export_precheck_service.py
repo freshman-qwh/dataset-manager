@@ -1,8 +1,10 @@
+from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
 
 from sqlmodel import Session
 
+from app.models.sample import Sample
 from app.schemas.annotation import AnnotationRead
 from app.schemas.annotation_export import (
     AnnotationClassMapItem,
@@ -78,6 +80,7 @@ def precheck_annotation_export(
     samples = _filtered_image_samples(session, dataset_id, payload, issues)
     sample_ids = [sample.id for sample in samples if sample.id is not None]
     annotations_by_sample = annotation_service.annotations_by_sample(session, sample_ids)
+    _check_split_leakage(samples, issues)
 
     labels: set[str] = set()
     annotated_sample_count = 0
@@ -152,6 +155,26 @@ def precheck_annotation_export(
         truncated_issue_count=issues.truncated_count(),
         blocked=issues.counts["error"] > 0,
     )
+
+
+def _check_split_leakage(samples: Iterable[Sample], issues: _IssueCollector) -> None:
+    by_hash: dict[str, list[Sample]] = defaultdict(list)
+    for sample in samples:
+        split_name = (sample.split or "").strip()
+        if sample.file_hash and split_name in {"train", "val", "test"}:
+            by_hash[sample.file_hash].append(sample)
+    for group in by_hash.values():
+        splits = {(sample.split or "").strip() for sample in group}
+        if len(splits) < 2:
+            continue
+        sample = group[0]
+        issues.add(
+            "error",
+            "SPLIT_LEAKAGE",
+            f"Identical file content appears across splits: {', '.join(sorted(splits))}.",
+            sample_id=sample.id,
+            sample_path=sample.relative_path,
+        )
 
 
 def _filtered_image_samples(

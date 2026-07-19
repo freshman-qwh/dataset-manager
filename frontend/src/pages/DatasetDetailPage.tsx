@@ -26,6 +26,7 @@ import {
   deleteSamples,
   getDuplicateReport,
   getDataset,
+  getDatasetQualityReport,
   getDatasetStats,
   getExportTemplate,
   getManifestUrl,
@@ -58,9 +59,11 @@ import TagStatsModal from "../components/TagStatsModal";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import type {
   Dataset,
+  DatasetQualityReport,
   DatasetStats,
   DuplicateReport,
   MissingSampleRepairResult,
+  QualityIssue,
   Sample,
   ScanResult,
   SplitPlanRequest,
@@ -120,6 +123,7 @@ export default function DatasetDetailPage() {
   const [samples, setSamples] = useState<Sample[]>([]);
   const [sampleTotal, setSampleTotal] = useState(0);
   const [duplicateReport, setDuplicateReport] = useState<DuplicateReport | null>(null);
+  const [qualityReport, setQualityReport] = useState<DatasetQualityReport | null>(null);
   const [availableTags, setAvailableTags] = useState<Tag[]>([]);
   const [selected, setSelected] = useState<Sample | null>(null);
   const [selectedSampleIds, setSelectedSampleIds] = useState<Set<number>>(new Set());
@@ -130,6 +134,7 @@ export default function DatasetDetailPage() {
   const [tag, setTag] = useState("");
   const [split, setSplit] = useState("");
   const [reviewStatus, setReviewStatus] = useState("");
+  const [annotationStatus, setAnnotationStatus] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(60);
   const [sortBy, setSortBy] = useState("created_at");
@@ -155,9 +160,11 @@ export default function DatasetDetailPage() {
   const [repairingSample, setRepairingSample] = useState(false);
   const [repairingMissing, setRepairingMissing] = useState(false);
   const [applyingSplitPlan, setApplyingSplitPlan] = useState(false);
+  const [qualityLoading, setQualityLoading] = useState(false);
   const [missingRepairResult, setMissingRepairResult] = useState<MissingSampleRepairResult | null>(null);
   const [splitPlanResult, setSplitPlanResult] = useState<SplitPlanResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [qualityError, setQualityError] = useState<string | null>(null);
   const autoScannedDatasetIds = useRef<Set<number>>(new Set());
   const debouncedSearch = useDebouncedValue(search);
   const debouncedTag = useDebouncedValue(tag);
@@ -184,6 +191,7 @@ export default function DatasetDetailPage() {
       tag: debouncedTag,
       split,
       reviewStatus,
+      annotationStatus,
       page,
       pageSize,
       sortBy,
@@ -194,7 +202,19 @@ export default function DatasetDetailPage() {
     if (nextSamples.page !== page) {
       setPage(nextSamples.page);
     }
-  }, [datasetId, debouncedSearch, debouncedTag, fileType, fileStatus, split, reviewStatus, page, pageSize, sortBy, sortOrder]);
+  }, [datasetId, debouncedSearch, debouncedTag, fileType, fileStatus, split, reviewStatus, annotationStatus, page, pageSize, sortBy, sortOrder]);
+
+  const loadQualityReport = useCallback(async () => {
+    setQualityLoading(true);
+    setQualityError(null);
+    try {
+      setQualityReport(await getDatasetQualityReport(datasetId));
+    } catch {
+      setQualityError("质量检查失败，请确认后端服务可用后重试");
+    } finally {
+      setQualityLoading(false);
+    }
+  }, [datasetId]);
 
   useEffect(() => {
     if (!Number.isFinite(datasetId)) {
@@ -252,7 +272,13 @@ export default function DatasetDetailPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, debouncedTag, fileType, fileStatus, split, reviewStatus, sortBy, sortOrder]);
+  }, [debouncedSearch, debouncedTag, fileType, fileStatus, split, reviewStatus, annotationStatus, sortBy, sortOrder]);
+
+  useEffect(() => {
+    if (qualityOpen && Number.isFinite(datasetId)) {
+      void loadQualityReport();
+    }
+  }, [datasetId, loadQualityReport, qualityOpen]);
 
   useEffect(() => {
     if (!dataset?.auto_scan_on_open || !dataset.root_path || autoScannedDatasetIds.current.has(dataset.id)) {
@@ -309,6 +335,9 @@ export default function DatasetDetailPage() {
     }
     if (reviewStatus) {
       params.set("reviewStatus", reviewStatus);
+    }
+    if (annotationStatus) {
+      params.set("annotationStatus", annotationStatus);
     }
     navigate(`/datasets/${datasetId}/annotate?${params.toString()}`);
   }
@@ -531,6 +560,7 @@ export default function DatasetDetailPage() {
     setTag("");
     setSplit("");
     setReviewStatus("");
+    setAnnotationStatus("");
     setPage(1);
   }
 
@@ -540,6 +570,7 @@ export default function DatasetDetailPage() {
     tag?: string;
     split?: string;
     reviewStatus?: string;
+    annotationStatus?: string;
   }) {
     setSearch("");
     setFileType(nextFilters.fileType ?? "");
@@ -547,6 +578,7 @@ export default function DatasetDetailPage() {
     setTag(nextFilters.tag ?? "");
     setSplit(nextFilters.split ?? "");
     setReviewStatus(nextFilters.reviewStatus ?? "");
+    setAnnotationStatus(nextFilters.annotationStatus ?? "");
     setPage(1);
   }
 
@@ -582,6 +614,26 @@ export default function DatasetDetailPage() {
     setQualityOpen(false);
     setMissingRepairResult(null);
     setMissingRepairOpen(true);
+  }
+
+  async function openQualityIssue(issue: QualityIssue) {
+    setQualityOpen(false);
+    if (!issue.sample_id) {
+      return;
+    }
+    if (issue.code === "FILE_UNAVAILABLE") {
+      try {
+        setSelected(await getSample(issue.sample_id));
+      } catch {
+        setError("问题样本加载失败");
+      }
+      return;
+    }
+    const params = new URLSearchParams({ sample: String(issue.sample_id), sortBy, sortOrder });
+    if (issue.annotation_id) {
+      params.set("annotation", String(issue.annotation_id));
+    }
+    navigate(`/datasets/${datasetId}/annotate?${params.toString()}`);
   }
 
   return (
@@ -757,12 +809,14 @@ export default function DatasetDetailPage() {
           tag={tag}
           split={split}
           reviewStatus={reviewStatus}
+          annotationStatus={annotationStatus}
           onSearchChange={setSearch}
           onFileTypeChange={setFileType}
           onFileStatusChange={setFileStatus}
           onTagChange={setTag}
           onSplitChange={setSplit}
           onReviewStatusChange={setReviewStatus}
+          onAnnotationStatusChange={setAnnotationStatus}
           onClear={clearFilters}
         />
 
@@ -797,7 +851,7 @@ export default function DatasetDetailPage() {
               className="inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
             >
               <ClipboardCheck size={16} />
-              体检
+              数据健康
             </button>
             <button
               type="button"
@@ -984,28 +1038,20 @@ export default function DatasetDetailPage() {
       />
       <DatasetQualityModal
         open={qualityOpen}
-        stats={stats}
-        duplicateReport={duplicateReport}
+        report={qualityReport}
+        loading={qualityLoading}
+        error={qualityError}
         onClose={() => setQualityOpen(false)}
-        onFilterMissing={() => {
-          filterMissing((stats?.by_status.missing ?? 0) > 0 ? "missing" : "permission_denied");
-        }}
-        onFilterUnassigned={() => {
-          applyGlobalFilters({ split: "unassigned" });
+        onRefresh={() => void loadQualityReport()}
+        onFilterEmpty={() => {
+          applyGlobalFilters({ fileType: "image", annotationStatus: "empty" });
           setQualityOpen(false);
         }}
-        onFilterUnlabeled={() => {
-          applyGlobalFilters({ tag: "__untagged__" });
+        onFilterReview={(status) => {
+          applyGlobalFilters({ fileType: "image", reviewStatus: status });
           setQualityOpen(false);
         }}
-        onOpenRepairMissing={() => {
-          openMissingRepair();
-        }}
-        onOpenSplitPlan={() => {
-          setQualityOpen(false);
-          setSplitPlanResult(null);
-          setSplitPlanOpen(true);
-        }}
+        onOpenIssue={(issue) => void openQualityIssue(issue)}
       />
       <SplitPlanModal
         open={splitPlanOpen}

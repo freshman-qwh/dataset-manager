@@ -100,6 +100,30 @@ export default function AnnotationObjectList({
                           className="mt-1 min-h-20 w-full rounded-lg border border-line px-3 py-2 text-sm outline-none transition focus:border-gray-900"
                         />
                       </label>
+                      <fieldset>
+                        <legend className="text-xs font-medium text-gray-500">训练属性</legend>
+                        <div className="mt-2 grid grid-cols-3 gap-2">
+                          {[
+                            ["occluded", "遮挡"],
+                            ["truncated", "截断"],
+                            ["difficult", "困难"]
+                          ].map(([key, label]) => (
+                            <label key={key} className="flex items-center gap-1.5 rounded-md border border-line px-2 py-2 text-xs text-gray-700">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(object.attributes[key])}
+                                onChange={(event) =>
+                                  onUpdate(object.client_id, {
+                                    attributes: { ...object.attributes, [key]: event.target.checked }
+                                  })
+                                }
+                                className="h-4 w-4 rounded border-gray-300"
+                              />
+                              {label}
+                            </label>
+                          ))}
+                        </div>
+                      </fieldset>
                       <div className="flex gap-2">
                         <button
                           type="button"

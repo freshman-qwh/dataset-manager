@@ -8,6 +8,8 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app.core.database import get_session
 from app.main import app
+from app.models.annotation import Annotation
+from app.models.sample import Sample
 from app.services.annotation_geometry import (
     bbox_to_yolo_xywh,
     polygon_area,
@@ -167,11 +169,26 @@ def test_detection_precheck_blocks_when_no_exportable_objects(tmp_path: Path):
 def test_precheck_blocks_out_of_bounds_coordinates(tmp_path: Path):
     with make_client() as client:
         dataset_id, sample_id = create_image_dataset(client, tmp_path)
-        saved = client.put(
-            f"/api/samples/{sample_id}/annotations",
-            json={"annotations": [{"label": "bad", "shape_type": "rectangle", "points": [0, 0, 2, 1]}]},
-        )
-        assert saved.status_code == 200
+        # New saves reject out-of-bounds coordinates. Insert a legacy row
+        # directly so export precheck still protects upgraded databases.
+        session_dependency = app.dependency_overrides[get_session]()
+        session = next(session_dependency)
+        try:
+            sample = session.get(Sample, sample_id)
+            assert sample is not None
+            session.add(
+                Annotation(
+                    sample_id=sample_id,
+                    dataset_id=sample.dataset_id,
+                    label="bad",
+                    shape_type="rectangle",
+                    points_json="[0, 0, 2, 1]",
+                )
+            )
+            session.commit()
+        finally:
+            session.close()
+            session_dependency.close()
 
         precheck = client.post(
             f"/api/datasets/{dataset_id}/annotation-export-precheck",
@@ -209,5 +226,27 @@ def test_precheck_prioritizes_warnings_over_empty_sample_info_when_issue_list_is
         assert len(payload["issues"]) == 200
         assert payload["issues"][0]["code"] == "RECTANGLE_TO_POLYGON"
         assert any(issue["code"] == "EMPTY_SAMPLE_SKIPPED" for issue in payload["issues"])
+
+    app.dependency_overrides.clear()
+
+
+def test_precheck_blocks_identical_content_across_training_splits(tmp_path: Path):
+    with make_client() as client:
+        dataset_id, samples = create_many_image_dataset(client, tmp_path, 2)
+        for sample, split in zip(samples, ("train", "val"), strict=True):
+            assert client.patch(f"/api/samples/{sample['id']}", json={"split": split}).status_code == 200
+            assert client.put(
+                f"/api/samples/{sample['id']}/annotations",
+                json={"annotations": [{"label": "defect", "shape_type": "rectangle", "points": [0, 0, 1, 1]}]},
+            ).status_code == 200
+
+        precheck = client.post(
+            f"/api/datasets/{dataset_id}/annotation-export-precheck",
+            json={"format": "yolo_detection"},
+        )
+        assert precheck.status_code == 200
+        payload = precheck.json()
+        assert payload["blocked"] is True
+        assert any(issue["code"] == "SPLIT_LEAKAGE" for issue in payload["issues"])
 
     app.dependency_overrides.clear()

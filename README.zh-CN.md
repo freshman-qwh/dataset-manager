@@ -1,6 +1,12 @@
-# Dataset Manager / 科研数据集管理系统
+# Dataset Manager / 本地视觉数据集准备工作台
 
-这是一个本地优先的科研数据集管理系统 MVP。后端使用 FastAPI + SQLModel + SQLite，前端使用 React + TypeScript + Vite + Tailwind CSS。
+这是一个面向研究人员、小型实验室和隐私敏感场景的本地优先视觉数据集准备工作台，聚焦“扫描数据 → 整理样本 → 连续标注 → 质量检查 → 导出训练数据”的单机闭环。后端使用 FastAPI + SQLModel + SQLite，前端使用 React + TypeScript + Vite + Tailwind CSS；原始文件留在本地磁盘，数据库只保存元数据。
+
+## 产品边界
+
+- 主线支持图片目标检测与多边形分割数据准备，并兼顾图片分类式标签整理。
+- 视频和 CSV 当前只做资产登记、筛选和元数据管理，不扩展逐帧视频标注或表格标注。
+- MVP 不建设团队权限、云同步、在线 AI 服务或 CVAT 规模的任务体系；优先把单人离线标注与训练准备做得直观、可靠。
 
 ## 快速启动
 

@@ -257,13 +257,19 @@ def _annotation_from_labelme_shape(
         errors.append(_shape_issue("error", "INVALID_SHAPE_POINTS", f"Invalid points for labelme {shape_type} shape.", source_file, sample, index))
         return None
 
+    flags = _bool_dict(raw_shape.get("flags"))
+    attributes = _dict_or_empty(raw_shape.get("attributes"))
+    for key in ("occluded", "truncated", "difficult"):
+        if key in flags and key not in attributes:
+            attributes[key] = flags[key]
+
     annotation = AnnotationCreate(
         label=label,
         tag_id=None,
         shape_type=shape_type,
         points=points,
-        flags=_bool_dict(raw_shape.get("flags")),
-        attributes=_dict_or_empty(raw_shape.get("attributes")),
+        flags=flags,
+        attributes=attributes,
         group_id=_int_or_none(raw_shape.get("group_id")),
         z_order=index,
         locked=False,

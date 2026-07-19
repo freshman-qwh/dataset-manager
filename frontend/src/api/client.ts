@@ -13,6 +13,7 @@ import type {
   Dataset,
   DatasetCreate,
   DatasetStats,
+  DatasetQualityReport,
   DirectoryListResponse,
   DuplicateReport,
   ExportTemplateResponse,
@@ -80,6 +81,11 @@ export async function getDuplicateReport(datasetId: number): Promise<DuplicateRe
   return data;
 }
 
+export async function getDatasetQualityReport(datasetId: number): Promise<DatasetQualityReport> {
+  const { data } = await client.get<DatasetQualityReport>(`/datasets/${datasetId}/quality-report`);
+  return data;
+}
+
 export async function listTags(datasetId: number): Promise<Tag[]> {
   const { data } = await client.get<Tag[]>(`/datasets/${datasetId}/tags`);
   return data;
@@ -115,7 +121,7 @@ export async function scanDataset(datasetId: number, folderPath: string): Promis
 }
 
 export async function listSamples(params: SampleQuery): Promise<SampleListResponse> {
-  const { datasetId, search, fileType, fileStatus, tag, split, reviewStatus, page, pageSize, sortBy, sortOrder } = params;
+  const { datasetId, search, fileType, fileStatus, tag, split, reviewStatus, annotationStatus, page, pageSize, sortBy, sortOrder } = params;
   const { data } = await client.get<SampleListResponse>(`/datasets/${datasetId}/samples`, {
     params: {
       search: search || undefined,
@@ -124,6 +130,7 @@ export async function listSamples(params: SampleQuery): Promise<SampleListRespon
       tag: tag || undefined,
       split: split || undefined,
       review_status: reviewStatus || undefined,
+      annotation_status: annotationStatus || undefined,
       page,
       page_size: pageSize,
       sort_by: sortBy,
@@ -134,7 +141,7 @@ export async function listSamples(params: SampleQuery): Promise<SampleListRespon
 }
 
 export async function getSampleNavigation(params: Omit<SampleQuery, "fileType" | "page" | "pageSize"> & { sampleId?: number | null }): Promise<SampleNavigationResponse> {
-  const { datasetId, sampleId, search, fileStatus, tag, split, reviewStatus, sortBy, sortOrder } = params;
+  const { datasetId, sampleId, search, fileStatus, tag, split, reviewStatus, annotationStatus, sortBy, sortOrder } = params;
   const { data } = await client.get<SampleNavigationResponse>(`/datasets/${datasetId}/samples/navigation`, {
     params: {
       sample_id: sampleId || undefined,
@@ -143,6 +150,7 @@ export async function getSampleNavigation(params: Omit<SampleQuery, "fileType" |
       tag: tag || undefined,
       split: split || undefined,
       review_status: reviewStatus || undefined,
+      annotation_status: annotationStatus || undefined,
       sort_by: sortBy,
       sort_order: sortOrder
     }

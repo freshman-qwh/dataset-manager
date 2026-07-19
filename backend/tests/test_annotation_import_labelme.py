@@ -78,7 +78,12 @@ def test_labelme_import_dry_run_then_replace_and_export_shapes(tmp_path: Path):
             labelme_file,
             "sample.png",
             [
-                {"label": "rect", "shape_type": "rectangle", "points": [[1, 1], [0, 0]], "flags": {"ok": True}},
+                {
+                    "label": "rect",
+                    "shape_type": "rectangle",
+                    "points": [[1, 1], [0, 0]],
+                    "flags": {"ok": True, "occluded": True, "truncated": False, "difficult": True},
+                },
                 {"label": "poly", "shape_type": "polygon", "points": [[0, 0], [1, 0], [1, 1]], "description": "corner"},
                 {"label": "dot", "shape_type": "point", "points": [[0, 0]]},
                 {"label": "multi", "shape_type": "points", "points": [[0, 0], [1, 1]]},
@@ -107,6 +112,7 @@ def test_labelme_import_dry_run_then_replace_and_export_shapes(tmp_path: Path):
         annotations = client.get(f"/api/samples/{sample_id}/annotations").json()
         assert [item["shape_type"] for item in annotations] == ["rectangle", "polygon", "point", "points"]
         assert annotations[0]["points"] == [0.0, 0.0, 1.0, 1.0]
+        assert annotations[0]["attributes"] == {"occluded": True, "truncated": False, "difficult": True}
         assert annotations[1]["notes"] == "corner"
         assert {tag["name"] for tag in client.get(f"/api/samples/{sample_id}").json()["tags"]} == {"rect", "poly", "dot", "multi"}
 
@@ -114,6 +120,12 @@ def test_labelme_import_dry_run_then_replace_and_export_shapes(tmp_path: Path):
         assert exported.status_code == 200
         shapes = exported.json()["shapes"]
         assert shapes[0]["points"] == [[0.0, 0.0], [1.0, 1.0]]
+        assert shapes[0]["flags"] == {
+            "ok": True,
+            "occluded": True,
+            "truncated": False,
+            "difficult": True,
+        }
         assert shapes[1]["points"] == [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]
         assert shapes[2]["points"] == [[0.0, 0.0]]
         assert shapes[3]["points"] == [[0.0, 0.0], [1.0, 1.0]]

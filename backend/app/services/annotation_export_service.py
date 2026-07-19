@@ -311,17 +311,19 @@ def _build_coco_payload(
             else:
                 segmentation = []
                 area = bbox_area(bbox)
-            annotations.append(
-                {
-                    "id": annotation_id,
-                    "image_id": image_id,
-                    "category_id": category_ids[annotation.label.strip()],
-                    "bbox": bbox_to_coco_xywh(bbox),
-                    "area": area,
-                    "segmentation": segmentation,
-                    "iscrowd": 0,
-                }
-            )
+            coco_annotation: dict[str, object] = {
+                "id": annotation_id,
+                "image_id": image_id,
+                "category_id": category_ids[annotation.label.strip()],
+                "bbox": bbox_to_coco_xywh(bbox),
+                "area": area,
+                "segmentation": segmentation,
+                "iscrowd": 0,
+            }
+            standard_attributes = _standard_attributes(annotation)
+            if standard_attributes:
+                coco_annotation["attributes"] = standard_attributes
+            annotations.append(coco_annotation)
             annotation_id += 1
     return {
         "info": {"description": dataset_name, "version": "dataset-manager"},
@@ -404,8 +406,10 @@ def _export_voc_zip(
                 node = ElementTree.SubElement(root, "object")
                 ElementTree.SubElement(node, "name").text = annotation.label.strip()
                 ElementTree.SubElement(node, "pose").text = "Unspecified"
-                ElementTree.SubElement(node, "truncated").text = "0"
-                ElementTree.SubElement(node, "difficult").text = "0"
+                standard_attributes = _standard_attributes(annotation)
+                ElementTree.SubElement(node, "occluded").text = _xml_bool(standard_attributes.get("occluded", False))
+                ElementTree.SubElement(node, "truncated").text = _xml_bool(standard_attributes.get("truncated", False))
+                ElementTree.SubElement(node, "difficult").text = _xml_bool(standard_attributes.get("difficult", False))
                 box = ElementTree.SubElement(node, "bndbox")
                 ElementTree.SubElement(box, "xmin").text = str(math.floor(bbox.x_min))
                 ElementTree.SubElement(box, "ymin").text = str(math.floor(bbox.y_min))
@@ -421,6 +425,18 @@ def _annotation_bbox(annotation: AnnotationRead) -> BBox:
     if annotation.shape_type == "rectangle":
         return rectangle_to_bbox(annotation.points)
     return polygon_to_bbox(annotation.points)
+
+
+def _standard_attributes(annotation: AnnotationRead) -> dict[str, bool]:
+    return {
+        key: bool(annotation.attributes[key])
+        for key in ("occluded", "truncated", "difficult")
+        if key in annotation.attributes
+    }
+
+
+def _xml_bool(value: object) -> str:
+    return "1" if bool(value) else "0"
 
 
 def _safe_relative_path(value: str) -> PurePosixPath:

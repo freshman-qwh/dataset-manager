@@ -10,6 +10,7 @@ from app.models.dataset import utc_now
 from app.models.tag import Tag
 from app.schemas.annotation import AnnotationCreate, AnnotationRead, AnnotationReplaceRequest
 from app.services import sample_service
+from app.services.annotation_geometry import points_within_image, polygon_area
 from app.services.tag_service import find_tag_by_name_or_alias
 from app.utils.image_size import read_image_size
 
@@ -59,6 +60,15 @@ def replace_sample_annotations(
 
     for item in payload.annotations:
         _validate_annotation(item)
+
+    image_size = read_image_size(Path(sample.absolute_path))
+    if image_size is not None:
+        for item in payload.annotations:
+            if not points_within_image(item.points, image_size[0], image_size[1]):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Annotation coordinates must stay within image bounds.",
+                )
 
     old_items = session.exec(select(Annotation).where(Annotation.sample_id == sample_id)).all()
     for item in old_items:
@@ -152,13 +162,17 @@ def validate_annotation(item: AnnotationCreate) -> None:
 
 
 def _to_labelme_shape(annotation: AnnotationRead) -> dict[str, object]:
+    flags = dict(annotation.flags)
+    for key in ("occluded", "truncated", "difficult"):
+        if key in annotation.attributes:
+            flags[key] = bool(annotation.attributes[key])
     return {
         "label": annotation.label,
         "points": _paired_points(annotation.points),
         "group_id": annotation.group_id,
         "description": annotation.notes or "",
         "shape_type": annotation.shape_type,
-        "flags": annotation.flags,
+        "flags": flags,
     }
 
 
@@ -200,6 +214,8 @@ def _validate_annotation(item: AnnotationCreate) -> None:
     elif item.shape_type == "polygon":
         if len(item.points) < 6 or len(item.points) % 2:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Polygon annotations require at least 3 points.")
+        if polygon_area(item.points) <= 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Polygon annotations require positive area.")
     elif item.shape_type == "point":
         if len(item.points) != 2:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Point annotations require exactly 2 coordinates.")

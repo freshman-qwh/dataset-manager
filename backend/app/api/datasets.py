@@ -6,6 +6,7 @@ from app.schemas.dataset import DatasetCreate, DatasetRead, DatasetUpdate
 from app.schemas.duplicates import DuplicateReport
 from app.schemas.export_template import ExportTemplateResponse
 from app.schemas.metadata_import import MetadataImportRequest, MetadataImportResult
+from app.schemas.quality import DatasetQualityReport
 from app.schemas.sample import (
     BatchSampleDelete,
     BatchSampleUpdate,
@@ -26,6 +27,7 @@ from app.services import (
     export_template_service,
     manifest_service,
     metadata_import_service,
+    quality_service,
     sample_service,
     scan_service,
     split_service,
@@ -87,6 +89,7 @@ def list_dataset_samples(
     tag: str | None = Query(default=None),
     split: str | None = Query(default=None),
     review_status: str | None = Query(default=None),
+    annotation_status: str | None = Query(default=None, pattern="^(empty|annotated)$"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=60, ge=1, le=200),
     sort_by: str = Query(default="created_at"),
@@ -103,6 +106,7 @@ def list_dataset_samples(
         tag,
         split,
         review_status,
+        annotation_status,
         page,
         page_size,
         sort_by,
@@ -119,6 +123,7 @@ def dataset_sample_navigation(
     tag: str | None = Query(default=None),
     split: str | None = Query(default=None),
     review_status: str | None = Query(default=None),
+    annotation_status: str | None = Query(default=None, pattern="^(empty|annotated)$"),
     sort_by: str = Query(default="created_at"),
     sort_order: str = Query(default="desc", pattern="^(asc|desc)$"),
     session: Session = Depends(get_session),
@@ -133,6 +138,7 @@ def dataset_sample_navigation(
         tag=tag,
         split=split,
         review_status=review_status,
+        annotation_status=annotation_status,
         sort_by=sort_by,
         sort_order=sort_order,
     )
@@ -209,6 +215,15 @@ def import_dataset_metadata(
 @router.get("/stats/datasets/{dataset_id}", response_model=DatasetStats)
 def dataset_stats(dataset_id: int, session: Session = Depends(get_session)) -> DatasetStats:
     return stats_service.get_dataset_stats(session, dataset_id)
+
+
+@router.get("/datasets/{dataset_id}/quality-report", response_model=DatasetQualityReport)
+def dataset_quality_report(
+    dataset_id: int,
+    issue_limit: int = Query(default=500, ge=1, le=1000),
+    session: Session = Depends(get_session),
+) -> DatasetQualityReport:
+    return quality_service.build_quality_report(session, dataset_id, issue_limit=issue_limit)
 
 
 @router.get("/datasets/{dataset_id}/export-manifest")

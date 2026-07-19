@@ -6,9 +6,16 @@ interface ModalProps {
   title: string;
   children: ReactNode;
   onClose: () => void;
+  size?: "md" | "lg" | "xl";
 }
 
-export default function Modal({ open, title, children, onClose }: ModalProps) {
+const sizeClasses = {
+  md: "max-w-lg",
+  lg: "max-w-3xl",
+  xl: "max-w-5xl"
+};
+
+export default function Modal({ open, title, children, onClose, size = "md" }: ModalProps) {
   const titleId = useId();
   if (!open) {
     return null;
@@ -20,7 +27,7 @@ export default function Modal({ open, title, children, onClose }: ModalProps) {
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="w-full max-w-lg rounded-lg border border-line bg-white shadow-soft"
+        className={`w-full ${sizeClasses[size]} rounded-lg border border-line bg-white shadow-soft`}
       >
         <div className="flex items-center justify-between border-b border-line px-5 py-4">
           <h2 id={titleId} className="text-base font-semibold text-ink">{title}</h2>

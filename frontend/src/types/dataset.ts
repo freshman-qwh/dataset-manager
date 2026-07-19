@@ -212,10 +212,44 @@ export interface SampleQuery {
   tag?: string;
   split?: string;
   reviewStatus?: string;
+  annotationStatus?: "empty" | "annotated" | string;
   page?: number;
   pageSize?: number;
   sortBy?: string;
   sortOrder?: "asc" | "desc";
+}
+
+export type QualityIssueSeverity = "error" | "warning" | "info";
+
+export interface QualityIssue {
+  severity: QualityIssueSeverity;
+  code: string;
+  title: string;
+  message: string;
+  sample_id: number | null;
+  sample_path: string | null;
+  annotation_id: number | null;
+  related_sample_ids: number[];
+  related_annotation_ids: number[];
+}
+
+export interface DatasetQualityReport {
+  dataset_id: number;
+  generated_at: string;
+  sample_count: number;
+  image_sample_count: number;
+  annotated_sample_count: number;
+  annotation_count: number;
+  issue_count: number;
+  error_count: number;
+  warning_count: number;
+  info_count: number;
+  truncated_issue_count: number;
+  check_counts: Record<string, number>;
+  review_status_counts: Record<string, number>;
+  class_counts: Record<string, number>;
+  split_class_counts: Record<string, Record<string, number>>;
+  issues: QualityIssue[];
 }
 
 export interface DirectoryEntry {
