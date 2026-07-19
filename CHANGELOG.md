@@ -2,6 +2,16 @@
 
 本文件记录每个版本的日期、版本号和主要更新。
 
+## [v0.4.0 Phase 2 批次 C 训练格式导出] - 2026-07-19
+
+主要更新：
+
+- 统一 `GET /api/datasets/{dataset_id}/annotation-export`，新增 COCO detection/segmentation、YOLO detection/segmentation 和 Pascal VOC 真实导出，并保留 LabelMe ZIP。
+- 所有训练格式导出强制复用预检；错误返回结构化 422，polygon/bbox 与 rectangle/polygon 有损转换保留 warning，point/points 按格式跳过。
+- COCO 输出稳定类别、图片与标注 ID；YOLO 输出归一化标签、split 目录、`classes.txt`、`data.yaml`；VOC 输出按相对路径组织的 XML bbox。
+- 新增前端“标注训练格式”导出向导，支持当前筛选、全数据集、指定 split、已选样本与空标注范围，并展示问题明细和类别映射。
+- 新增隔离 API 契约测试与真实数据只读烟测脚本；`D:\My Datasets\test` 扫描 5,949 个文件后六种格式均导出成功，测试原图哈希、大小和修改时间保持不变。
+
 ## [v0.4.0 Phase 2 批次 C2 labelme 导入导出] - 2026-05-19
 
 主要更新：

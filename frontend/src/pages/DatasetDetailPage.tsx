@@ -38,6 +38,7 @@ import {
   updateDataset,
   updateSample
 } from "../api/client";
+import AnnotationExportModal from "../components/AnnotationExportModal";
 import BatchActionBar from "../components/BatchActionBar";
 import DatasetActionMenu from "../components/DatasetActionMenu";
 import DatasetIssueModal from "../components/DatasetIssueModal";
@@ -144,6 +145,7 @@ export default function DatasetDetailPage() {
   const [qualityOpen, setQualityOpen] = useState(false);
   const [issueModal, setIssueModal] = useState<"missing" | "duplicate" | null>(null);
   const [exportPreview, setExportPreview] = useState<ExportPreview | null>(null);
+  const [annotationExportOpen, setAnnotationExportOpen] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [saving, setSaving] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
@@ -224,6 +226,23 @@ export default function DatasetDetailPage() {
     [stats]
   );
   const visibleSampleIds = useMemo(() => samples.map((sample) => sample.id), [samples]);
+  const annotationExportQuery = useMemo(
+    () => ({
+      search: debouncedSearch || undefined,
+      file_type: fileType || undefined,
+      file_status: fileStatus || undefined,
+      tag: debouncedTag || undefined,
+      split: split || undefined,
+      review_status: reviewStatus || undefined,
+      sort_by: sortBy,
+      sort_order: sortOrder
+    }),
+    [debouncedSearch, debouncedTag, fileStatus, fileType, reviewStatus, sortBy, sortOrder, split]
+  );
+  const annotationExportSelectedSampleIds = useMemo(
+    () => Array.from(selectedSampleIds),
+    [selectedSampleIds]
+  );
   const selectedVisibleCount = useMemo(
     () => visibleSampleIds.filter((sampleId) => selectedSampleIds.has(sampleId)).length,
     [selectedSampleIds, visibleSampleIds]
@@ -457,25 +476,14 @@ export default function DatasetDetailPage() {
   async function handleExport() {
     setError(null);
     try {
-      if (exportFormat !== "manifest") {
+      if (exportFormat === "csv") {
         const template = await getExportTemplate(datasetId, exportFormat);
-        if (exportFormat === "csv") {
-          const content = exportTemplateToCsv(template.payload);
-          setExportPreview({
-            title: "CSV 标签表",
-            filename: `dataset-${datasetId}-labels.csv`,
-            mimeType: "text/csv;charset=utf-8",
-            content,
-            summary: template.description
-          });
-          return;
-        }
-        const formatTitle = exportFormat === "coco" ? "COCO 骨架" : "YOLO 骨架";
+        const content = exportTemplateToCsv(template.payload);
         setExportPreview({
-          title: formatTitle,
-          filename: `dataset-${datasetId}-${exportFormat}-template.json`,
-          mimeType: "application/json;charset=utf-8",
-          content: `${JSON.stringify(template.payload, null, 2)}\n`,
+          title: "CSV 标签表",
+          filename: `dataset-${datasetId}-labels.csv`,
+          mimeType: "text/csv;charset=utf-8",
+          content,
           summary: template.description
         });
         return;
@@ -808,6 +816,7 @@ export default function DatasetDetailPage() {
               onManageTags={() => setTagsOpen(true)}
               onImportMetadata={() => setMetadataImportOpen(true)}
               onExport={() => void handleExport()}
+              onAnnotationExport={() => setAnnotationExportOpen(true)}
             />
             <span className="text-sm text-gray-500">
               {sampleTotal} 项，第 {page} / {pageCount} 页
@@ -1009,6 +1018,13 @@ export default function DatasetDetailPage() {
         preview={exportPreview}
         onClose={() => setExportPreview(null)}
         onDownload={handleDownloadExport}
+      />
+      <AnnotationExportModal
+        datasetId={datasetId}
+        open={annotationExportOpen}
+        currentQuery={annotationExportQuery}
+        selectedSampleIds={annotationExportSelectedSampleIds}
+        onClose={() => setAnnotationExportOpen(false)}
       />
     </main>
   );

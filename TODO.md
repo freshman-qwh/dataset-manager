@@ -26,11 +26,11 @@
 
 ## 当前基线
 
-- 当前版本：`v0.4.0 Phase 2 批次 B 验收修复`
-- 基线日期：`2026-05-18`
-- 当前能力：数据集创建、增量扫描、样本登记、标签体系、批量 split、搜索筛选、预览增强、重复样本识别、元数据导入、统计、manifest、导出模板和图片几何标注 MVP。
-- 标注基线：已具备 annotation 表、读取/全量替换保存 API、labelme JSON 导出接口、manifest annotations、SVG 标注页、矩形/polygon/点、对象列表、类别编辑、隐藏/锁定、删除、撤销/重做、手动保存、快捷键、适配画布、P0 布局修复、相邻图片导航、筛选上下文保留、未保存三选一确认、绘制草稿互斥确认和对象聚焦。
-- 当前目标：进入 `v0.4.0 Phase 2` 后续批次，优先补格式导入导出契约、标注质量检查和大数据集体验。
+- 当前版本：`v0.4.0 Phase 2 批次 C 完成`
+- 基线日期：`2026-07-19`
+- 当前能力：数据集创建、增量扫描、样本登记、标签体系、批量 split、搜索筛选、预览增强、重复样本识别、元数据导入、统计、manifest、图片几何标注，以及 LabelMe、COCO detection/segmentation、YOLO detection/segmentation、Pascal VOC 标注导出。
+- 标注基线：已具备 annotation 表、读取/全量替换保存 API、统一导出预检与真实训练格式导出、manifest annotations、SVG 标注页、矩形/polygon/点、对象列表、类别编辑、隐藏/锁定、删除、撤销/重做、手动保存、快捷键、适配画布、相邻图片导航、筛选上下文保留、未保存三选一确认、绘制草稿互斥确认和对象聚焦。
+- 当前目标：进入 `v0.4.0 Phase 2` 批次 D，优先补标注质量检查，再推进大数据集体验。
 
 ## 已完成基线
 
@@ -79,10 +79,10 @@
 - [x] `P1` `工程/新增` C1 几何工具与导出预检框架：新增 rectangle/polygon bbox、area、YOLO 归一化等纯几何转换工具，并提供后端导出预检 API，能识别 polygon 转 bbox、rectangle 转 segmentation polygon、point/points 不兼容、越界坐标和无可导出对象。
 - [x] `P1` `新增` labelme JSON 导入：支持导入单样本或目录下 labelme JSON，支持 dry-run、replace/append，写入 SQLite annotation 元数据，不写回原始图片。
 - [x] `P1` `优化` labelme 导出验收：确认 rectangle、polygon、point、points 到 labelme `shapes` 的二维坐标转换和 `imageHeight/imageWidth` 完整可靠，并补充 labelme 数据集 ZIP 导出。
-- [ ] `P1` `新增` COCO detection/segmentation 真实导出：定义 category 映射、image id、bbox、segmentation、area、iscrowd 等字段契约。
-- [ ] `P1` `新增` YOLO detection/segmentation 导出：detection 输出归一化 bbox，rectangle 直接导出、polygon 转外接 bbox 并预检 warning；segmentation 输出归一化 polygon 顶点，rectangle 可转 4 点 polygon 并预检 warning；point/points 默认不导出。
-- [ ] `P2` `新增` Pascal VOC bbox 导出：覆盖 rectangle 场景，作为传统检测格式补充。
-- [~] `P2` `优化` 导出预检：后端预检 API 已完成；后续在导出向导中接入前端提示空标注、无类别映射、非 bbox 形状不兼容等问题。
+- [x] `P1` `新增` COCO detection/segmentation 真实导出：稳定生成 category/image/annotation id、bbox、segmentation、area 和 iscrowd，并附带导出报告。
+- [x] `P1` `新增` YOLO detection/segmentation 导出：输出归一化 bbox 或 polygon 顶点、稳定类别映射、split 标签目录和 data.yaml；有损转换由预检明确 warning。
+- [x] `P2` `新增` Pascal VOC bbox 导出：按样本相对路径生成 XML bbox，polygon 以外接框导出并给出预检 warning。
+- [x] `P2` `优化` 导出预检与向导：前端支持格式、筛选/全量/split/已选范围和空标注选项，展示 error/warning/info、类别映射并阻断错误导出。
 
 ## 批次 D：标注质量检查
 

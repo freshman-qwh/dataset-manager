@@ -1,6 +1,13 @@
 import axios from "axios";
 
 import type {
+  AnnotationExportDownload,
+  AnnotationExportFormat,
+  AnnotationExportPrecheckRequest,
+  AnnotationExportPrecheckResponse,
+  AnnotationExportSampleQuery
+} from "../types/annotationExport";
+import type {
   AnnotationObject,
   AnnotationReplaceRequest,
   Dataset,
@@ -263,4 +270,47 @@ export async function getExportTemplate(datasetId: number, format: string): Prom
     params: { format }
   });
   return data;
+}
+
+export async function precheckAnnotationExport(
+  datasetId: number,
+  payload: AnnotationExportPrecheckRequest
+): Promise<AnnotationExportPrecheckResponse> {
+  const { data } = await client.post<AnnotationExportPrecheckResponse>(
+    `/datasets/${datasetId}/annotation-export-precheck`,
+    payload
+  );
+  return data;
+}
+
+export async function downloadAnnotationExport(
+  datasetId: number,
+  format: AnnotationExportFormat,
+  query: AnnotationExportSampleQuery,
+  includeEmpty: boolean
+): Promise<AnnotationExportDownload> {
+  const params = new URLSearchParams({
+    format,
+    include_empty: String(includeEmpty),
+    sort_by: query.sort_by ?? "relative_path",
+    sort_order: query.sort_order ?? "asc"
+  });
+  if (query.search) params.set("search", query.search);
+  if (query.file_type) params.set("file_type", query.file_type);
+  if (query.file_status) params.set("file_status", query.file_status);
+  if (query.tag) params.set("tag", query.tag);
+  if (query.split) params.set("split", query.split);
+  if (query.review_status) params.set("review_status", query.review_status);
+  query.sample_ids?.forEach((sampleId) => params.append("sample_ids", String(sampleId)));
+
+  const response = await client.get<Blob>(
+    `/datasets/${datasetId}/annotation-export?${params.toString()}`,
+    { responseType: "blob" }
+  );
+  const disposition = String(response.headers["content-disposition"] ?? "");
+  const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+  return {
+    blob: response.data,
+    filename: filenameMatch?.[1] ?? `dataset-${datasetId}-${format}`
+  };
 }

@@ -1,5 +1,5 @@
 import { X } from "lucide-react";
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 
 interface ModalProps {
   open: boolean;
@@ -9,15 +9,21 @@ interface ModalProps {
 }
 
 export default function Modal({ open, title, children, onClose }: ModalProps) {
+  const titleId = useId();
   if (!open) {
     return null;
   }
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/20 px-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-lg border border-line bg-white shadow-soft">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="w-full max-w-lg rounded-lg border border-line bg-white shadow-soft"
+      >
         <div className="flex items-center justify-between border-b border-line px-5 py-4">
-          <h2 className="text-base font-semibold text-ink">{title}</h2>
+          <h2 id={titleId} className="text-base font-semibold text-ink">{title}</h2>
           <button
             type="button"
             title="关闭"

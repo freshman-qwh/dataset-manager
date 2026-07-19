@@ -21,7 +21,7 @@
 - 打开数据集自动扫描设置：进入详情页时可自动执行一次增量扫描
 - 样本记录删除：单选/多选删除数据库元数据，不删除本地原始文件
 - CSV/JSON 元数据导入：批量写入标签、split、备注和自定义属性
-- 数据集统计、manifest JSON 导出、CSV 标签表下载和 COCO/YOLO 格式骨架
+- 数据集统计、manifest JSON、CSV 标签表，以及 LabelMe、COCO detection/segmentation、YOLO detection/segmentation、Pascal VOC 标注导出
 - React + TypeScript + Vite + Tailwind 前端
 - 数据集列表、创建弹窗、详情页、样本网格、详情侧边栏、标签管理、搜索筛选
 
@@ -181,8 +181,9 @@ JSON 可以是数组，也可以是包含 `samples` 数组的对象：
 
 - `manifest` 是系统原生审计清单，包含路径、hash、文件状态、标签、split 和自定义元数据。
 - `CSV 标签表` 面向样本级标签和表格流转，适合人工检查或再次导入。
-- `COCO 骨架` 和 `YOLO 骨架` 目前只导出图片、类别和建议路径。由于系统尚未实现 bbox、segmentation 等标注模型，它们还不是完整标准标注导出。
-- 前端导出会先显示预览弹窗，确认后再下载文件。
+- `标注训练格式` 提供 LabelMe、COCO detection/segmentation、YOLO detection/segmentation 和 Pascal VOC 真实导出。
+- 训练格式导出会先运行预检，展示不兼容对象、有损几何转换、空标注和类别映射；error 会阻断下载，warning 允许确认后继续。
+- 导出包只包含标签、配置和报告，不复制原始图片，也不在原始数据目录生成旁车文件。
 
 ## 删除与修复边界
 

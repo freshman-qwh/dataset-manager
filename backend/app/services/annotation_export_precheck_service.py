@@ -116,9 +116,6 @@ def precheck_annotation_export(
         image_width, image_height = image_size
 
         for annotation in annotations:
-            label = annotation.label.strip()
-            if label:
-                labels.add(label)
             outcome = _check_annotation(
                 payload.format,
                 annotation,
@@ -129,6 +126,7 @@ def precheck_annotation_export(
                 issues=issues,
             )
             if outcome == "exportable":
+                labels.add(annotation.label.strip())
                 exportable_object_count += 1
             else:
                 skipped_object_count += 1
@@ -196,6 +194,16 @@ def _check_annotation(
             "error",
             "ANNOTATION_LABEL_REQUIRED",
             "Annotation label is required.",
+            sample_id=sample_id,
+            sample_path=sample_path,
+            annotation_id=annotation.id,
+        )
+        return "skipped"
+    if any(ord(character) < 32 for character in annotation.label):
+        issues.add(
+            "error",
+            "INVALID_CLASS_NAME",
+            "Annotation labels cannot contain control characters.",
             sample_id=sample_id,
             sample_path=sample_path,
             annotation_id=annotation.id,

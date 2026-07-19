@@ -2,6 +2,34 @@
 
 本文件记录人工验收重点。最新一轮放在最前，历史步骤合并为核心回归清单，避免验收文档过长。
 
+## [v0.4.0 Phase 2 批次 C 训练格式导出] - 2026-07-19
+
+验收范围：
+
+- COCO detection/segmentation 真实 JSON 导出
+- YOLO detection/segmentation 标签 ZIP 导出
+- Pascal VOC XML ZIP 导出
+- 前端预检与下载向导
+- 原始数据只读边界
+
+步骤：
+
+1. 准备包含 rectangle、polygon、point 和空标注图片的数据集，在详情页打开“更多操作 → 标注训练格式”。
+2. 依次选择六种格式，切换当前筛选、全数据集、指定 split 和已选样本范围，确认预检样本数随范围变化。
+3. 对 detection/VOC 预检确认 polygon 转 bbox 显示 warning；对 segmentation 预检确认 rectangle 转四点 polygon 显示 warning；point/points 显示跳过提示。
+4. 构造越界坐标或只有不兼容对象的范围，确认预检显示 error 且下载按钮禁用；修正后重新预检才能下载。
+5. 下载 COCO detection/segmentation，确认 category/image/annotation id 稳定，bbox、segmentation、area、iscrowd 字段符合契约。
+6. 下载 YOLO detection/segmentation，确认 ZIP 含 `labels/<split>/*.txt`、`classes.txt`、`data.yaml` 和 `export_report.json`，坐标均按图片宽高归一化。
+7. 下载 Pascal VOC，确认 ZIP 含 `annotations/*.xml` 和 `export_report.json`，文件名、尺寸、类别与 bbox 正确。
+8. 运行 `cd backend && .\.venv\Scripts\python.exe scripts\smoke_annotation_export_api.py --root "D:\My Datasets\test"`，确认六种格式均为 200 且 `sha256_unchanged=true`。
+
+通过标准：
+
+- 导出只生成响应内容，不把图片复制进导出包，也不在原始数据目录写入旁车文件。
+- 预检 error 阻断导出，warning 可在用户明确查看后继续，类别映射稳定且只包含可导出对象类别。
+- 当前筛选、全量、split 和已选样本范围与后端实际导出内容一致。
+- 真实数据烟测使用内存 SQLite，仅读取扫描目录；选中原图的 SHA-256、大小和修改时间保持不变。
+
 ## [v0.4.0 Phase 2 批次 C2 labelme 导入导出] - 2026-05-19
 
 验收范围：

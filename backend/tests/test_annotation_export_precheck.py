@@ -105,7 +105,7 @@ def test_yolo_detection_precheck_warns_for_polygon_and_skips_point(tmp_path: Pat
         assert payload["annotated_sample_count"] == 1
         assert payload["exportable_object_count"] == 2
         assert payload["skipped_object_count"] == 1
-        assert [item["name"] for item in payload["class_map"]] == ["dot", "poly", "rect"]
+        assert [item["name"] for item in payload["class_map"]] == ["poly", "rect"]
         issue_codes = {issue["code"] for issue in payload["issues"]}
         assert "POLYGON_TO_BBOX" in issue_codes
         assert "INCOMPATIBLE_SHAPE_SKIPPED" in issue_codes
