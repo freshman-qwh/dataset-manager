@@ -1,11 +1,19 @@
 import axios from "axios";
 
 import type {
+  AnnotationExportDownload,
+  AnnotationExportFormat,
+  AnnotationExportPrecheckRequest,
+  AnnotationExportPrecheckResponse,
+  AnnotationExportSampleQuery
+} from "../types/annotationExport";
+import type {
   AnnotationObject,
   AnnotationReplaceRequest,
   Dataset,
   DatasetCreate,
   DatasetStats,
+  DatasetQualityReport,
   DirectoryListResponse,
   DuplicateReport,
   ExportTemplateResponse,
@@ -73,6 +81,11 @@ export async function getDuplicateReport(datasetId: number): Promise<DuplicateRe
   return data;
 }
 
+export async function getDatasetQualityReport(datasetId: number): Promise<DatasetQualityReport> {
+  const { data } = await client.get<DatasetQualityReport>(`/datasets/${datasetId}/quality-report`);
+  return data;
+}
+
 export async function listTags(datasetId: number): Promise<Tag[]> {
   const { data } = await client.get<Tag[]>(`/datasets/${datasetId}/tags`);
   return data;
@@ -108,7 +121,7 @@ export async function scanDataset(datasetId: number, folderPath: string): Promis
 }
 
 export async function listSamples(params: SampleQuery): Promise<SampleListResponse> {
-  const { datasetId, search, fileType, fileStatus, tag, split, reviewStatus, page, pageSize, sortBy, sortOrder } = params;
+  const { datasetId, search, fileType, fileStatus, tag, split, reviewStatus, annotationStatus, page, pageSize, sortBy, sortOrder } = params;
   const { data } = await client.get<SampleListResponse>(`/datasets/${datasetId}/samples`, {
     params: {
       search: search || undefined,
@@ -117,6 +130,7 @@ export async function listSamples(params: SampleQuery): Promise<SampleListRespon
       tag: tag || undefined,
       split: split || undefined,
       review_status: reviewStatus || undefined,
+      annotation_status: annotationStatus || undefined,
       page,
       page_size: pageSize,
       sort_by: sortBy,
@@ -127,7 +141,7 @@ export async function listSamples(params: SampleQuery): Promise<SampleListRespon
 }
 
 export async function getSampleNavigation(params: Omit<SampleQuery, "fileType" | "page" | "pageSize"> & { sampleId?: number | null }): Promise<SampleNavigationResponse> {
-  const { datasetId, sampleId, search, fileStatus, tag, split, reviewStatus, sortBy, sortOrder } = params;
+  const { datasetId, sampleId, search, fileStatus, tag, split, reviewStatus, annotationStatus, sortBy, sortOrder } = params;
   const { data } = await client.get<SampleNavigationResponse>(`/datasets/${datasetId}/samples/navigation`, {
     params: {
       sample_id: sampleId || undefined,
@@ -136,6 +150,7 @@ export async function getSampleNavigation(params: Omit<SampleQuery, "fileType" |
       tag: tag || undefined,
       split: split || undefined,
       review_status: reviewStatus || undefined,
+      annotation_status: annotationStatus || undefined,
       sort_by: sortBy,
       sort_order: sortOrder
     }
@@ -263,4 +278,47 @@ export async function getExportTemplate(datasetId: number, format: string): Prom
     params: { format }
   });
   return data;
+}
+
+export async function precheckAnnotationExport(
+  datasetId: number,
+  payload: AnnotationExportPrecheckRequest
+): Promise<AnnotationExportPrecheckResponse> {
+  const { data } = await client.post<AnnotationExportPrecheckResponse>(
+    `/datasets/${datasetId}/annotation-export-precheck`,
+    payload
+  );
+  return data;
+}
+
+export async function downloadAnnotationExport(
+  datasetId: number,
+  format: AnnotationExportFormat,
+  query: AnnotationExportSampleQuery,
+  includeEmpty: boolean
+): Promise<AnnotationExportDownload> {
+  const params = new URLSearchParams({
+    format,
+    include_empty: String(includeEmpty),
+    sort_by: query.sort_by ?? "relative_path",
+    sort_order: query.sort_order ?? "asc"
+  });
+  if (query.search) params.set("search", query.search);
+  if (query.file_type) params.set("file_type", query.file_type);
+  if (query.file_status) params.set("file_status", query.file_status);
+  if (query.tag) params.set("tag", query.tag);
+  if (query.split) params.set("split", query.split);
+  if (query.review_status) params.set("review_status", query.review_status);
+  query.sample_ids?.forEach((sampleId) => params.append("sample_ids", String(sampleId)));
+
+  const response = await client.get<Blob>(
+    `/datasets/${datasetId}/annotation-export?${params.toString()}`,
+    { responseType: "blob" }
+  );
+  const disposition = String(response.headers["content-disposition"] ?? "");
+  const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+  return {
+    blob: response.data,
+    filename: filenameMatch?.[1] ?? `dataset-${datasetId}-${format}`
+  };
 }

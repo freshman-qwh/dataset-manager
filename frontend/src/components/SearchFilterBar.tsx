@@ -7,12 +7,14 @@ interface SearchFilterBarProps {
   tag: string;
   split: string;
   reviewStatus: string;
+  annotationStatus: string;
   onSearchChange: (value: string) => void;
   onFileTypeChange: (value: string) => void;
   onFileStatusChange: (value: string) => void;
   onTagChange: (value: string) => void;
   onSplitChange: (value: string) => void;
   onReviewStatusChange: (value: string) => void;
+  onAnnotationStatusChange: (value: string) => void;
   onClear: () => void;
 }
 
@@ -23,16 +25,18 @@ export default function SearchFilterBar({
   tag,
   split,
   reviewStatus,
+  annotationStatus,
   onSearchChange,
   onFileTypeChange,
   onFileStatusChange,
   onTagChange,
   onSplitChange,
   onReviewStatusChange,
+  onAnnotationStatusChange,
   onClear
 }: SearchFilterBarProps) {
   const tagValue = tag === "__untagged__" ? "未标注" : tag;
-  const hasFilters = Boolean(search || fileType || fileStatus || tag || split || reviewStatus);
+  const hasFilters = Boolean(search || fileType || fileStatus || tag || split || reviewStatus || annotationStatus);
 
   return (
     <div className="grid gap-3 rounded-lg border border-line bg-white p-3 shadow-sm xl:grid-cols-[minmax(240px,1fr)_auto]">
@@ -75,6 +79,15 @@ export default function SearchFilterBar({
           <option value="val">val</option>
           <option value="test">test</option>
           <option value="unassigned">未划分</option>
+        </select>
+        <select
+          value={annotationStatus}
+          onChange={(event) => onAnnotationStatusChange(event.target.value)}
+          className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm outline-none transition focus:border-gray-900 sm:w-32"
+        >
+          <option value="">全部标注</option>
+          <option value="empty">空标注</option>
+          <option value="annotated">已有对象</option>
         </select>
         <select
           value={reviewStatus}

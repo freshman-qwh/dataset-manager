@@ -2,6 +2,119 @@
 
 本文件记录人工验收重点。最新一轮放在最前，历史步骤合并为核心回归清单，避免验收文档过长。
 
+## [v0.4.0 Phase 2 批次 D 标注质量工作台] - 2026-07-19
+
+验收范围：
+
+- 统一质量报告与数据健康工作台
+- 空标注、几何、重复对象、split 泄漏、类别分布与审查状态检查
+- 问题筛选、样本/对象定位和复检
+- occluded、truncated、difficult 对象属性与格式导出
+- 原始数据只读边界
+
+步骤：
+
+1. 准备至少三张图片：一张空标注、一张含两个完全相同的同类 rectangle、一张正常 polygon；把内容相同的两张图片分别设为 train 和 val。
+2. 在数据集详情页点击“数据健康”，确认显示错误/警告/提示汇总，并出现 `EMPTY_ANNOTATIONS`、`DUPLICATE_ANNOTATION`、`SPLIT_LEAKAGE`、极少类别或单 split 类别提示。
+3. 按严重度和问题类型筛选，点击“重新检查”，确认汇总和列表保持一致；点击具体几何问题的“定位对象”，确认进入正确样本并聚焦对应对象。
+4. 对包含 train/val 相同 hash 的全数据集执行训练格式预检，确认出现 `SPLIT_LEAKAGE` error 并阻断下载；改为仅导出 train 后确认不会因为范围外 val 样本而误报。
+5. 点击“空标注图片”卡片，确认工作台关闭，主列表自动切换为“图片 + 空标注”，样本数量与报告一致；从网格进入标注页后，上一张/下一张仍限制在当前空标注范围。
+6. 尝试保存超出图片宽高的 rectangle 和零面积 polygon，确认 API 返回 400，刷新后原有标注仍存在。
+7. 在对象面板勾选遮挡、截断、困难并保存，刷新确认状态保留；导出 LabelMe、COCO 和 Pascal VOC，确认对应 flags、attributes 或 XML 节点为真值。
+8. 运行 `cd backend && .\.venv\Scripts\python.exe scripts\smoke_quality_api.py --root "D:\My Datasets\test"`，确认扫描 5,949 文件、0 错误，报告与空标注筛选计数一致且 `sha256_unchanged=true`。
+
+通过标准：
+
+- 质量报告问题计数不受返回明细截断影响，明细按 error、warning、info 优先展示。
+- split 泄漏只比较 train/val/test 中相同文件 hash；重复对象只提示，不自动合并或删除。
+- 保存校验发生在替换旧标注之前，非法请求不会导致数据丢失。
+- 质量工作台可在桌面宽度内稳定滚动，不挤压详情页；空标注与审查筛选会重置不相关条件。
+- 质量检查、属性编辑和导出只修改 SQLite 元数据或响应内容，不移动、重命名、删除、覆盖原始文件，也不在原始目录生成旁车文件。
+
+## [v0.4.0 Phase 2 批次 C 训练格式导出] - 2026-07-19
+
+验收范围：
+
+- COCO detection/segmentation 真实 JSON 导出
+- YOLO detection/segmentation 标签 ZIP 导出
+- Pascal VOC XML ZIP 导出
+- 前端预检与下载向导
+- 原始数据只读边界
+
+步骤：
+
+1. 准备包含 rectangle、polygon、point 和空标注图片的数据集，在详情页打开“更多操作 → 标注训练格式”。
+2. 依次选择六种格式，切换当前筛选、全数据集、指定 split 和已选样本范围，确认预检样本数随范围变化。
+3. 对 detection/VOC 预检确认 polygon 转 bbox 显示 warning；对 segmentation 预检确认 rectangle 转四点 polygon 显示 warning；point/points 显示跳过提示。
+4. 构造越界坐标或只有不兼容对象的范围，确认预检显示 error 且下载按钮禁用；修正后重新预检才能下载。
+5. 下载 COCO detection/segmentation，确认 category/image/annotation id 稳定，bbox、segmentation、area、iscrowd 字段符合契约。
+6. 下载 YOLO detection/segmentation，确认 ZIP 含 `labels/<split>/*.txt`、`classes.txt`、`data.yaml` 和 `export_report.json`，坐标均按图片宽高归一化。
+7. 下载 Pascal VOC，确认 ZIP 含 `annotations/*.xml` 和 `export_report.json`，文件名、尺寸、类别与 bbox 正确。
+8. 运行 `cd backend && .\.venv\Scripts\python.exe scripts\smoke_annotation_export_api.py --root "D:\My Datasets\test"`，确认六种格式均为 200 且 `sha256_unchanged=true`。
+
+通过标准：
+
+- 导出只生成响应内容，不把图片复制进导出包，也不在原始数据目录写入旁车文件。
+- 预检 error 阻断导出，warning 可在用户明确查看后继续，类别映射稳定且只包含可导出对象类别。
+- 当前筛选、全量、split 和已选样本范围与后端实际导出内容一致。
+- 真实数据烟测使用内存 SQLite，仅读取扫描目录；选中原图的 SHA-256、大小和修改时间保持不变。
+
+## [v0.4.0 Phase 2 批次 C2 labelme 导入导出] - 2026-05-19
+
+验收范围：
+
+- labelme JSON 单文件导入
+- labelme JSON 目录导入
+- dry-run、replace、append 策略
+- labelme 单样本导出和数据集 ZIP 导出
+
+步骤：
+
+1. 准备一个包含正常图片样本的数据集，并准备一个 labelme JSON，包含 rectangle、polygon、point、points 四类 shape。
+2. 调用 `POST /api/datasets/{dataset_id}/annotations/import-labelme`，传入 `mode=file`、`sample_id` 和 `dry_run=true`，确认响应中 `created_annotations` 数量正确，但刷新样本标注仍为空或保持原状。
+3. 用同一 JSON 再调用一次，设置 `dry_run=false`、`strategy=replace`，确认样本标注被写入 SQLite，四类 shape 坐标能在标注 API 中恢复，样本标签同步为对象类别。
+4. 调用 `POST /api/samples/{sample_id}/annotations/export-labelme`，确认导出的 `shapes` 中 rectangle、polygon、point、points 坐标均为 labelme 二维点数组，`imageWidth/imageHeight` 与图片尺寸一致。
+5. 准备一个 labelme JSON 目录，至少包含一个 `imagePath` 为相对路径的文件，以及一个包含不支持 shape_type 的文件；调用目录导入，确认匹配到对应样本，不支持 shape 被 warning 跳过。
+6. 对已有标注的样本用 `strategy=append` 导入一个新 shape，确认旧对象仍存在，新对象追加到对象列表末尾。
+7. 调用 `GET /api/datasets/{dataset_id}/annotation-export?format=labelme`，确认下载 ZIP 中包含 `annotations/*.json` 和 `export_report.json`，默认跳过空标注图片。
+
+通过标准：
+
+- labelme 导入只写 SQLite 标注元数据和样本标签关系，不移动、重命名、删除、覆盖原始图片，也不修改导入 JSON 文件。
+- dry-run 不产生任何数据库写入。
+- replace 会用导入 JSON 替换目标样本现有 annotation；append 会保留旧对象并追加新对象。
+- rectangle 会规范为 `[xtl, ytl, xbr, ybr]`，导出 labelme 时再转回两个二维点；polygon、point、points 坐标保持原图像素坐标语义。
+- 目录导入能按 `imagePath` / 相对路径 / 文件名匹配样本；无法匹配或匹配歧义时返回 error。
+- ZIP 导出默认只包含有标注图片，报告中统计导出文件数和跳过的空标注样本数。
+
+## [v0.4.0 Phase 2 批次 C1 导出预检框架] - 2026-05-19
+
+验收范围：
+
+- 标注导出预检 API
+- YOLO detection 与 YOLO segmentation 的格式兼容提示
+- 越界坐标和无可导出对象阻断
+
+步骤：
+
+1. 准备一个包含正常图片样本的数据集，至少创建 rectangle、polygon 和 point 三类标注对象。
+2. 调用 `POST /api/datasets/{dataset_id}/annotation-export-precheck`，请求体为 `{"format":"yolo_detection"}`。
+3. 确认响应中 `blocked=false`，rectangle 和 polygon 计入 `exportable_object_count`，point 计入 `skipped_object_count`。
+4. 确认 issues 中包含 `POLYGON_TO_BBOX` warning 和 `INCOMPATIBLE_SHAPE_SKIPPED` warning，说明 polygon 会有损转 bbox，point 不导出。
+5. 调用同一接口，请求体为 `{"format":"yolo_segmentation"}`，确认 rectangle 和 polygon 可导出，issues 中包含 `RECTANGLE_TO_POLYGON` warning。
+6. 准备一个只有 point 标注的样本，调用 `yolo_detection` 预检，确认 `blocked=true` 且包含 `NO_EXPORTABLE_OBJECTS`。
+7. 准备一个坐标超出图片宽高的 rectangle 标注，调用任一导出预检，确认 `blocked=true` 且包含 `COORDINATES_OUT_OF_BOUNDS`。
+8. 在大数据集上运行预检时，如果 `info_count` 很大且 `truncated_issue_count > 0`，确认 `issues` 明细仍优先展示 error/warning，而不是只展示 `EMPTY_SAMPLE_SKIPPED`。
+
+通过标准：
+
+- 预检只读取样本、图片尺寸和 SQLite 标注元数据，不移动、重命名、删除或覆盖原始图片。
+- detection 格式下 polygon 会被识别为 bbox 有损转换，而不是静默当作 polygon 导出。
+- segmentation 格式下 polygon 可直接导出，rectangle 转四点 polygon 会提示 warning。
+- 无可导出对象、越界坐标、图片尺寸不可读等问题会阻断后续真实导出。
+- 响应中的 class map 稳定按类别名排序，为后续 COCO/YOLO/VOC 真实导出复用。
+- issues 明细最多返回有限条数时，关键 error/warning 不会被大量空样本 info 淹没。
+
 ## [v0.4.0 Phase 2 标注拖拽稳定性修复] - 2026-05-19
 
 验收范围：

@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.models.sample import Sample
+from app.models.annotation import Annotation
 from app.models.tag import Tag
 from app.schemas.sample import (
     BatchSampleUpdate,
@@ -81,6 +82,7 @@ def get_filtered_samples(
     tag: str | None = None,
     split: str | None = None,
     review_status: str | None = None,
+    annotation_status: str | None = None,
     sample_ids: list[int] | None = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
@@ -102,6 +104,17 @@ def get_filtered_samples(
         statement = statement.where(Sample.id.in_(sample_ids))
 
     samples = session.exec(statement).all()
+
+    if annotation_status:
+        annotated_ids = set(
+            session.exec(
+                select(Annotation.sample_id).where(Annotation.dataset_id == dataset_id).distinct()
+            ).all()
+        )
+        if annotation_status == "empty":
+            samples = [sample for sample in samples if sample.id not in annotated_ids]
+        elif annotation_status == "annotated":
+            samples = [sample for sample in samples if sample.id in annotated_ids]
 
     if duplicate_only:
         duplicate_hashes = _duplicate_hashes(session, dataset_id)
@@ -151,6 +164,7 @@ def list_samples(
     tag: str | None = None,
     split: str | None = None,
     review_status: str | None = None,
+    annotation_status: str | None = None,
     page: int = 1,
     page_size: int = 60,
     sort_by: str = "created_at",
@@ -168,6 +182,7 @@ def list_samples(
         tag=tag,
         split=split,
         review_status=review_status,
+        annotation_status=annotation_status,
         sort_by=safe_sort_by,
         sort_order=safe_sort_order,
     )
@@ -194,6 +209,7 @@ def get_sample_navigation(
     tag: str | None = None,
     split: str | None = None,
     review_status: str | None = None,
+    annotation_status: str | None = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
 ) -> SampleNavigationResponse:
@@ -209,6 +225,7 @@ def get_sample_navigation(
         tag=tag,
         split=split,
         review_status=review_status,
+        annotation_status=annotation_status,
         sort_by=safe_sort_by,
         sort_order=safe_sort_order,
     )

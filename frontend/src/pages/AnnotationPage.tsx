@@ -118,6 +118,7 @@ export default function AnnotationPage() {
       tag: context.get("tag") || undefined,
       split: context.get("split") || undefined,
       reviewStatus: context.get("reviewStatus") || undefined,
+      annotationStatus: context.get("annotationStatus") || undefined,
       sortBy: context.get("sortBy") || "created_at",
       sortOrder: context.get("sortOrder") === "asc" ? ("asc" as const) : ("desc" as const)
     };
@@ -179,6 +180,7 @@ export default function AnnotationPage() {
           tag: navigationQuery.tag,
           split: navigationQuery.split,
           reviewStatus: navigationQuery.reviewStatus,
+          annotationStatus: navigationQuery.annotationStatus,
           sortBy: navigationQuery.sortBy,
           sortOrder: navigationQuery.sortOrder
         })
@@ -208,12 +210,22 @@ export default function AnnotationPage() {
       setTags(nextTags);
       setSample(nextSample);
       reset(normalizeObjects(nextAnnotations));
-      setActiveObjectId(nextAnnotations[0]?.client_id ?? null);
-      setActiveLabel(nextTags[0]?.name ?? nextAnnotations[0]?.label ?? "object");
+      const requestedAnnotationId = Number(new URLSearchParams(searchParamsText).get("annotation"));
+      const requestedAnnotation = Number.isFinite(requestedAnnotationId)
+        ? nextAnnotations.find((annotation) => annotation.id === requestedAnnotationId)
+        : undefined;
+      const nextActiveObject = requestedAnnotation ?? nextAnnotations[0];
+      setActiveObjectId(nextActiveObject?.client_id ?? null);
+      setActiveLabel(nextActiveObject?.label ?? nextTags[0]?.name ?? "object");
       setClean();
       setDraftState(EMPTY_DRAFT_STATE);
       setDraftCommand(null);
       setFocusCommand(null);
+      if (requestedAnnotation) {
+        const nextCommand = { id: focusCommandIdRef.current + 1, clientId: requestedAnnotation.client_id };
+        focusCommandIdRef.current = nextCommand.id;
+        setFocusCommand(nextCommand);
+      }
       setPendingDraftAction(null);
       setPendingDirtyAction(null);
       if (!isAnnotatableImage(nextSample)) {

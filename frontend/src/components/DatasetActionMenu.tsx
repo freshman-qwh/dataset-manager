@@ -7,6 +7,7 @@ interface DatasetActionMenuProps {
   onManageTags: () => void;
   onImportMetadata: () => void;
   onExport: () => void;
+  onAnnotationExport: () => void;
 }
 
 export default function DatasetActionMenu({
@@ -14,7 +15,8 @@ export default function DatasetActionMenu({
   onExportFormatChange,
   onManageTags,
   onImportMetadata,
-  onExport
+  onExport,
+  onAnnotationExport
 }: DatasetActionMenuProps) {
   const [open, setOpen] = useState(false);
 
@@ -60,8 +62,6 @@ export default function DatasetActionMenu({
           >
             <option value="manifest">manifest</option>
             <option value="csv">CSV 标签表</option>
-            <option value="coco">COCO 骨架</option>
-            <option value="yolo">YOLO 骨架</option>
           </select>
           <button
             type="button"
@@ -70,6 +70,14 @@ export default function DatasetActionMenu({
           >
             <Download size={16} />
             导出
+          </button>
+          <button
+            type="button"
+            onClick={() => closeAfter(onAnnotationExport)}
+            className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            <Download size={16} />
+            标注训练格式
           </button>
         </div>
       )}

@@ -2,6 +2,49 @@
 
 本文件记录每个版本的日期、版本号和主要更新。
 
+## [v0.4.0 Phase 2 批次 D 标注质量工作台] - 2026-07-19
+
+主要更新：
+
+- 新增 `GET /api/datasets/{dataset_id}/quality-report`，统一返回错误、警告和提示，覆盖空标注、无效/越界几何、重复对象、跨 split 相同 hash 泄漏、极少类别、单 split 类别、明显分布偏移与审查状态。
+- 训练格式预检会把当前导出范围内的跨 split 相同 hash 泄漏作为 error，阻止生成可能误导评估的完整训练包；只导出单一 split 时不误报范围外样本。
+- 标注保存新增图片边界和 polygon 正面积校验；失败替换会在删除旧对象前返回 400，保留既有 SQLite 标注元数据。
+- 样本列表与标注导航新增 `annotation_status=empty|annotated`，质量工作台可一键筛选空标注，并可从问题直接进入样本或定位标注对象。
+- 数据集详情页原“体检”升级为宽屏数据健康工作台，支持严重度/问题类型筛选、重新检查、审查状态入口和问题明细内部滚动。
+- 标注对象面板新增遮挡、截断、困难属性；LabelMe 导入导出、COCO 和 Pascal VOC 导出保留这些字段。
+- 新增隔离 API 契约测试和真实目录只读烟测；5,949 文件烟测的质量报告耗时约 0.149 秒，抽样原图 hash、大小和修改时间保持不变。
+- 完成产品定位复审：明确本项目是本地优先的视觉数据集准备工作台，并新增 UX-A 语义收敛、UX-B 连续标注、UX-C 训练准备闭环三阶段路线及产品验收指标。
+
+## [v0.4.0 Phase 2 批次 C 训练格式导出] - 2026-07-19
+
+主要更新：
+
+- 统一 `GET /api/datasets/{dataset_id}/annotation-export`，新增 COCO detection/segmentation、YOLO detection/segmentation 和 Pascal VOC 真实导出，并保留 LabelMe ZIP。
+- 所有训练格式导出强制复用预检；错误返回结构化 422，polygon/bbox 与 rectangle/polygon 有损转换保留 warning，point/points 按格式跳过。
+- COCO 输出稳定类别、图片与标注 ID；YOLO 输出归一化标签、split 目录、`classes.txt`、`data.yaml`；VOC 输出按相对路径组织的 XML bbox。
+- 新增前端“标注训练格式”导出向导，支持当前筛选、全数据集、指定 split、已选样本与空标注范围，并展示问题明细和类别映射。
+- 新增隔离 API 契约测试与真实数据只读烟测脚本；`D:\My Datasets\test` 扫描 5,949 个文件后六种格式均导出成功，测试原图哈希、大小和修改时间保持不变。
+
+## [v0.4.0 Phase 2 批次 C2 labelme 导入导出] - 2026-05-19
+
+主要更新：
+
+- 新增 `POST /api/datasets/{dataset_id}/annotations/import-labelme`，支持单文件或目录导入 labelme JSON，提供 dry-run、replace 和 append 策略。
+- labelme 导入支持 rectangle、polygon、point、points 四类 shape 映射到 SQLite annotation 元数据，并按 imagePath、相对路径、文件名或 JSON 文件名匹配样本。
+- 导入时会跳过不支持的 labelme shape，提示图片尺寸不匹配、重复样本匹配、缺失样本匹配和无效 shape 等问题，不写回原始图片或 labelme 文件。
+- 新增 `GET /api/datasets/{dataset_id}/annotation-export?format=labelme`，可导出 labelme JSON ZIP 和 `export_report.json`，默认跳过空标注图片。
+- 补充 labelme 导入、单样本导出和数据集 ZIP 导出测试，覆盖 dry-run、replace、append、目录匹配、未知 shape warning 和四类 shape 坐标转换。
+
+## [v0.4.0 Phase 2 批次 C1 导出预检框架] - 2026-05-19
+
+主要更新：
+
+- 新增标注几何转换工具，统一 rectangle/polygon bbox、polygon area、rectangle 转 polygon 和 YOLO 归一化坐标计算。
+- 新增 `POST /api/datasets/{dataset_id}/annotation-export-precheck`，为 labelme、COCO detection/segmentation、YOLO detection/segmentation 和 Pascal VOC 后续真实导出提供统一预检。
+- 预检会返回类别映射、可导出对象数、跳过对象数、error/warning/info 问题列表，并识别 polygon 转 bbox、rectangle 转 segmentation polygon、point/points 不兼容、越界坐标和无可导出对象。
+- 预检 issues 明细按 error、warning、info 优先级截断，避免大数据集中的空样本 info 淹没 polygon/bbox 转换等关键 warning。
+- 补充导出预检后端测试，覆盖检测/分割格式兼容、无可导出对象阻断和越界坐标阻断。
+
 ## [v0.4.0 Phase 2 标注拖拽稳定性修复] - 2026-05-19
 
 主要更新：
