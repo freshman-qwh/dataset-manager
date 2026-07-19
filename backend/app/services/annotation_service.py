@@ -106,8 +106,10 @@ def replace_sample_annotations(
 
     if payload.review_status is not None:
         sample.review_status = _validate_review_status(payload.review_status)
-    elif created and sample.review_status == "unlabeled":
+    elif created and sample.review_status == "not_reviewed":
         sample.review_status = "in_review"
+    if created and sample.annotation_progress == "not_started":
+        sample.annotation_progress = "in_progress"
     if payload.sync_sample_tags:
         sample.tags = annotation_tags
     sample.updated_at = now
@@ -224,7 +226,7 @@ def _validate_annotation(item: AnnotationCreate) -> None:
 
 
 def _validate_review_status(value: str) -> str:
-    normalized = value.strip() or "unlabeled"
+    normalized = value.strip() or "not_reviewed"
     if normalized not in sample_service.REVIEW_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

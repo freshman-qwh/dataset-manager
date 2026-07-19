@@ -164,7 +164,7 @@ export default function DatasetListPage() {
                       </p>
                     </div>
                     <span className="rounded-md border border-line bg-gray-50 px-2 py-1 text-xs text-gray-600">
-                      {dataset.task_type || "other"}
+                      {dataset.task_capabilities.label}
                     </span>
                   </div>
                   <div className="mt-5 flex flex-wrap items-center justify-between gap-2 text-sm text-gray-500">

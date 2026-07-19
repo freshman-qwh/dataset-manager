@@ -13,6 +13,7 @@ engine = create_engine(
 )
 
 DATASET_COLUMNS = {
+    "task_type": "VARCHAR(80) DEFAULT 'detection'",
     "source": "VARCHAR(500)",
     "modality": "VARCHAR(120)",
     "license": "VARCHAR(160)",
@@ -26,7 +27,8 @@ SAMPLE_COLUMNS = {
     "file_status": "VARCHAR(40) DEFAULT 'normal'",
     "file_modified_at": "DATETIME",
     "last_scanned_at": "DATETIME",
-    "review_status": "VARCHAR(40) DEFAULT 'unlabeled'",
+    "annotation_progress": "VARCHAR(40) DEFAULT 'not_started'",
+    "review_status": "VARCHAR(40) DEFAULT 'not_reviewed'",
     "metadata_json": "TEXT",
 }
 
@@ -49,6 +51,25 @@ def _ensure_columns(table_name: str, columns: dict[str, str]) -> None:
                 connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"))
 
 
+def _backfill_workflow_semantics() -> None:
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    if not {"datasets", "samples", "annotations"}.issubset(tables):
+        return
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE datasets SET task_type = 'detection' WHERE task_type IS NULL OR task_type = ''"))
+        connection.execute(
+            text("UPDATE samples SET review_status = 'not_reviewed' WHERE review_status IS NULL OR review_status = 'unlabeled'")
+        )
+        connection.execute(
+            text(
+                "UPDATE samples SET annotation_progress = 'in_progress' "
+                "WHERE (annotation_progress IS NULL OR annotation_progress = 'not_started') "
+                "AND EXISTS (SELECT 1 FROM annotations WHERE annotations.sample_id = samples.id)"
+            )
+        )
+
+
 def init_db() -> None:
     """Create local directories and SQLite tables for the MVP."""
     settings.database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -61,6 +82,7 @@ def init_db() -> None:
     _ensure_columns("datasets", DATASET_COLUMNS)
     _ensure_columns("samples", SAMPLE_COLUMNS)
     _ensure_columns("tags", TAG_COLUMNS)
+    _backfill_workflow_semantics()
 
 
 def get_session() -> Generator[Session, None, None]:

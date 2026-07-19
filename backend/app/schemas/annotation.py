@@ -2,6 +2,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.core.workflow import ReviewStatus
+
 
 class AnnotationBase(BaseModel):
     label: str = Field(min_length=1, max_length=120)
@@ -32,5 +34,5 @@ class AnnotationRead(AnnotationBase):
 
 class AnnotationReplaceRequest(BaseModel):
     annotations: list[AnnotationCreate] = Field(default_factory=list)
-    review_status: str | None = Field(default=None, max_length=40)
+    review_status: ReviewStatus | None = None
     sync_sample_tags: bool = True

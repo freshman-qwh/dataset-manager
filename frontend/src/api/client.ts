@@ -121,7 +121,7 @@ export async function scanDataset(datasetId: number, folderPath: string): Promis
 }
 
 export async function listSamples(params: SampleQuery): Promise<SampleListResponse> {
-  const { datasetId, search, fileType, fileStatus, tag, split, reviewStatus, annotationStatus, page, pageSize, sortBy, sortOrder } = params;
+  const { datasetId, search, fileType, fileStatus, tag, split, reviewStatus, annotationProgress, page, pageSize, sortBy, sortOrder } = params;
   const { data } = await client.get<SampleListResponse>(`/datasets/${datasetId}/samples`, {
     params: {
       search: search || undefined,
@@ -130,7 +130,7 @@ export async function listSamples(params: SampleQuery): Promise<SampleListRespon
       tag: tag || undefined,
       split: split || undefined,
       review_status: reviewStatus || undefined,
-      annotation_status: annotationStatus || undefined,
+      annotation_progress: annotationProgress || undefined,
       page,
       page_size: pageSize,
       sort_by: sortBy,
@@ -141,7 +141,7 @@ export async function listSamples(params: SampleQuery): Promise<SampleListRespon
 }
 
 export async function getSampleNavigation(params: Omit<SampleQuery, "fileType" | "page" | "pageSize"> & { sampleId?: number | null }): Promise<SampleNavigationResponse> {
-  const { datasetId, sampleId, search, fileStatus, tag, split, reviewStatus, annotationStatus, sortBy, sortOrder } = params;
+  const { datasetId, sampleId, search, fileStatus, tag, split, reviewStatus, annotationProgress, sortBy, sortOrder } = params;
   const { data } = await client.get<SampleNavigationResponse>(`/datasets/${datasetId}/samples/navigation`, {
     params: {
       sample_id: sampleId || undefined,
@@ -150,7 +150,7 @@ export async function getSampleNavigation(params: Omit<SampleQuery, "fileType" |
       tag: tag || undefined,
       split: split || undefined,
       review_status: reviewStatus || undefined,
-      annotation_status: annotationStatus || undefined,
+      annotation_progress: annotationProgress || undefined,
       sort_by: sortBy,
       sort_order: sortOrder
     }

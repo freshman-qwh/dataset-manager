@@ -8,13 +8,20 @@ from app.models.dataset import Dataset, utc_now
 from app.models.sample import Sample
 from app.models.tag import Tag
 from app.schemas.dataset import DatasetCreate, DatasetRead, DatasetUpdate
+from app.core.workflow import task_capabilities
 
 
 def _dataset_read(session: Session, dataset: Dataset) -> DatasetRead:
     count = session.exec(
         select(func.count(Sample.id)).where(Sample.dataset_id == dataset.id)
     ).one()
-    return DatasetRead.model_validate(dataset).model_copy(update={"sample_count": count})
+    return DatasetRead.model_validate(
+        {
+            **dataset.__dict__,
+            "sample_count": count,
+            "task_capabilities": task_capabilities(dataset.task_type),
+        }
+    )
 
 
 def list_datasets(session: Session) -> list[DatasetRead]:

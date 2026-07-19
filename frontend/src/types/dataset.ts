@@ -1,8 +1,22 @@
+export type DatasetTaskType = "detection" | "segmentation" | "classification";
+export type AnnotationProgress = "not_started" | "in_progress" | "completed_empty" | "completed_with_objects";
+export type ReviewStatus = "not_reviewed" | "in_review" | "approved" | "rejected";
+
+export interface DatasetTaskCapabilities {
+  label: string;
+  annotation_mode: "geometry" | "sample_tags" | "unsupported" | string;
+  allowed_shape_types: AnnotationShapeType[];
+  default_export_format: string;
+  supported: boolean;
+  unsupported_reason: string | null;
+}
+
 export interface Dataset {
   id: number;
   name: string;
   description: string | null;
-  task_type: string | null;
+  task_type: DatasetTaskType | string;
+  task_capabilities: DatasetTaskCapabilities;
   root_path: string | null;
   source: string | null;
   modality: string | null;
@@ -19,7 +33,7 @@ export interface Dataset {
 export interface DatasetCreate {
   name: string;
   description?: string | null;
-  task_type?: string | null;
+  task_type?: DatasetTaskType;
   root_path?: string | null;
   source?: string | null;
   modality?: string | null;
@@ -63,7 +77,8 @@ export interface Sample {
   file_modified_at: string | null;
   last_scanned_at: string | null;
   split: string | null;
-  review_status: string;
+  annotation_progress: AnnotationProgress;
+  review_status: ReviewStatus;
   notes: string | null;
   metadata: Record<string, unknown>;
   tags: Tag[];
@@ -92,7 +107,8 @@ export interface SampleNavigationResponse {
 
 export interface SampleUpdate {
   split?: string | null;
-  review_status?: string | null;
+  annotation_progress?: AnnotationProgress;
+  review_status?: ReviewStatus;
   notes?: string | null;
   tags?: string[];
 }
@@ -100,6 +116,8 @@ export interface SampleUpdate {
 export interface BatchSampleUpdate {
   sample_ids: number[];
   split?: string | null;
+  annotation_progress?: AnnotationProgress;
+  review_status?: ReviewStatus;
   add_tags?: string[];
   replace_tags?: string[];
 }
@@ -181,12 +199,13 @@ export interface DatasetStats {
   by_extension: Record<string, number>;
   by_status: Record<string, number>;
   by_split: Record<string, number>;
+  by_annotation_progress: Record<AnnotationProgress | string, number>;
   by_review_status: Record<string, number>;
   tag_counts: Record<string, number>;
   duplicate_groups: number;
   duplicate_samples: number;
-  unlabeled_samples: number;
-  annotated_samples: number;
+  untagged_samples: number;
+  samples_with_objects: number;
   annotation_count: number;
   by_annotation_label: Record<string, number>;
 }
@@ -212,7 +231,7 @@ export interface SampleQuery {
   tag?: string;
   split?: string;
   reviewStatus?: string;
-  annotationStatus?: "empty" | "annotated" | string;
+  annotationProgress?: AnnotationProgress;
   page?: number;
   pageSize?: number;
   sortBy?: string;

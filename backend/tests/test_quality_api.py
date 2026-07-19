@@ -152,23 +152,23 @@ def test_quality_report_unifies_annotation_split_distribution_and_review_checks(
     app.dependency_overrides.clear()
 
 
-def test_annotation_status_filter_lists_empty_and_annotated_images(tmp_path: Path):
+def test_annotation_progress_filter_is_independent_from_objects_and_review(tmp_path: Path):
     with make_client() as client:
         dataset_id, samples = create_quality_dataset(client, tmp_path)
 
-        empty = client.get(
+        not_started = client.get(
             f"/api/datasets/{dataset_id}/samples",
-            params={"annotation_status": "empty", "sort_by": "filename", "sort_order": "asc"},
+            params={"annotation_progress": "not_started", "sort_by": "filename", "sort_order": "asc"},
         )
-        assert empty.status_code == 200
-        assert [item["id"] for item in empty.json()["items"]] == [samples["empty.png"]["id"]]
+        assert not_started.status_code == 200
+        assert [item["id"] for item in not_started.json()["items"]] == [samples["empty.png"]["id"]]
 
-        annotated = client.get(
+        in_progress = client.get(
             f"/api/datasets/{dataset_id}/samples",
-            params={"annotation_status": "annotated", "sort_by": "filename", "sort_order": "asc"},
+            params={"annotation_progress": "in_progress", "sort_by": "filename", "sort_order": "asc"},
         )
-        assert annotated.status_code == 200
-        assert [item["filename"] for item in annotated.json()["items"]] == ["train.png", "val.png"]
+        assert in_progress.status_code == 200
+        assert [item["filename"] for item in in_progress.json()["items"]] == ["train.png", "val.png"]
 
     app.dependency_overrides.clear()
 

@@ -18,7 +18,7 @@ class Dataset(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(index=True, min_length=1, max_length=160)
     description: str | None = Field(default=None, max_length=2000)
-    task_type: str | None = Field(default="classification", max_length=80)
+    task_type: str = Field(default="detection", max_length=80)
     root_path: str | None = Field(default=None, max_length=2000)
     source: str | None = Field(default=None, max_length=500)
     modality: str | None = Field(default=None, max_length=120)

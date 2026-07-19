@@ -2,12 +2,14 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.workflow import AnnotationProgress, ReviewStatus
 from app.schemas.tag import TagRead
 
 
 class SampleUpdate(BaseModel):
     split: str | None = Field(default=None, max_length=40)
-    review_status: str | None = Field(default=None, max_length=40)
+    annotation_progress: AnnotationProgress | None = None
+    review_status: ReviewStatus | None = None
     notes: str | None = Field(default=None, max_length=4000)
     tags: list[str] | None = None
 
@@ -15,7 +17,8 @@ class SampleUpdate(BaseModel):
 class BatchSampleUpdate(BaseModel):
     sample_ids: list[int] = Field(min_length=1)
     split: str | None = Field(default=None, max_length=40)
-    review_status: str | None = Field(default=None, max_length=40)
+    annotation_progress: AnnotationProgress | None = None
+    review_status: ReviewStatus | None = None
     add_tags: list[str] | None = None
     replace_tags: list[str] | None = None
 
@@ -84,7 +87,8 @@ class SampleRead(BaseModel):
     file_modified_at: datetime | None
     last_scanned_at: datetime | None
     split: str | None
-    review_status: str
+    annotation_progress: AnnotationProgress
+    review_status: ReviewStatus
     notes: str | None
     metadata: dict[str, object] = Field(default_factory=dict)
     tags: list[TagRead] = Field(default_factory=list)

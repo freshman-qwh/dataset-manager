@@ -8,8 +8,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.models.sample import Sample
-from app.models.annotation import Annotation
 from app.models.tag import Tag
+from app.core.workflow import ANNOTATION_PROGRESS_VALUES, REVIEW_STATUS_VALUES
 from app.schemas.sample import (
     BatchSampleUpdate,
     BatchSampleUpdateResult,
@@ -30,7 +30,8 @@ from app.utils.file_types import detect_file_type, detect_mime_type
 from app.utils.hashing import sha256_file
 from app.utils.paths import relative_to_root, resolve_local_path
 
-REVIEW_STATUSES = {"unlabeled", "in_review", "approved", "rejected"}
+REVIEW_STATUSES = set(REVIEW_STATUS_VALUES)
+ANNOTATION_PROGRESS_STATUSES = set(ANNOTATION_PROGRESS_VALUES)
 UNTAGGED_FILTER = "__untagged__"
 
 SORTABLE_SAMPLE_FIELDS = {
@@ -44,6 +45,7 @@ SORTABLE_SAMPLE_FIELDS = {
     "file_status",
     "split",
     "review_status",
+    "annotation_progress",
 }
 
 
@@ -64,7 +66,8 @@ def to_sample_read(sample: Sample) -> SampleRead:
         file_modified_at=sample.file_modified_at,
         last_scanned_at=sample.last_scanned_at,
         split=sample.split,
-        review_status=sample.review_status or "unlabeled",
+        annotation_progress=_normalize_annotation_progress(sample.annotation_progress),
+        review_status=sample.review_status or "not_reviewed",
         notes=sample.notes,
         metadata=_metadata_from_json(sample.metadata_json),
         tags=tags,
@@ -82,7 +85,7 @@ def get_filtered_samples(
     tag: str | None = None,
     split: str | None = None,
     review_status: str | None = None,
-    annotation_status: str | None = None,
+    annotation_progress: str | None = None,
     sample_ids: list[int] | None = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
@@ -100,21 +103,12 @@ def get_filtered_samples(
             statement = statement.where(Sample.split == split)
     if review_status:
         statement = statement.where(Sample.review_status == review_status)
+    if annotation_progress:
+        statement = statement.where(Sample.annotation_progress == annotation_progress)
     if sample_ids:
         statement = statement.where(Sample.id.in_(sample_ids))
 
     samples = session.exec(statement).all()
-
-    if annotation_status:
-        annotated_ids = set(
-            session.exec(
-                select(Annotation.sample_id).where(Annotation.dataset_id == dataset_id).distinct()
-            ).all()
-        )
-        if annotation_status == "empty":
-            samples = [sample for sample in samples if sample.id not in annotated_ids]
-        elif annotation_status == "annotated":
-            samples = [sample for sample in samples if sample.id in annotated_ids]
 
     if duplicate_only:
         duplicate_hashes = _duplicate_hashes(session, dataset_id)
@@ -164,7 +158,7 @@ def list_samples(
     tag: str | None = None,
     split: str | None = None,
     review_status: str | None = None,
-    annotation_status: str | None = None,
+    annotation_progress: str | None = None,
     page: int = 1,
     page_size: int = 60,
     sort_by: str = "created_at",
@@ -182,7 +176,7 @@ def list_samples(
         tag=tag,
         split=split,
         review_status=review_status,
-        annotation_status=annotation_status,
+        annotation_progress=annotation_progress,
         sort_by=safe_sort_by,
         sort_order=safe_sort_order,
     )
@@ -209,7 +203,7 @@ def get_sample_navigation(
     tag: str | None = None,
     split: str | None = None,
     review_status: str | None = None,
-    annotation_status: str | None = None,
+    annotation_progress: str | None = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
 ) -> SampleNavigationResponse:
@@ -225,7 +219,7 @@ def get_sample_navigation(
         tag=tag,
         split=split,
         review_status=review_status,
-        annotation_status=annotation_status,
+        annotation_progress=annotation_progress,
         sort_by=safe_sort_by,
         sort_order=safe_sort_order,
     )
@@ -294,6 +288,8 @@ def update_sample(session: Session, sample_id: int, payload: SampleUpdate) -> Sa
         sample.split = updates["split"]
     if "review_status" in updates and updates["review_status"] is not None:
         sample.review_status = _validate_review_status(updates["review_status"])
+    if "annotation_progress" in updates and updates["annotation_progress"] is not None:
+        sample.annotation_progress = _validate_annotation_progress(updates["annotation_progress"])
     if "notes" in updates:
         sample.notes = updates["notes"]
     if "tags" in updates and updates["tags"] is not None:
@@ -331,6 +327,8 @@ def batch_update_samples(
             sample.split = payload.split or None
         if payload.review_status is not None:
             sample.review_status = _validate_review_status(payload.review_status)
+        if payload.annotation_progress is not None:
+            sample.annotation_progress = _validate_annotation_progress(payload.annotation_progress)
         if payload.replace_tags is not None:
             sample.tags = replace_tags.copy()
         elif add_tags:
@@ -497,13 +495,28 @@ def _delete_samples(session: Session, samples: list[Sample]) -> None:
 
 
 def _validate_review_status(value: str) -> str:
-    normalized = value.strip() or "unlabeled"
+    normalized = value.strip() or "not_reviewed"
     if normalized not in REVIEW_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unsupported review_status: {value}",
         )
     return normalized
+
+
+def _validate_annotation_progress(value: str) -> str:
+    normalized = value.strip() or "not_started"
+    if normalized not in ANNOTATION_PROGRESS_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported annotation_progress: {value}",
+        )
+    return normalized
+
+
+def _normalize_annotation_progress(value: str | None):
+    normalized = value or "not_started"
+    return normalized if normalized in ANNOTATION_PROGRESS_STATUSES else "not_started"
 
 
 def _apply_path_metadata(sample: Sample, path: Path, root_path: str | None) -> None:

@@ -33,6 +33,7 @@ import type {
   Dataset,
   Sample,
   SampleNavigationResponse,
+  SampleQuery,
   Tag
 } from "../types/dataset";
 
@@ -118,7 +119,7 @@ export default function AnnotationPage() {
       tag: context.get("tag") || undefined,
       split: context.get("split") || undefined,
       reviewStatus: context.get("reviewStatus") || undefined,
-      annotationStatus: context.get("annotationStatus") || undefined,
+      annotationProgress: (context.get("annotationProgress") || undefined) as SampleQuery["annotationProgress"],
       sortBy: context.get("sortBy") || "created_at",
       sortOrder: context.get("sortOrder") === "asc" ? ("asc" as const) : ("desc" as const)
     };
@@ -180,7 +181,7 @@ export default function AnnotationPage() {
           tag: navigationQuery.tag,
           split: navigationQuery.split,
           reviewStatus: navigationQuery.reviewStatus,
-          annotationStatus: navigationQuery.annotationStatus,
+          annotationProgress: navigationQuery.annotationProgress,
           sortBy: navigationQuery.sortBy,
           sortOrder: navigationQuery.sortOrder
         })

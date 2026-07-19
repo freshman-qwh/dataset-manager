@@ -123,7 +123,7 @@ export default function DatasetQualityModal({
 
               <div className="grid gap-3 rounded-lg border border-line bg-white p-3 text-sm sm:grid-cols-4">
                 {[
-                  ["unlabeled", "未标注"],
+                  ["not_reviewed", "未审核"],
                   ["in_review", "待审核"],
                   ["approved", "已通过"],
                   ["rejected", "已拒绝"]

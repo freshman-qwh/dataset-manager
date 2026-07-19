@@ -27,7 +27,7 @@ export default function TagStatsModal({
   const rows = Object.entries(stats?.tag_counts ?? {}).sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
   const totalTaggedHits = rows.reduce((total, [, count]) => total + count, 0);
   const sampleCount = stats?.sample_count ?? 0;
-  const unlabeled = stats?.unlabeled_samples ?? 0;
+  const untagged = stats?.untagged_samples ?? 0;
 
   return (
     <Modal open={open} title="标签统计" onClose={onClose}>
@@ -42,8 +42,8 @@ export default function TagStatsModal({
             <div className="mt-1 text-2xl font-semibold text-ink">{totalTaggedHits}</div>
           </div>
           <div className="rounded-lg border border-line p-3">
-            <div className="text-xs text-gray-500">未标注样本</div>
-            <div className="mt-1 text-2xl font-semibold text-ink">{unlabeled}</div>
+            <div className="text-xs text-gray-500">无样本标签</div>
+            <div className="mt-1 text-2xl font-semibold text-ink">{untagged}</div>
           </div>
         </div>
 
@@ -84,9 +84,9 @@ export default function TagStatsModal({
         )}
 
         <div className="flex flex-wrap justify-end gap-2">
-          {unlabeled > 0 && (
+          {untagged > 0 && (
             <button type="button" onClick={onFilterUnlabeled} className="rounded-lg border border-line px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
-              查看未标注
+              查看无标签样本
             </button>
           )}
           <button type="button" onClick={onManage} className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800">

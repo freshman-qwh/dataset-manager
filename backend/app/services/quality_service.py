@@ -21,7 +21,7 @@ from app.utils.image_size import read_image_size
 
 DEFAULT_ISSUE_LIMIT = 500
 TRAINING_SPLITS = {"train", "val", "test"}
-STANDARD_REVIEW_STATUSES = ("unlabeled", "in_review", "approved", "rejected")
+STANDARD_REVIEW_STATUSES = ("not_reviewed", "in_review", "approved", "rejected")
 
 ISSUE_COPY: dict[str, tuple[str, str]] = {
     "FILE_UNAVAILABLE": ("文件不可用", "样本文件缺失或当前进程没有读取权限。"),
@@ -111,7 +111,7 @@ def build_quality_report(
             annotations_by_sample[annotation.sample_id].append(annotation_service.to_annotation_read(annotation))
 
     issues = _IssueCollector(max(1, min(issue_limit, 1000)))
-    review_status_counts = Counter((sample.review_status or "unlabeled") for sample in image_samples)
+    review_status_counts = Counter((sample.review_status or "not_reviewed") for sample in image_samples)
     for status in STANDARD_REVIEW_STATUSES:
         if review_status_counts[status] == 0:
             del review_status_counts[status]
@@ -135,7 +135,7 @@ def build_quality_report(
         annotated_sample_count += 1
         if sample.review_status == "rejected":
             issues.add("warning", "REJECTED_SAMPLE", sample=sample)
-        elif sample.review_status in {"unlabeled", "in_review"}:
+        elif sample.review_status in {"not_reviewed", "in_review"}:
             issues.add("info", "REVIEW_PENDING", sample=sample)
 
         image_size = read_image_size(Path(sample.absolute_path))

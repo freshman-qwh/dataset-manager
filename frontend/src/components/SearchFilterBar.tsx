@@ -7,14 +7,14 @@ interface SearchFilterBarProps {
   tag: string;
   split: string;
   reviewStatus: string;
-  annotationStatus: string;
+  annotationProgress: string;
   onSearchChange: (value: string) => void;
   onFileTypeChange: (value: string) => void;
   onFileStatusChange: (value: string) => void;
   onTagChange: (value: string) => void;
   onSplitChange: (value: string) => void;
   onReviewStatusChange: (value: string) => void;
-  onAnnotationStatusChange: (value: string) => void;
+  onAnnotationProgressChange: (value: string) => void;
   onClear: () => void;
 }
 
@@ -25,18 +25,18 @@ export default function SearchFilterBar({
   tag,
   split,
   reviewStatus,
-  annotationStatus,
+  annotationProgress,
   onSearchChange,
   onFileTypeChange,
   onFileStatusChange,
   onTagChange,
   onSplitChange,
   onReviewStatusChange,
-  onAnnotationStatusChange,
+  onAnnotationProgressChange,
   onClear
 }: SearchFilterBarProps) {
-  const tagValue = tag === "__untagged__" ? "未标注" : tag;
-  const hasFilters = Boolean(search || fileType || fileStatus || tag || split || reviewStatus || annotationStatus);
+  const tagValue = tag === "__untagged__" ? "无标签" : tag;
+  const hasFilters = Boolean(search || fileType || fileStatus || tag || split || reviewStatus || annotationProgress);
 
   return (
     <div className="grid gap-3 rounded-lg border border-line bg-white p-3 shadow-sm xl:grid-cols-[minmax(240px,1fr)_auto]">
@@ -65,9 +65,9 @@ export default function SearchFilterBar({
         </label>
         <input
           value={tagValue}
-          onChange={(event) => onTagChange(event.target.value.trim() === "未标注" ? "__untagged__" : event.target.value)}
+          onChange={(event) => onTagChange(event.target.value.trim() === "无标签" ? "__untagged__" : event.target.value)}
           className="w-full rounded-lg border border-line px-3 py-2 text-sm outline-none transition focus:border-gray-900 sm:w-32"
-          placeholder="标签筛选 / 未标注"
+          placeholder="样本标签 / 无标签"
         />
         <select
           value={split}
@@ -81,21 +81,23 @@ export default function SearchFilterBar({
           <option value="unassigned">未划分</option>
         </select>
         <select
-          value={annotationStatus}
-          onChange={(event) => onAnnotationStatusChange(event.target.value)}
+          value={annotationProgress}
+          onChange={(event) => onAnnotationProgressChange(event.target.value)}
           className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm outline-none transition focus:border-gray-900 sm:w-32"
         >
-          <option value="">全部标注</option>
-          <option value="empty">空标注</option>
-          <option value="annotated">已有对象</option>
+          <option value="">全部进度</option>
+          <option value="not_started">未开始</option>
+          <option value="in_progress">处理中</option>
+          <option value="completed_empty">已完成 · 无目标</option>
+          <option value="completed_with_objects">已完成 · 有对象</option>
         </select>
         <select
           value={reviewStatus}
           onChange={(event) => onReviewStatusChange(event.target.value)}
           className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm outline-none transition focus:border-gray-900 sm:w-32"
         >
-          <option value="">全部审查</option>
-          <option value="unlabeled">未标注</option>
+          <option value="">全部审核</option>
+          <option value="not_reviewed">未审核</option>
           <option value="in_review">待审核</option>
           <option value="approved">已通过</option>
           <option value="rejected">已拒绝</option>

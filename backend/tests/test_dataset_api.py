@@ -79,6 +79,28 @@ def sample_splits_for_tag(client: TestClient, dataset_id: int, tag_name: str) ->
     return {sample["split"] for sample in samples}
 
 
+def test_dataset_task_type_contract_rejects_unsupported_values():
+    with make_client() as client:
+        created = client.post("/api/datasets", json={"name": "Workflow"})
+        assert created.status_code == 201
+        dataset = created.json()
+        assert dataset["task_type"] == "detection"
+        assert dataset["task_capabilities"]["allowed_shape_types"] == ["rectangle"]
+        assert dataset["task_capabilities"]["default_export_format"] == "coco_detection"
+
+        updated = client.patch(
+            f"/api/datasets/{dataset['id']}",
+            json={"task_type": "segmentation"},
+        )
+        assert updated.status_code == 200
+        assert updated.json()["task_capabilities"]["allowed_shape_types"] == ["polygon"]
+
+        assert client.post("/api/datasets", json={"name": "Legacy", "task_type": "tabular"}).status_code == 422
+        assert client.patch(f"/api/datasets/{dataset['id']}", json={"task_type": None}).status_code == 422
+
+    app.dependency_overrides.clear()
+
+
 def test_dataset_scan_batch_and_export(tmp_path: Path):
     data_root = tmp_path / "dataset"
     data_root.mkdir()
@@ -92,7 +114,7 @@ def test_dataset_scan_batch_and_export(tmp_path: Path):
             "/api/datasets",
             json={
                 "name": "Lab Run",
-                "task_type": "tabular",
+                "task_type": "classification",
                 "root_path": str(data_root),
                 "source": "instrument-a",
                 "modality": "csv",
@@ -104,6 +126,15 @@ def test_dataset_scan_batch_and_export(tmp_path: Path):
         )
         assert created.status_code == 201
         dataset = created.json()
+        assert dataset["task_type"] == "classification"
+        assert dataset["task_capabilities"] == {
+            "label": "分类整理",
+            "annotation_mode": "sample_tags",
+            "allowed_shape_types": [],
+            "default_export_format": "csv",
+            "supported": True,
+            "unsupported_reason": None,
+        }
 
         scan = client.post(f"/api/datasets/{dataset['id']}/scan", json={"folder_path": str(data_root)})
         assert scan.status_code == 200
@@ -192,12 +223,14 @@ def test_sample_annotations_replace_list_and_manifest_export(tmp_path: Path):
 
         refreshed_sample = client.get(f"/api/samples/{sample['id']}").json()
         assert refreshed_sample["review_status"] == "in_review"
+        assert refreshed_sample["annotation_progress"] == "in_progress"
         assert {tag["name"] for tag in refreshed_sample["tags"]} == {"scratch", "edge"}
 
         stats = client.get(f"/api/stats/datasets/{dataset['id']}").json()
         assert stats["tag_counts"]["scratch"] == 1
         assert stats["tag_counts"]["edge"] == 1
-        assert stats["annotated_samples"] == 1
+        assert stats["samples_with_objects"] == 1
+        assert stats["by_annotation_progress"]["in_progress"] == 1
         assert stats["annotation_count"] == 2
         assert stats["by_annotation_label"] == {"scratch": 1, "edge": 1}
         filtered_by_annotation_label = client.get(
@@ -494,7 +527,7 @@ def test_v03_duplicates_tags_metadata_import_and_templates(tmp_path: Path):
         assert stats.json()["by_split"]["train"] == 1
         assert stats.json()["by_split"]["val"] == 1
         assert stats.json()["duplicate_groups"] == 1
-        assert stats.json()["unlabeled_samples"] == 0
+        assert stats.json()["untagged_samples"] == 0
 
         samples = client.get(f"/api/datasets/{dataset['id']}/samples", params={"search": "a.png"}).json()
         sample = samples["items"][0]
@@ -577,7 +610,8 @@ def test_v03_review_missing_repair_and_metadata_delete(tmp_path: Path):
         ).json()["items"]
         first_id = samples[0]["id"]
         second_id = samples[1]["id"]
-        assert samples[0]["review_status"] == "unlabeled"
+        assert samples[0]["review_status"] == "not_reviewed"
+        assert samples[0]["annotation_progress"] == "not_started"
 
         updated = client.patch(f"/api/samples/{first_id}", json={"review_status": "approved"})
         assert updated.status_code == 200
@@ -598,7 +632,7 @@ def test_v03_review_missing_repair_and_metadata_delete(tmp_path: Path):
         stats = client.get(f"/api/stats/datasets/{dataset['id']}").json()
         assert stats["by_review_status"]["approved"] == 1
         assert stats["by_review_status"]["in_review"] == 1
-        assert stats["unlabeled_samples"] == 2
+        assert stats["untagged_samples"] == 2
 
         first.unlink()
         missing_scan = client.post(f"/api/datasets/{dataset['id']}/scan", json={"folder_path": str(data_root)})

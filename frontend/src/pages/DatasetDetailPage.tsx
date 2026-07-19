@@ -65,6 +65,7 @@ import type {
   MissingSampleRepairResult,
   QualityIssue,
   Sample,
+  SampleQuery,
   ScanResult,
   SplitPlanRequest,
   SplitPlanResult,
@@ -134,7 +135,7 @@ export default function DatasetDetailPage() {
   const [tag, setTag] = useState("");
   const [split, setSplit] = useState("");
   const [reviewStatus, setReviewStatus] = useState("");
-  const [annotationStatus, setAnnotationStatus] = useState("");
+  const [annotationProgress, setAnnotationProgress] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(60);
   const [sortBy, setSortBy] = useState("created_at");
@@ -191,7 +192,7 @@ export default function DatasetDetailPage() {
       tag: debouncedTag,
       split,
       reviewStatus,
-      annotationStatus,
+      annotationProgress: annotationProgress as SampleQuery["annotationProgress"],
       page,
       pageSize,
       sortBy,
@@ -202,7 +203,7 @@ export default function DatasetDetailPage() {
     if (nextSamples.page !== page) {
       setPage(nextSamples.page);
     }
-  }, [datasetId, debouncedSearch, debouncedTag, fileType, fileStatus, split, reviewStatus, annotationStatus, page, pageSize, sortBy, sortOrder]);
+  }, [datasetId, debouncedSearch, debouncedTag, fileType, fileStatus, split, reviewStatus, annotationProgress, page, pageSize, sortBy, sortOrder]);
 
   const loadQualityReport = useCallback(async () => {
     setQualityLoading(true);
@@ -238,7 +239,7 @@ export default function DatasetDetailPage() {
   const unavailableCount = missingCount + permissionDeniedCount;
   const duplicateSampleCount = stats?.duplicate_samples ?? 0;
   const duplicateGroupCount = stats?.duplicate_groups ?? 0;
-  const annotatedSamples = stats?.annotated_samples ?? 0;
+  const annotatedSamples = stats?.samples_with_objects ?? 0;
   const annotationCount = stats?.annotation_count ?? 0;
   const tagCount = useMemo(() => Object.keys(stats?.tag_counts ?? {}).length, [stats]);
   const annotationLabelRows = useMemo(
@@ -272,7 +273,7 @@ export default function DatasetDetailPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, debouncedTag, fileType, fileStatus, split, reviewStatus, annotationStatus, sortBy, sortOrder]);
+  }, [debouncedSearch, debouncedTag, fileType, fileStatus, split, reviewStatus, annotationProgress, sortBy, sortOrder]);
 
   useEffect(() => {
     if (qualityOpen && Number.isFinite(datasetId)) {
@@ -336,8 +337,8 @@ export default function DatasetDetailPage() {
     if (reviewStatus) {
       params.set("reviewStatus", reviewStatus);
     }
-    if (annotationStatus) {
-      params.set("annotationStatus", annotationStatus);
+    if (annotationProgress) {
+      params.set("annotationProgress", annotationProgress);
     }
     navigate(`/datasets/${datasetId}/annotate?${params.toString()}`);
   }
@@ -560,7 +561,7 @@ export default function DatasetDetailPage() {
     setTag("");
     setSplit("");
     setReviewStatus("");
-    setAnnotationStatus("");
+    setAnnotationProgress("");
     setPage(1);
   }
 
@@ -570,7 +571,7 @@ export default function DatasetDetailPage() {
     tag?: string;
     split?: string;
     reviewStatus?: string;
-    annotationStatus?: string;
+    annotationProgress?: string;
   }) {
     setSearch("");
     setFileType(nextFilters.fileType ?? "");
@@ -578,7 +579,7 @@ export default function DatasetDetailPage() {
     setTag(nextFilters.tag ?? "");
     setSplit(nextFilters.split ?? "");
     setReviewStatus(nextFilters.reviewStatus ?? "");
-    setAnnotationStatus(nextFilters.annotationStatus ?? "");
+    setAnnotationProgress(nextFilters.annotationProgress ?? "");
     setPage(1);
   }
 
@@ -763,8 +764,8 @@ export default function DatasetDetailPage() {
         <div className="grid gap-3 rounded-lg border border-line bg-white p-3 text-sm shadow-sm lg:grid-cols-[minmax(0,1fr)_minmax(280px,1.2fr)]">
           <div className="flex flex-wrap items-center gap-2 text-gray-600">
             <span className="font-medium text-ink">审查状态</span>
-            <button type="button" onClick={() => applyGlobalFilters({ reviewStatus: "unlabeled" })} className="rounded-md border border-line px-2.5 py-1 text-xs hover:bg-gray-50">
-              未标注 {stats?.by_review_status.unlabeled ?? 0}
+            <button type="button" onClick={() => applyGlobalFilters({ reviewStatus: "not_reviewed" })} className="rounded-md border border-line px-2.5 py-1 text-xs hover:bg-gray-50">
+              未审核 {stats?.by_review_status.not_reviewed ?? 0}
             </button>
             <button type="button" onClick={() => applyGlobalFilters({ reviewStatus: "in_review" })} className="rounded-md border border-line px-2.5 py-1 text-xs hover:bg-gray-50">
               待审核 {stats?.by_review_status.in_review ?? 0}
@@ -809,14 +810,14 @@ export default function DatasetDetailPage() {
           tag={tag}
           split={split}
           reviewStatus={reviewStatus}
-          annotationStatus={annotationStatus}
+          annotationProgress={annotationProgress}
           onSearchChange={setSearch}
           onFileTypeChange={setFileType}
           onFileStatusChange={setFileStatus}
           onTagChange={setTag}
           onSplitChange={setSplit}
           onReviewStatusChange={setReviewStatus}
-          onAnnotationStatusChange={setAnnotationStatus}
+          onAnnotationProgressChange={setAnnotationProgress}
           onClear={clearFilters}
         />
 
@@ -1044,7 +1045,7 @@ export default function DatasetDetailPage() {
         onClose={() => setQualityOpen(false)}
         onRefresh={() => void loadQualityReport()}
         onFilterEmpty={() => {
-          applyGlobalFilters({ fileType: "image", annotationStatus: "empty" });
+          applyGlobalFilters({ fileType: "image", annotationProgress: "not_started" });
           setQualityOpen(false);
         }}
         onFilterReview={(status) => {
