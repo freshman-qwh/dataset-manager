@@ -1,0 +1,26 @@
+{
+  "name": "frontend-mobile-development",
+  "version": "1.2.3+codex.20260719063213",
+  "description": "Frontend UI development and mobile application implementation across platforms",
+  "skills": "./skills/",
+  "author": {
+    "name": "Seth Hobson",
+    "email": "seth@major7apps.com"
+  },
+  "license": "MIT",
+  "interface": {
+    "displayName": "Frontend Mobile Development",
+    "shortDescription": "Frontend UI development and mobile application implementation across platforms",
+    "longDescription": "Project-scoped frontend workflows for React state, Tailwind design systems, responsive components, and related web or mobile patterns.",
+    "developerName": "Seth Hobson",
+    "category": "Coding",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Implement this React and Tailwind change using the repository's existing Vite architecture.",
+      "Review this frontend state flow for stale data and unnecessary global state."
+    ]
+  }
+}

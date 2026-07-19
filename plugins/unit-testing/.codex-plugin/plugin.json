@@ -1,0 +1,25 @@
+{
+  "name": "unit-testing",
+  "version": "1.2.1+codex.20260719063212",
+  "description": "Unit and integration test automation for Python and JavaScript with debugging support",
+  "skills": "./skills/",
+  "author": {
+    "name": "Seth Hobson",
+    "email": "seth@major7apps.com"
+  },
+  "license": "MIT",
+  "interface": {
+    "displayName": "Unit Testing",
+    "shortDescription": "Unit and integration test automation for Python and JavaScript with debugging support",
+    "longDescription": "Project-scoped test automation resources for planning focused unit and integration coverage and investigating test failures.",
+    "developerName": "Seth Hobson",
+    "category": "Coding",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Design the smallest reliable automated test coverage for this project change."
+    ]
+  }
+}

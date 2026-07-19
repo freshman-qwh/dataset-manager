@@ -86,6 +86,45 @@ Agents should work in small, reviewable loops:
    - Mention tests or verification that were not run.
    - Include local service URLs only if services were started.
 
+## Codex Skill and Plugin Routing
+
+The repository installs a small project-scoped development toolkit. See
+`docs/codex-skill-plugin-usage.md` for the installed versions, detailed routing,
+known compatibility limits, and maintenance commands.
+
+Use these rules when selecting skills:
+
+- Keep `dataset-manager-development` as the primary repository workflow. Project
+  architecture, MVP scope, data-safety rules, and verification commands in this
+  file override generic plugin advice.
+- For a bug, failing test, build failure, or unexpected behavior, use
+  `systematic-debugging` before proposing or implementing a fix.
+- Before claiming work complete, fixed, or passing, use
+  `verification-before-completion` and run fresh checks appropriate to the
+  claim. Always include `git diff --check` for repository changes.
+- For Python/FastAPI work, select only the matching `python-development` skill,
+  especially `python-testing-patterns`, `python-error-handling`,
+  `python-type-safety`, or `async-python-patterns`. Do not adopt generic
+  microservice, packaging, background-job, or observability patterns unless the
+  task actually requires them and remains within MVP scope.
+- For React/Tailwind work, prefer `react-state-management` and
+  `tailwind-design-system`. For UI review or implementation, select the matching
+  `ui-design` web skill: `accessibility-compliance`, `responsive-design`,
+  `visual-design-foundations`, `web-component-design`, or
+  `design-system-patterns`.
+- Do not use Next.js, React Native, iOS, or Android skills for this Vite Web
+  application unless the user explicitly changes the project scope.
+- The installed `unit-testing` plugin currently contributes no Codex `SKILL.md`;
+  use `python-testing-patterns`, project tests, and browser verification instead.
+- Use `requesting-code-review` after a major feature or before merge. Unless the
+  user explicitly requests subagent review, apply its reviewer checklist inline
+  as a read-only self-review; do not spawn a reviewer automatically.
+- Use `receiving-code-review` when acting on review feedback: verify each item
+  against this repository, clarify ambiguity, and implement verified items one
+  at a time.
+- Do not load every installed skill for one task. Choose the smallest matching
+  set and state which skill is influencing the work.
+
 ## Version, Git, and Release Workflow
 
 Use Git as the project history boundary.

@@ -1,0 +1,26 @@
+{
+  "name": "python-development",
+  "version": "1.2.3+codex.20260719063212",
+  "description": "Modern Python development with Python 3.12+, Django, FastAPI, async patterns, and production best practices",
+  "skills": "./skills/",
+  "author": {
+    "name": "Seth Hobson",
+    "email": "seth@major7apps.com"
+  },
+  "license": "MIT",
+  "interface": {
+    "displayName": "Python Development",
+    "shortDescription": "Modern Python development with Python 3.12+, Django, FastAPI, async patterns, and production best practices",
+    "longDescription": "Project-scoped Python workflows for FastAPI services, pytest, error handling, type safety, async I/O, and maintainable application code.",
+    "developerName": "Seth Hobson",
+    "category": "Coding",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Implement a focused FastAPI change using the repository's existing API and service layers.",
+      "Add focused pytest coverage for this Python behavior and its boundary cases."
+    ]
+  }
+}
