@@ -1,6 +1,8 @@
 import { Download, MoreHorizontal, Tags, Upload } from "lucide-react";
 import { useState } from "react";
 
+import { uiCopy } from "../utils/uiCopy";
+
 interface DatasetActionMenuProps {
   exportFormat: string;
   onExportFormatChange: (value: string) => void;
@@ -8,6 +10,8 @@ interface DatasetActionMenuProps {
   onImportMetadata: () => void;
   onExport: () => void;
   onAnnotationExport: () => void;
+  annotationExportEnabled?: boolean;
+  annotationExportHint?: string;
 }
 
 export default function DatasetActionMenu({
@@ -16,7 +20,9 @@ export default function DatasetActionMenu({
   onManageTags,
   onImportMetadata,
   onExport,
-  onAnnotationExport
+  onAnnotationExport,
+  annotationExportEnabled = true,
+  annotationExportHint
 }: DatasetActionMenuProps) {
   const [open, setOpen] = useState(false);
 
@@ -30,10 +36,10 @@ export default function DatasetActionMenu({
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
-        className="inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
       >
         <MoreHorizontal size={17} />
-        更多
+        其他操作
       </button>
       {open && (
         <div className="absolute right-0 z-20 mt-2 w-64 rounded-lg border border-line bg-white p-2 shadow-soft">
@@ -43,7 +49,7 @@ export default function DatasetActionMenu({
             className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
           >
             <Tags size={16} />
-            标签体系
+            管理{uiCopy.sampleTags}
           </button>
           <button
             type="button"
@@ -74,7 +80,9 @@ export default function DatasetActionMenu({
           <button
             type="button"
             onClick={() => closeAfter(onAnnotationExport)}
-            className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            disabled={!annotationExportEnabled}
+            title={annotationExportHint}
+            className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-300"
           >
             <Download size={16} />
             标注训练格式

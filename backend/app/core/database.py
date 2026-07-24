@@ -38,6 +38,10 @@ TAG_COLUMNS = {
     "aliases_json": "TEXT",
 }
 
+ANNOTATION_COLUMNS = {
+    "class_id": "INTEGER",
+}
+
 
 def _ensure_columns(table_name: str, columns: dict[str, str]) -> None:
     inspector = inspect(engine)
@@ -54,7 +58,7 @@ def _ensure_columns(table_name: str, columns: dict[str, str]) -> None:
 def _backfill_workflow_semantics() -> None:
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
-    if not {"datasets", "samples", "annotations"}.issubset(tables):
+    if not {"datasets", "samples", "annotations", "annotation_classes"}.issubset(tables):
         return
     with engine.begin() as connection:
         connection.execute(text("UPDATE datasets SET task_type = 'detection' WHERE task_type IS NULL OR task_type = ''"))
@@ -66,6 +70,26 @@ def _backfill_workflow_semantics() -> None:
                 "UPDATE samples SET annotation_progress = 'in_progress' "
                 "WHERE (annotation_progress IS NULL OR annotation_progress = 'not_started') "
                 "AND EXISTS (SELECT 1 FROM annotations WHERE annotations.sample_id = samples.id)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO annotation_classes (dataset_id, name, created_at, updated_at) "
+                "SELECT DISTINCT annotations.dataset_id, TRIM(annotations.label), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP "
+                "FROM annotations WHERE TRIM(annotations.label) <> '' "
+                "AND NOT EXISTS ("
+                "SELECT 1 FROM annotation_classes "
+                "WHERE annotation_classes.dataset_id = annotations.dataset_id "
+                "AND LOWER(annotation_classes.name) = LOWER(TRIM(annotations.label)))"
+            )
+        )
+        connection.execute(
+            text(
+                "UPDATE annotations SET class_id = ("
+                "SELECT annotation_classes.id FROM annotation_classes "
+                "WHERE annotation_classes.dataset_id = annotations.dataset_id "
+                "AND LOWER(annotation_classes.name) = LOWER(TRIM(annotations.label)) LIMIT 1) "
+                "WHERE class_id IS NULL"
             )
         )
 
@@ -82,6 +106,7 @@ def init_db() -> None:
     _ensure_columns("datasets", DATASET_COLUMNS)
     _ensure_columns("samples", SAMPLE_COLUMNS)
     _ensure_columns("tags", TAG_COLUMNS)
+    _ensure_columns("annotations", ANNOTATION_COLUMNS)
     _backfill_workflow_semantics()
 
 

@@ -8,8 +8,11 @@ import type {
   AnnotationExportSampleQuery
 } from "../types/annotationExport";
 import type {
+  AnnotationClass,
+  AnnotationClassCreate,
   AnnotationObject,
   AnnotationReplaceRequest,
+  AnnotationTagSyncResult,
   Dataset,
   DatasetCreate,
   DatasetStats,
@@ -88,6 +91,19 @@ export async function getDatasetQualityReport(datasetId: number): Promise<Datase
 
 export async function listTags(datasetId: number): Promise<Tag[]> {
   const { data } = await client.get<Tag[]>(`/datasets/${datasetId}/tags`);
+  return data;
+}
+
+export async function listAnnotationClasses(datasetId: number): Promise<AnnotationClass[]> {
+  const { data } = await client.get<AnnotationClass[]>(`/datasets/${datasetId}/annotation-classes`);
+  return data;
+}
+
+export async function createAnnotationClass(
+  datasetId: number,
+  payload: AnnotationClassCreate
+): Promise<AnnotationClass> {
+  const { data } = await client.post<AnnotationClass>(`/datasets/${datasetId}/annotation-classes`, payload);
   return data;
 }
 
@@ -177,6 +193,11 @@ export async function replaceSampleAnnotations(
     payload
   );
   return data.map((item) => ({ ...item, client_id: `server-${item.id}` }));
+}
+
+export async function syncAnnotationClassesToSampleTags(sampleId: number): Promise<AnnotationTagSyncResult> {
+  const { data } = await client.post<AnnotationTagSyncResult>(`/samples/${sampleId}/annotations/sync-sample-tags`);
+  return data;
 }
 
 export async function updateSample(sampleId: number, payload: SampleUpdate): Promise<Sample> {

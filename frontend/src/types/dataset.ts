@@ -62,6 +62,22 @@ export interface TagCreate {
   aliases?: string[];
 }
 
+export interface AnnotationClass {
+  id: number;
+  dataset_id: number;
+  name: string;
+  color: string | null;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AnnotationClassCreate {
+  name: string;
+  color?: string | null;
+  description?: string | null;
+}
+
 export interface Sample {
   id: number;
   dataset_id: number;
@@ -155,7 +171,7 @@ export interface AnnotationObject {
   dataset_id?: number;
   client_id: string;
   label: string;
-  tag_id: number | null;
+  class_id: number | null;
   shape_type: AnnotationShapeType;
   points: number[];
   flags: Record<string, boolean>;
@@ -172,7 +188,7 @@ export interface AnnotationObject {
 
 export interface AnnotationReplaceItem {
   label: string;
-  tag_id?: number | null;
+  class_id?: number | null;
   shape_type: AnnotationShapeType;
   points: number[];
   flags?: Record<string, boolean>;
@@ -188,7 +204,14 @@ export interface AnnotationReplaceItem {
 export interface AnnotationReplaceRequest {
   annotations: AnnotationReplaceItem[];
   review_status?: string | null;
-  sync_sample_tags?: boolean;
+  save_mode?: "draft" | "complete" | "confirm_empty";
+}
+
+export interface AnnotationTagSyncResult {
+  sample_id: number;
+  source: "annotation_classes";
+  added_tags: string[];
+  existing_tags: string[];
 }
 
 export interface DatasetStats {
@@ -257,7 +280,9 @@ export interface DatasetQualityReport {
   generated_at: string;
   sample_count: number;
   image_sample_count: number;
-  annotated_sample_count: number;
+  samples_with_objects_count: number;
+  confirmed_empty_sample_count: number;
+  annotation_progress_counts: Record<AnnotationProgress | string, number>;
   annotation_count: number;
   issue_count: number;
   error_count: number;

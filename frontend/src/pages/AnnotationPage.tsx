@@ -1,11 +1,14 @@
 import {
   ArrowLeft,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  CircleSlash2,
   HelpCircle,
   Image as ImageIcon,
   Loader2,
-  Save
+  Save,
+  Tags
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -15,9 +18,10 @@ import {
   getSample,
   getSampleFileUrl,
   getSampleNavigation,
+  listAnnotationClasses,
   listSampleAnnotations,
-  listTags,
-  replaceSampleAnnotations
+  replaceSampleAnnotations,
+  syncAnnotationClassesToSampleTags
 } from "../api/client";
 import AnnotationCanvas, {
   type AnnotationDraftCommand,
@@ -28,19 +32,23 @@ import AnnotationObjectList from "../components/annotation/AnnotationObjectList"
 import AnnotationToolbar, { type AnnotationTool } from "../components/annotation/AnnotationToolbar";
 import { useAnnotationHistory } from "../components/annotation/useAnnotationHistory";
 import type {
+  AnnotationClass,
   AnnotationObject,
   AnnotationReplaceItem,
+  AnnotationReplaceRequest,
+  AnnotationShapeType,
   Dataset,
   Sample,
   SampleNavigationResponse,
-  SampleQuery,
-  Tag
+  SampleQuery
 } from "../types/dataset";
+import { annotationProgressCopy } from "../utils/workflow";
 
 const EMPTY_DRAFT_STATE: AnnotationDraftState = { active: false, shapeType: null, canCommit: false };
 const AUTO_SAVE_ON_NAVIGATION_KEY = "dataset-manager.annotation.autoSaveOnNavigation";
 
 type DeferredAction = () => void | Promise<void>;
+type AnnotationSaveMode = NonNullable<AnnotationReplaceRequest["save_mode"]>;
 
 interface PendingAction {
   title: string;
@@ -79,7 +87,7 @@ export default function AnnotationPage() {
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [sample, setSample] = useState<Sample | null>(null);
   const [navigation, setNavigation] = useState<SampleNavigationResponse | null>(null);
-  const [tags, setTags] = useState<Tag[]>([]);
+  const [annotationClasses, setAnnotationClasses] = useState<AnnotationClass[]>([]);
   const [tool, setTool] = useState<AnnotationTool>("select");
   const [activeObjectId, setActiveObjectId] = useState<string | null>(null);
   const [activeLabel, setActiveLabel] = useState("object");
@@ -125,9 +133,12 @@ export default function AnnotationPage() {
     };
   }, [searchParamsText]);
 
-  const activeTag = useMemo(
-    () => tags.find((tag) => tag.name.toLowerCase() === activeLabel.trim().toLowerCase()) ?? null,
-    [activeLabel, tags]
+  const activeAnnotationClass = useMemo(
+    () =>
+      annotationClasses.find(
+        (annotationClass) => annotationClass.name.toLowerCase() === activeLabel.trim().toLowerCase()
+      ) ?? null,
+    [activeLabel, annotationClasses]
   );
   const activeObject = useMemo(
     () => objects.find((object) => object.client_id === activeObjectId) ?? null,
@@ -142,6 +153,12 @@ export default function AnnotationPage() {
         ? `${navigation.current_index + 1} / ${navigation.total}`
         : "不在当前筛选结果";
   const hasUnsavedState = dirty || draftState.active;
+  const allowedShapeTypes = useMemo<AnnotationShapeType[]>(
+    () => dataset?.task_capabilities.allowed_shape_types ?? [],
+    [dataset?.task_capabilities.allowed_shape_types]
+  );
+  const geometryTask = dataset?.task_capabilities.supported === true && dataset.task_capabilities.annotation_mode === "geometry";
+  const progressLabel = dataset?.task_type === "segmentation" ? "分割进度" : "检测进度";
 
   const setClean = useCallback(() => {
     dirtyRef.current = false;
@@ -170,9 +187,9 @@ export default function AnnotationPage() {
     setError(null);
     try {
       const targetSampleId = Number.isFinite(requestedSampleId) && requestedSampleId > 0 ? requestedSampleId : null;
-      const [nextDataset, nextTags, nextNavigation] = await Promise.all([
+      const [nextDataset, nextAnnotationClasses, nextNavigation] = await Promise.all([
         getDataset(datasetId),
-        listTags(datasetId),
+        listAnnotationClasses(datasetId),
         getSampleNavigation({
           datasetId,
           sampleId: targetSampleId,
@@ -187,15 +204,22 @@ export default function AnnotationPage() {
         })
       ]);
       const nextNavigationSample = nextNavigation.current_sample;
+      setDataset(nextDataset);
+      setAnnotationClasses(nextAnnotationClasses);
+      setNavigation(nextNavigation);
+      if (nextDataset.task_capabilities.annotation_mode !== "geometry" || !nextDataset.task_capabilities.supported) {
+        setSample(nextNavigationSample);
+        reset([]);
+        setClean();
+        setDraftState(EMPTY_DRAFT_STATE);
+        return;
+      }
       if (!targetSampleId && nextNavigationSample) {
         const nextParams = new URLSearchParams(searchParamsText);
         nextParams.set("sample", String(nextNavigationSample.id));
         setSearchParams(nextParams, { replace: true });
       }
-      setNavigation(nextNavigation);
       if (!nextNavigationSample) {
-        setDataset(nextDataset);
-        setTags(nextTags);
         setSample(null);
         reset([]);
         setClean();
@@ -207,8 +231,6 @@ export default function AnnotationPage() {
         getSample(nextNavigationSample.id),
         listSampleAnnotations(nextNavigationSample.id)
       ]);
-      setDataset(nextDataset);
-      setTags(nextTags);
       setSample(nextSample);
       reset(normalizeObjects(nextAnnotations));
       const requestedAnnotationId = Number(new URLSearchParams(searchParamsText).get("annotation"));
@@ -217,7 +239,7 @@ export default function AnnotationPage() {
         : undefined;
       const nextActiveObject = requestedAnnotation ?? nextAnnotations[0];
       setActiveObjectId(nextActiveObject?.client_id ?? null);
-      setActiveLabel(nextActiveObject?.label ?? nextTags[0]?.name ?? "object");
+      setActiveLabel(nextActiveObject?.label ?? nextAnnotationClasses[0]?.name ?? "object");
       setClean();
       setDraftState(EMPTY_DRAFT_STATE);
       setDraftCommand(null);
@@ -335,10 +357,12 @@ export default function AnnotationPage() {
     return normalizeObjects(objects)
       .filter((object) => object.label.trim() && object.points.length >= 2)
       .map((object) => {
-        const matchedTag = tags.find((tag) => tag.name.toLowerCase() === object.label.trim().toLowerCase());
+        const matchedClass = annotationClasses.find(
+          (annotationClass) => annotationClass.name.toLowerCase() === object.label.trim().toLowerCase()
+        );
         return {
           label: object.label.trim(),
-          tag_id: matchedTag?.id ?? object.tag_id ?? null,
+          class_id: matchedClass?.id ?? object.class_id ?? null,
           shape_type: object.shape_type,
           points: object.points,
           flags: object.flags,
@@ -353,29 +377,59 @@ export default function AnnotationPage() {
       });
   }
 
-  async function handleSave(): Promise<boolean> {
+  async function handleSave(saveMode: AnnotationSaveMode = "draft"): Promise<boolean> {
     if (!sample || saving) {
       return false;
     }
-    if (!dirtyRef.current) {
+    if (saveMode === "draft" && !dirtyRef.current) {
       setStatus("没有需要保存的修改");
       return true;
     }
     setSaving(true);
     setError(null);
     try {
-      const saved = await replaceSampleAnnotations(sample.id, { annotations: buildSavePayload(), sync_sample_tags: true });
+      const saved = await replaceSampleAnnotations(sample.id, {
+        annotations: saveMode === "confirm_empty" ? [] : buildSavePayload(),
+        save_mode: saveMode
+      });
       reset(normalizeObjects(saved));
       setActiveObjectId(saved[0]?.client_id ?? null);
       setClean();
-      const [nextSample, nextTags] = await Promise.all([getSample(sample.id), listTags(datasetId)]);
+      const [nextSample, nextAnnotationClasses] = await Promise.all([
+        getSample(sample.id),
+        listAnnotationClasses(datasetId)
+      ]);
       setSample(nextSample);
-      setTags(nextTags);
-      setStatus("标注已保存");
+      setAnnotationClasses(nextAnnotationClasses);
+      setStatus(
+        saveMode === "complete"
+          ? "已标记为完成（有对象）"
+          : saveMode === "confirm_empty"
+            ? "已确认无目标"
+            : "标注草稿已保存"
+      );
       return true;
     } catch {
       setError("标注保存失败，请检查对象类别和坐标是否有效");
       return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSyncClassesToTags() {
+    if (!sample || saving) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await syncAnnotationClassesToSampleTags(sample.id);
+      const added = result.added_tags.length;
+      setSample(await getSample(sample.id));
+      setStatus(added > 0 ? `已追加 ${added} 个样本标签` : "样本标签已包含全部对象类别");
+    } catch {
+      setError("同步失败；对象类别与样本标签仍保持独立，请稍后重试");
     } finally {
       setSaving(false);
     }
@@ -400,7 +454,7 @@ export default function AnnotationPage() {
   function requestSampleNavigationAction(action: DeferredAction) {
     const guardedAction = async () => {
       if (autoSaveOnNavigation && dirtyRef.current) {
-        const saved = await handleSave();
+        const saved = await handleSave("draft");
         if (saved) {
           await action();
         }
@@ -429,7 +483,7 @@ export default function AnnotationPage() {
 
   function requestSave() {
     requestDraftAction(
-      () => void handleSave(),
+      () => void handleSave("draft"),
       "处理绘制中的对象",
       "保存前需要先提交或取消当前正在绘制的对象。",
       { commitLabel: "提交草稿并保存", cancelLabel: "取消草稿并保存" }
@@ -437,6 +491,14 @@ export default function AnnotationPage() {
   }
 
   function handleToolChange(nextTool: AnnotationTool) {
+    if (
+      nextTool !== "select"
+      && nextTool !== "pan"
+      && !allowedShapeTypes.includes(nextTool as AnnotationShapeType)
+    ) {
+      setStatus(`当前${dataset?.task_capabilities.label ?? "任务"}不提供此绘制工具`);
+      return;
+    }
     if (tool === nextTool) {
       return;
     }
@@ -476,7 +538,7 @@ export default function AnnotationPage() {
     if (!pending) {
       return;
     }
-    const saved = await handleSave();
+    const saved = await handleSave("draft");
     if (!saved) {
       return;
     }
@@ -549,6 +611,37 @@ export default function AnnotationPage() {
     );
   }
 
+  if (dataset && !geometryTask) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-canvas px-5">
+        <section className="w-full max-w-xl rounded-2xl border border-line bg-white p-7 text-center shadow-soft">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-gray-100 text-gray-700">
+            {dataset.task_type === "classification" ? <Tags size={24} /> : <CircleSlash2 size={24} />}
+          </div>
+          <div className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-gray-400">
+            {dataset.task_capabilities.label}
+          </div>
+          <h1 className="mt-2 text-xl font-semibold text-ink">
+            {dataset.task_type === "classification" ? "此任务使用样本标签整理类别" : "当前任务类型暂不支持标注工作区"}
+          </h1>
+          <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-gray-600">
+            {dataset.task_type === "classification"
+              ? "分类整理不需要绘制几何对象。请返回数据集，在样本详情或批量工具中添加标签，并使用 CSV 标签表导出。"
+              : dataset.task_capabilities.unsupported_reason}
+          </p>
+          <button
+            type="button"
+            onClick={() => navigate(`/datasets/${datasetId}`)}
+            className="mt-6 inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-gray-900 px-5 text-sm font-medium text-white hover:bg-gray-800"
+          >
+            <ArrowLeft size={17} />
+            返回数据集
+          </button>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="flex h-screen min-h-0 flex-col overflow-hidden bg-canvas">
       <header className="shrink-0 border-b border-line bg-white">
@@ -585,6 +678,11 @@ export default function AnnotationPage() {
             <div className="min-w-0">
               <div className="flex min-w-0 items-center gap-2 text-sm text-gray-500">
                 <span className="truncate">{dataset?.name ?? "数据集"}</span>
+                {dataset && (
+                  <span className="shrink-0 rounded-md bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                    {dataset.task_capabilities.label}
+                  </span>
+                )}
                 <span className="shrink-0 rounded-md bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
                   {navigationLoading ? "加载顺序" : navigationLabel}
                 </span>
@@ -606,6 +704,11 @@ export default function AnnotationPage() {
             >
               {saving ? "保存中" : sampleLoading ? "加载中" : draftState.active ? "有未提交草稿" : dirty ? "有未保存修改" : "已保存"}
             </span>
+            {sample && (
+              <span className="rounded-lg border border-line bg-white px-3 py-2 text-gray-700">
+                {progressLabel}：{annotationProgressCopy[sample.annotation_progress]}
+              </span>
+            )}
             <label className="inline-flex h-10 items-center gap-2 rounded-lg border border-line bg-white px-3 text-gray-700">
               <input
                 type="checkbox"
@@ -630,10 +733,18 @@ export default function AnnotationPage() {
                   <div className="grid grid-cols-[72px_1fr] gap-x-3 gap-y-1">
                     <span className="font-medium text-gray-900">V</span>
                     <span>选择</span>
-                    <span className="font-medium text-gray-900">R</span>
-                    <span>矩形</span>
-                    <span className="font-medium text-gray-900">P</span>
-                    <span>多边形</span>
+                    {allowedShapeTypes.includes("rectangle") && (
+                      <>
+                        <span className="font-medium text-gray-900">R</span>
+                        <span>矩形</span>
+                      </>
+                    )}
+                    {allowedShapeTypes.includes("polygon") && (
+                      <>
+                        <span className="font-medium text-gray-900">P</span>
+                        <span>多边形</span>
+                      </>
+                    )}
                     <span className="font-medium text-gray-900">H</span>
                     <span>平移</span>
                     <span className="font-medium text-gray-900">[ / ]</span>
@@ -655,7 +766,37 @@ export default function AnnotationPage() {
               className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
             >
               <Save size={17} />
-              保存
+              保存草稿
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSave("complete")}
+              disabled={saving || objects.length === 0 || draftState.active}
+              title="保存当前对象并将标注进度设为已完成"
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-sm font-medium text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <CheckCircle2 size={17} />
+              完成标注
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSave("confirm_empty")}
+              disabled={saving || objects.length > 0 || draftState.active}
+              title="明确确认当前图片没有需要标注的目标"
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <CircleSlash2 size={17} />
+              确认无目标
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSyncClassesToTags()}
+              disabled={saving || objects.length === 0 || dirty || draftState.active}
+              title="将当前对象类别追加为样本标签；不会删除或替换已有样本标签"
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Tags size={17} />
+              类别同步为标签
             </button>
           </div>
         </div>
@@ -666,7 +807,8 @@ export default function AnnotationPage() {
         <AnnotationToolbar
           tool={tool}
           label={activeLabel}
-          tags={tags}
+          annotationClasses={annotationClasses}
+          allowedShapeTypes={allowedShapeTypes}
           dirty={dirty || draftState.active}
           saving={saving}
           canUndo={canUndo}
@@ -692,8 +834,8 @@ export default function AnnotationPage() {
             activeObjectId={activeObjectId}
             tool={tool}
             activeLabel={activeLabel}
-            activeTagId={activeTag?.id ?? null}
-            tags={tags}
+            activeClassId={activeAnnotationClass?.id ?? null}
+            annotationClasses={annotationClasses}
             draftCommand={draftCommand}
             focusCommand={focusCommand}
             onObjectsPreview={replace}
@@ -713,7 +855,7 @@ export default function AnnotationPage() {
         <AnnotationObjectList
           objects={objects}
           activeObjectId={activeObjectId}
-          tags={tags}
+          annotationClasses={annotationClasses}
           onSelect={handleObjectSelect}
           onUpdate={updateObject}
           onDelete={deleteObject}

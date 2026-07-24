@@ -2,10 +2,12 @@ import { AlertCircle, AlertTriangle, ExternalLink, Filter, Info, Loader2, Refres
 import { useEffect, useMemo, useState } from "react";
 
 import type { DatasetQualityReport, QualityIssue, QualityIssueSeverity } from "../types/dataset";
+import { reviewStatusCopy, uiCopy } from "../utils/uiCopy";
 import Modal from "./Modal";
 
 interface DatasetQualityModalProps {
   open: boolean;
+  taskType?: string;
   report: DatasetQualityReport | null;
   loading: boolean;
   error: string | null;
@@ -36,6 +38,7 @@ function severityIcon(severity: QualityIssueSeverity) {
 
 export default function DatasetQualityModal({
   open,
+  taskType,
   report,
   loading,
   error,
@@ -69,15 +72,22 @@ export default function DatasetQualityModal({
       ),
     [code, report, severity]
   );
-  const emptyCount = report?.check_counts.EMPTY_ANNOTATIONS ?? 0;
+  const classificationMode = taskType === "classification";
+  const pendingCount = classificationMode
+    ? report?.check_counts.SAMPLE_TAG_MISSING ?? 0
+    : (report?.check_counts.ANNOTATION_NOT_STARTED ?? 0) + (report?.check_counts.ANNOTATION_INCOMPLETE ?? 0);
 
   return (
-    <Modal open={open} title="数据健康工作台" onClose={onClose} size="xl">
+    <Modal open={open} title={uiCopy.datasetQualityWorkspace} onClose={onClose} size="xl">
       <div className="flex max-h-[82vh] min-h-[32rem] flex-col">
         <div className="border-b border-line px-5 py-4">
           <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
             <div>
-              <p className="text-sm text-gray-600">检查标注几何、重复对象、split 泄漏、类别分布和审查状态。</p>
+              <p className="text-sm text-gray-600">
+                {classificationMode
+                  ? "检查样本标签、split 泄漏、类别分布和审核状态。"
+                  : "检查任务形状、标注几何、重复对象、split 泄漏、类别分布和审核状态。"}
+              </p>
               {report && <p className="mt-1 text-xs text-gray-400">最近复检：{new Date(report.generated_at).toLocaleString()}</p>}
             </div>
             <button
@@ -104,8 +114,12 @@ export default function DatasetQualityModal({
             <div className="space-y-5">
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                 <div className="rounded-lg border border-line bg-gray-50 p-3">
-                  <div className="text-xs text-gray-500">图片 / 已标注</div>
-                  <div className="mt-1 text-xl font-semibold text-ink">{report.image_sample_count} / {report.annotated_sample_count}</div>
+                  <div className="text-xs text-gray-500">{classificationMode ? "已分类 / 无标签" : "有对象 / 确认无目标"}</div>
+                  <div className="mt-1 text-xl font-semibold text-ink">
+                    {classificationMode
+                      ? `${report.samples_with_objects_count} / ${pendingCount}`
+                      : `${report.samples_with_objects_count} / ${report.confirmed_empty_sample_count}`}
+                  </div>
                 </div>
                 <button type="button" onClick={() => setSeverity("error")} className="rounded-lg border border-red-200 bg-red-50 p-3 text-left text-red-800">
                   <div className="text-xs">错误</div><div className="mt-1 text-xl font-semibold">{report.error_count}</div>
@@ -116,17 +130,17 @@ export default function DatasetQualityModal({
                 <button type="button" onClick={() => setSeverity("info")} className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-left text-blue-800">
                   <div className="text-xs">提示</div><div className="mt-1 text-xl font-semibold">{report.info_count}</div>
                 </button>
-                <button type="button" onClick={onFilterEmpty} disabled={emptyCount === 0} className="rounded-lg border border-line bg-white p-3 text-left disabled:cursor-not-allowed disabled:opacity-50">
-                  <div className="text-xs text-gray-500">空标注图片</div><div className="mt-1 text-xl font-semibold text-ink">{emptyCount}</div>
+                <button type="button" onClick={onFilterEmpty} disabled={pendingCount === 0} className="rounded-lg border border-line bg-white p-3 text-left disabled:cursor-not-allowed disabled:opacity-50">
+                  <div className="text-xs text-gray-500">{classificationMode ? "待分类样本" : "待处理图片"}</div><div className="mt-1 text-xl font-semibold text-ink">{pendingCount}</div>
                 </button>
               </div>
 
               <div className="grid gap-3 rounded-lg border border-line bg-white p-3 text-sm sm:grid-cols-4">
                 {[
-                  ["not_reviewed", "未审核"],
-                  ["in_review", "待审核"],
-                  ["approved", "已通过"],
-                  ["rejected", "已拒绝"]
+                  ["not_reviewed", reviewStatusCopy.not_reviewed],
+                  ["in_review", reviewStatusCopy.in_review],
+                  ["approved", reviewStatusCopy.approved],
+                  ["rejected", reviewStatusCopy.rejected]
                 ].map(([status, label]) => (
                   <button key={status} type="button" onClick={() => onFilterReview(status)} className="rounded-md px-3 py-2 text-left hover:bg-gray-50">
                     <span className="text-gray-500">{label}</span>
@@ -162,7 +176,7 @@ export default function DatasetQualityModal({
                           <p className="mt-1 text-xs opacity-90">{issue.message}</p>
                           {issue.sample_path && <p className="mt-1 truncate text-xs font-medium" title={issue.sample_path}>{issue.sample_path}</p>}
                         </div>
-                        {issue.sample_id && (
+                        {issue.sample_id && !(classificationMode && issue.code === "TASK_SHAPE_MISMATCH") && (
                           <button type="button" onClick={() => onOpenIssue(issue)} className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md bg-white px-3 py-2 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50">
                             <ExternalLink size={14} />
                             {issue.annotation_id ? "定位对象" : "打开样本"}

@@ -117,7 +117,7 @@ def run_smoke(dataset_root: Path) -> dict[str, object]:
                 json={
                     "name": "Annotation export API smoke",
                     "root_path": str(root),
-                    "task_type": "object_detection",
+                    "task_type": "detection",
                 },
             )
             _require_ok(create_response, "create in-memory dataset", expected_status=201)

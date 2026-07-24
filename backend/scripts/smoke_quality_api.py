@@ -82,7 +82,7 @@ def run_smoke(dataset_root: Path) -> dict[str, object]:
         with client:
             created = client.post(
                 "/api/datasets",
-                json={"name": "Quality API smoke", "root_path": str(root), "task_type": "object_detection"},
+                json={"name": "Quality API smoke", "root_path": str(root), "task_type": "detection"},
             )
             _require_ok(created, "create in-memory dataset", expected_status=201)
             dataset_id = created.json()["id"]
@@ -123,18 +123,18 @@ def run_smoke(dataset_root: Path) -> dict[str, object]:
             report_seconds = perf_counter() - started
             _require_ok(quality, "build quality report")
             report = quality.json()
-            if report["annotated_sample_count"] != 1 or report["annotation_count"] != 1:
+            if report["samples_with_objects_count"] != 1 or report["annotation_count"] != 1:
                 raise AssertionError("Rejected replacement changed the previously saved annotation metadata.")
-            if report["check_counts"].get("EMPTY_ANNOTATIONS", 0) <= 0:
-                raise AssertionError("Quality report did not find empty image samples.")
+            if report["check_counts"].get("ANNOTATION_NOT_STARTED", 0) <= 0:
+                raise AssertionError("Quality report did not find samples whose annotation has not started.")
 
-            empty = client.get(
+            not_started = client.get(
                 f"/api/datasets/{dataset_id}/samples",
-                params={"file_type": "image", "annotation_status": "empty", "page_size": 1},
+                params={"file_type": "image", "annotation_progress": "not_started", "page_size": 1},
             )
-            _require_ok(empty, "filter empty annotations")
-            if empty.json()["total"] != report["image_sample_count"] - 1:
-                raise AssertionError("Empty annotation filter count differs from the quality report.")
+            _require_ok(not_started, "filter annotation not started")
+            if not_started.json()["total"] != report["image_sample_count"] - 1:
+                raise AssertionError("Annotation progress filter count differs from the quality report.")
 
             after = _file_snapshot(raw_path)
             if after != before:
@@ -150,10 +150,10 @@ def run_smoke(dataset_root: Path) -> dict[str, object]:
                 },
                 "quality": {
                     "image_sample_count": report["image_sample_count"],
-                    "annotated_sample_count": report["annotated_sample_count"],
+                    "samples_with_objects_count": report["samples_with_objects_count"],
                     "annotation_count": report["annotation_count"],
                     "issue_count": report["issue_count"],
-                    "empty_annotation_count": report["check_counts"]["EMPTY_ANNOTATIONS"],
+                    "annotation_not_started_count": report["check_counts"]["ANNOTATION_NOT_STARTED"],
                     "truncated_issue_count": report["truncated_issue_count"],
                     "report_seconds": round(report_seconds, 3),
                 },

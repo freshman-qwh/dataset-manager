@@ -100,9 +100,11 @@ def import_labelme_annotations(
                 sample.id or 0,
                 AnnotationReplaceRequest(
                     annotations=next_annotations,
-                    sync_sample_tags=payload.sync_sample_tags,
+                    save_mode="draft",
                 ),
             )
+            if payload.sync_sample_tags:
+                annotation_service.sync_annotation_classes_to_sample_tags(session, sample.id or 0)
 
     return LabelmeImportResult(
         dataset_id=dataset_id,
@@ -265,7 +267,7 @@ def _annotation_from_labelme_shape(
 
     annotation = AnnotationCreate(
         label=label,
-        tag_id=None,
+        class_id=None,
         shape_type=shape_type,
         points=points,
         flags=flags,
@@ -365,7 +367,7 @@ def _warn_on_image_size_mismatch(
 def _annotation_read_to_create(annotation) -> AnnotationCreate:
     return AnnotationCreate(
         label=annotation.label,
-        tag_id=annotation.tag_id,
+        class_id=annotation.class_id,
         shape_type=annotation.shape_type,
         points=annotation.points,
         flags=annotation.flags,

@@ -7,6 +7,7 @@ import type {
   AnnotationExportPrecheckResponse,
   AnnotationExportSampleQuery
 } from "../types/annotationExport";
+import { uiCopy } from "../utils/uiCopy";
 import Modal from "./Modal";
 
 type ExportScope = "filtered" | "all" | "split" | "selected";
@@ -14,6 +15,7 @@ type ExportScope = "filtered" | "all" | "split" | "selected";
 interface AnnotationExportModalProps {
   datasetId: number;
   open: boolean;
+  defaultFormat?: AnnotationExportFormat;
   currentQuery: AnnotationExportSampleQuery;
   selectedSampleIds: number[];
   onClose: () => void;
@@ -70,11 +72,12 @@ function triggerDownload(blob: Blob, filename: string) {
 export default function AnnotationExportModal({
   datasetId,
   open,
+  defaultFormat = "labelme",
   currentQuery,
   selectedSampleIds,
   onClose
 }: AnnotationExportModalProps) {
-  const [format, setFormat] = useState<AnnotationExportFormat>("labelme");
+  const [format, setFormat] = useState<AnnotationExportFormat>(defaultFormat);
   const [scope, setScope] = useState<ExportScope>("filtered");
   const [selectedSplit, setSelectedSplit] = useState("train");
   const [includeEmpty, setIncludeEmpty] = useState(false);
@@ -110,8 +113,12 @@ export default function AnnotationExportModal({
     if (!open) {
       setChecking(false);
       setDownloading(false);
+      return;
     }
-  }, [open]);
+    setFormat(defaultFormat);
+    setPrecheck(null);
+    setError(null);
+  }, [defaultFormat, open]);
 
   async function handlePrecheck() {
     if (scope === "selected" && selectedSampleIds.length === 0) {
@@ -128,7 +135,7 @@ export default function AnnotationExportModal({
       });
       setPrecheck(result);
     } catch {
-      setError("预检失败，请确认后端服务可用。");
+      setError(`${uiCopy.exportCheck}失败，请确认后端服务可用。`);
     } finally {
       setChecking(false);
     }
@@ -145,7 +152,7 @@ export default function AnnotationExportModal({
       triggerDownload(result.blob, result.filename);
       onClose();
     } catch {
-      setError("导出失败。数据可能在预检后发生变化，请重新预检。");
+      setError(`导出失败。数据可能在${uiCopy.exportCheck}后发生变化，请重新检查。`);
       setPrecheck(null);
     } finally {
       setDownloading(false);
@@ -220,7 +227,7 @@ export default function AnnotationExportModal({
               className="mt-0.5 h-4 w-4 rounded border-gray-300"
             />
             <span>
-              包含空标注图片
+              包含{uiCopy.noTargetImage}
               <span className="mt-1 block text-xs leading-5 text-gray-500">
                 默认跳过没有目标格式兼容对象的图片；启用后会生成空记录或空标签文件。
               </span>
@@ -231,7 +238,7 @@ export default function AnnotationExportModal({
         <section className="space-y-3" aria-labelledby="annotation-export-precheck">
           <div className="flex items-center justify-between gap-3">
             <h3 id="annotation-export-precheck" className="text-sm font-semibold text-ink">
-              2. 运行预检
+              2. 运行{uiCopy.exportCheck}
             </h3>
             <button
               type="button"
@@ -240,7 +247,7 @@ export default function AnnotationExportModal({
               className="inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300"
             >
               {checking ? <LoaderCircle size={16} className="animate-spin" /> : <SearchCheck size={16} />}
-              {checking ? "预检中" : "运行预检"}
+              {checking ? "检查中" : `运行${uiCopy.exportCheck}`}
             </button>
           </div>
 
@@ -262,7 +269,7 @@ export default function AnnotationExportModal({
                   {precheck.blocked ? <AlertTriangle size={18} /> : <CheckCircle2 size={18} />}
                   <div>
                     <div className="text-sm font-medium">
-                      {precheck.blocked ? "存在阻断问题，暂不能导出" : "预检通过，可以导出"}
+                      {precheck.blocked ? "存在阻断问题，暂不能导出" : `${uiCopy.exportCheck}通过，可以导出`}
                     </div>
                     <div className="mt-1 text-xs leading-5">
                       {precheck.sample_count} 张图片，{precheck.exportable_object_count} 个可导出对象，

@@ -225,7 +225,7 @@ def test_precheck_prioritizes_warnings_over_empty_sample_info_when_issue_list_is
         assert payload["truncated_issue_count"] == 5
         assert len(payload["issues"]) == 200
         assert payload["issues"][0]["code"] == "RECTANGLE_TO_POLYGON"
-        assert any(issue["code"] == "EMPTY_SAMPLE_SKIPPED" for issue in payload["issues"])
+        assert any(issue["code"] == "UNFINISHED_SAMPLE_SKIPPED" for issue in payload["issues"])
 
     app.dependency_overrides.clear()
 

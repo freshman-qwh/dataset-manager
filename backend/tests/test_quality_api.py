@@ -113,7 +113,8 @@ def test_quality_report_unifies_annotation_split_distribution_and_review_checks(
 
         assert payload["dataset_id"] == dataset_id
         assert payload["image_sample_count"] == 3
-        assert payload["annotated_sample_count"] == 2
+        assert payload["samples_with_objects_count"] == 2
+        assert payload["confirmed_empty_sample_count"] == 0
         assert payload["annotation_count"] == 3
         assert payload["review_status_counts"] == {
             "approved": 1,
@@ -124,15 +125,16 @@ def test_quality_report_unifies_annotation_split_distribution_and_review_checks(
 
         issue_codes = {issue["code"] for issue in payload["issues"]}
         assert {
-            "EMPTY_ANNOTATIONS",
+            "ANNOTATION_NOT_STARTED",
             "DUPLICATE_ANNOTATION",
             "SPLIT_LEAKAGE",
             "RARE_CLASS",
             "CLASS_SINGLE_SPLIT",
             "REJECTED_SAMPLE",
+            "TASK_SHAPE_MISMATCH",
         }.issubset(issue_codes)
 
-        empty_issue = next(issue for issue in payload["issues"] if issue["code"] == "EMPTY_ANNOTATIONS")
+        empty_issue = next(issue for issue in payload["issues"] if issue["code"] == "ANNOTATION_NOT_STARTED")
         assert empty_issue["sample_id"] == samples["empty.png"]["id"]
         assert empty_issue["sample_path"] == "empty.png"
         duplicate_issue = next(issue for issue in payload["issues"] if issue["code"] == "DUPLICATE_ANNOTATION")
@@ -144,10 +146,52 @@ def test_quality_report_unifies_annotation_split_distribution_and_review_checks(
             samples["val.png"]["id"],
         }
 
-        assert payload["check_counts"]["EMPTY_ANNOTATIONS"] == 1
+        assert payload["check_counts"]["ANNOTATION_NOT_STARTED"] == 1
+        assert payload["check_counts"]["TASK_SHAPE_MISMATCH"] == 1
         assert payload["error_count"] >= 1
         assert payload["warning_count"] >= 1
         assert payload["info_count"] >= 1
+
+    app.dependency_overrides.clear()
+
+
+def test_classification_quality_uses_sample_tags_instead_of_geometry_progress(tmp_path: Path):
+    data_root = tmp_path / "classification-quality"
+    data_root.mkdir()
+    (data_root / "labeled.png").write_bytes(png_bytes(10, 10))
+    (data_root / "pending.png").write_bytes(png_bytes(12, 10))
+
+    with make_client() as client:
+        dataset = client.post(
+            "/api/datasets",
+            json={
+                "name": "Classification Quality",
+                "root_path": str(data_root),
+                "task_type": "classification",
+            },
+        ).json()
+        assert client.post(
+            f"/api/datasets/{dataset['id']}/scan",
+            json={"folder_path": str(data_root)},
+        ).status_code == 200
+        samples = client.get(
+            f"/api/datasets/{dataset['id']}/samples",
+            params={"sort_by": "filename", "sort_order": "asc", "page_size": 20},
+        ).json()["items"]
+        assert client.patch(
+            f"/api/samples/{samples[0]['id']}",
+            json={"tags": ["accepted"]},
+        ).status_code == 200
+
+        response = client.get(f"/api/datasets/{dataset['id']}/quality-report")
+        assert response.status_code == 200
+        payload = response.json()
+
+        assert payload["samples_with_objects_count"] == 1
+        assert payload["confirmed_empty_sample_count"] == 0
+        assert payload["class_counts"] == {"accepted": 1}
+        assert payload["check_counts"]["SAMPLE_TAG_MISSING"] == 1
+        assert "ANNOTATION_NOT_STARTED" not in payload["check_counts"]
 
     app.dependency_overrides.clear()
 

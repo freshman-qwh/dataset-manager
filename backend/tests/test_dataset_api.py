@@ -193,6 +193,7 @@ def test_sample_annotations_replace_list_and_manifest_export(tmp_path: Path):
 
         sample = client.get(f"/api/datasets/{dataset['id']}/samples").json()["items"][0]
         payload = {
+            "save_mode": "complete",
             "annotations": [
                 {
                     "label": "scratch",
@@ -223,21 +224,33 @@ def test_sample_annotations_replace_list_and_manifest_export(tmp_path: Path):
 
         refreshed_sample = client.get(f"/api/samples/{sample['id']}").json()
         assert refreshed_sample["review_status"] == "in_review"
-        assert refreshed_sample["annotation_progress"] == "in_progress"
-        assert {tag["name"] for tag in refreshed_sample["tags"]} == {"scratch", "edge"}
+        assert refreshed_sample["annotation_progress"] == "completed_with_objects"
+        assert refreshed_sample["tags"] == []
 
         stats = client.get(f"/api/stats/datasets/{dataset['id']}").json()
-        assert stats["tag_counts"]["scratch"] == 1
-        assert stats["tag_counts"]["edge"] == 1
+        assert stats["tag_counts"] == {}
         assert stats["samples_with_objects"] == 1
-        assert stats["by_annotation_progress"]["in_progress"] == 1
+        assert stats["by_annotation_progress"]["completed_with_objects"] == 1
         assert stats["annotation_count"] == 2
         assert stats["by_annotation_label"] == {"scratch": 1, "edge": 1}
         filtered_by_annotation_label = client.get(
             f"/api/datasets/{dataset['id']}/samples",
             params={"tag": "scratch"},
         ).json()
-        assert filtered_by_annotation_label["total"] == 1
+        assert filtered_by_annotation_label["total"] == 0
+
+        annotation_classes = client.get(f"/api/datasets/{dataset['id']}/annotation-classes").json()
+        assert {item["name"] for item in annotation_classes} == {"scratch", "edge"}
+        synced = client.post(f"/api/samples/{sample['id']}/annotations/sync-sample-tags")
+        assert synced.status_code == 200
+        assert set(synced.json()["added_tags"]) == {"scratch", "edge"}
+        refreshed_sample = client.get(f"/api/samples/{sample['id']}").json()
+        assert {tag["name"] for tag in refreshed_sample["tags"]} == {"scratch", "edge"}
+        filtered_by_sample_tag = client.get(
+            f"/api/datasets/{dataset['id']}/samples",
+            params={"tag": "scratch"},
+        ).json()
+        assert filtered_by_sample_tag["total"] == 1
 
         manifest = client.get(f"/api/datasets/{dataset['id']}/export-manifest").json()
         annotations = manifest["samples"][0]["annotations"]

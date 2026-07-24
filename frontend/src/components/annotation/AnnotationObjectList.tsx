@@ -1,12 +1,12 @@
 import { Eye, EyeOff, Lock, Trash2, Unlock } from "lucide-react";
 
-import type { AnnotationObject, Tag } from "../../types/dataset";
+import type { AnnotationClass, AnnotationObject } from "../../types/dataset";
 import { tagChipStyle } from "../../utils/colors";
 
 interface AnnotationObjectListProps {
   objects: AnnotationObject[];
   activeObjectId: string | null;
-  tags: Tag[];
+  annotationClasses: AnnotationClass[];
   onSelect: (clientId: string) => void;
   onUpdate: (clientId: string, updates: Partial<AnnotationObject>) => void;
   onDelete: (clientId: string) => void;
@@ -19,12 +19,12 @@ function objectTitle(object: AnnotationObject, index: number): string {
 export default function AnnotationObjectList({
   objects,
   activeObjectId,
-  tags,
+  annotationClasses,
   onSelect,
   onUpdate,
   onDelete
 }: AnnotationObjectListProps) {
-  const tagByName = new Map(tags.map((tag) => [tag.name.toLowerCase(), tag]));
+  const classByName = new Map(annotationClasses.map((annotationClass) => [annotationClass.name.toLowerCase(), annotationClass]));
 
   return (
     <aside className="flex h-72 min-h-0 w-full shrink-0 flex-col overflow-hidden border-t border-line bg-white lg:h-auto lg:w-80 lg:border-l lg:border-t-0">
@@ -41,7 +41,7 @@ export default function AnnotationObjectList({
           <div className="space-y-2">
             {objects.map((object, index) => {
               const active = object.client_id === activeObjectId;
-              const tag = tagByName.get(object.label.toLowerCase());
+              const annotationClass = classByName.get(object.label.toLowerCase());
               return (
                 <div
                   key={object.client_id}
@@ -61,7 +61,7 @@ export default function AnnotationObjectList({
                     </div>
                     <span
                       className="rounded-md border border-line bg-gray-50 px-2 py-0.5 text-xs text-gray-600"
-                      style={tagChipStyle(tag?.color)}
+                      style={tagChipStyle(annotationClass?.color)}
                     >
                       {index + 1}
                     </span>
@@ -75,19 +75,19 @@ export default function AnnotationObjectList({
                           onChange={(event) =>
                             onUpdate(object.client_id, {
                               label: event.target.value,
-                              tag_id:
-                                tags.find((item) => item.name.toLowerCase() === event.target.value.toLowerCase())?.id ??
+                              class_id:
+                                annotationClasses.find((item) => item.name.toLowerCase() === event.target.value.toLowerCase())?.id ??
                                 null
                             })
                           }
                           className="mt-1 w-full rounded-lg border border-line bg-white px-3 py-2 text-sm outline-none transition focus:border-gray-900"
                         >
-                          {object.label && !tags.some((tagItem) => tagItem.name === object.label) && (
+                          {object.label && !annotationClasses.some((item) => item.name === object.label) && (
                             <option value={object.label}>{object.label}</option>
                           )}
-                          {tags.map((tagItem) => (
-                            <option key={tagItem.id} value={tagItem.name}>
-                              {tagItem.name}
+                          {annotationClasses.map((item) => (
+                            <option key={item.id} value={item.name}>
+                              {item.name}
                             </option>
                           ))}
                         </select>

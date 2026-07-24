@@ -114,7 +114,12 @@ def test_labelme_import_dry_run_then_replace_and_export_shapes(tmp_path: Path):
         assert annotations[0]["points"] == [0.0, 0.0, 1.0, 1.0]
         assert annotations[0]["attributes"] == {"occluded": True, "truncated": False, "difficult": True}
         assert annotations[1]["notes"] == "corner"
-        assert {tag["name"] for tag in client.get(f"/api/samples/{sample_id}").json()["tags"]} == {"rect", "poly", "dot", "multi"}
+        assert client.get(f"/api/samples/{sample_id}").json()["tags"] == []
+        classes = client.get(f"/api/datasets/{dataset_id}/annotation-classes").json()
+        assert {item["name"] for item in classes} == {"rect", "poly", "dot", "multi"}
+        synced = client.post(f"/api/samples/{sample_id}/annotations/sync-sample-tags")
+        assert synced.status_code == 200
+        assert set(synced.json()["added_tags"]) == {"rect", "poly", "dot", "multi"}
 
         exported = client.post(f"/api/samples/{sample_id}/annotations/export-labelme")
         assert exported.status_code == 200

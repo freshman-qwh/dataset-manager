@@ -14,7 +14,7 @@ class LabelmeImportRequest(BaseModel):
     sample_id: int | None = None
     strategy: LabelmeImportStrategy = "replace"
     dry_run: bool = False
-    sync_sample_tags: bool = True
+    sync_sample_tags: bool = False
 
 
 class LabelmeImportIssue(BaseModel):

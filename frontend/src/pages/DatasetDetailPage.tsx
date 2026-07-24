@@ -1,16 +1,20 @@
 import {
   AlertTriangle,
   ArrowLeft,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CheckSquare,
   ClipboardCheck,
   Database,
   FileText,
+  FolderOpen,
   HardDrive,
   Image as ImageIcon,
+  Play,
   RefreshCw,
   Settings,
+  ShieldCheck,
   Square,
   Tags,
   Video
@@ -71,6 +75,8 @@ import type {
   SplitPlanResult,
   Tag
 } from "../types/dataset";
+import type { AnnotationExportFormat } from "../types/annotationExport";
+import { reviewStatusCopy, uiCopy } from "../utils/uiCopy";
 
 function formatBytes(value: number): string {
   if (value < 1024) {
@@ -167,6 +173,7 @@ export default function DatasetDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [qualityError, setQualityError] = useState<string | null>(null);
   const autoScannedDatasetIds = useRef<Set<number>>(new Set());
+  const samplesSectionRef = useRef<HTMLElement | null>(null);
   const debouncedSearch = useDebouncedValue(search);
   const debouncedTag = useDebouncedValue(tag);
 
@@ -242,6 +249,57 @@ export default function DatasetDetailPage() {
   const annotatedSamples = stats?.samples_with_objects ?? 0;
   const annotationCount = stats?.annotation_count ?? 0;
   const tagCount = useMemo(() => Object.keys(stats?.tag_counts ?? {}).length, [stats]);
+  const geometryTask = dataset?.task_capabilities.supported === true && dataset.task_capabilities.annotation_mode === "geometry";
+  const classificationTask = dataset?.task_type === "classification";
+  const taskCompletedSamples = classificationTask
+    ? Math.max((stats?.sample_count ?? 0) - (stats?.untagged_samples ?? 0), 0)
+    : annotatedSamples;
+  const workflowTotal = classificationTask ? stats?.sample_count ?? 0 : imageCount;
+  const workflowPending = Math.max(workflowTotal - taskCompletedSamples, 0);
+  const rejectedCount = stats?.by_review_status.rejected ?? 0;
+  const keyBlockers = useMemo(() => {
+    const blockers: Array<{ title: string; detail: string; tone: "danger" | "warning" }> = [];
+    if (dataset && !dataset.task_capabilities.supported) {
+      blockers.push({
+        title: "任务类型需要迁移",
+        detail: dataset.task_capabilities.unsupported_reason ?? "请先选择受支持的任务类型。",
+        tone: "danger"
+      });
+    }
+    if (dataset && !dataset.root_path) {
+      blockers.push({
+        title: "尚未设置扫描目录",
+        detail: "设置本地目录后才能扫描和更新样本。",
+        tone: "warning"
+      });
+    }
+    if (geometryTask && (stats?.sample_count ?? 0) > 0 && imageCount === 0) {
+      blockers.push({
+        title: "没有可用于几何标注的图片",
+        detail: "当前任务需要正常图片样本，请检查扫描目录或文件类型。",
+        tone: "warning"
+      });
+    }
+    if (unavailableCount > 0) {
+      blockers.push({
+        title: `${unavailableCount} 个文件不可用`,
+        detail: "缺失或无权限文件会阻断预览和训练导出。",
+        tone: "danger"
+      });
+    }
+    if (rejectedCount > 0) {
+      blockers.push({
+        title: `${rejectedCount} 个样本审核未通过`,
+        detail: "已拒绝样本不应直接进入训练导出。",
+        tone: "warning"
+      });
+    }
+    return blockers;
+  }, [dataset, geometryTask, imageCount, rejectedCount, stats?.sample_count, unavailableCount]);
+  const defaultAnnotationExportFormat = useMemo<AnnotationExportFormat>(() => {
+    const value = dataset?.task_capabilities.default_export_format;
+    return value === "coco_detection" || value === "coco_segmentation" ? value : "labelme";
+  }, [dataset?.task_capabilities.default_export_format]);
   const annotationLabelRows = useMemo(
     () => Object.entries(stats?.by_annotation_label ?? {}).sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0])).slice(0, 5),
     [stats]
@@ -274,6 +332,13 @@ export default function DatasetDetailPage() {
   useEffect(() => {
     setPage(1);
   }, [debouncedSearch, debouncedTag, fileType, fileStatus, split, reviewStatus, annotationProgress, sortBy, sortOrder]);
+
+  useEffect(() => {
+    setExportFormat(dataset?.task_capabilities.default_export_format === "csv" ? "csv" : "manifest");
+    if (dataset?.task_type === "classification") {
+      setAnnotationProgress("");
+    }
+  }, [dataset?.id, dataset?.task_capabilities.default_export_format, dataset?.task_type]);
 
   useEffect(() => {
     if (qualityOpen && Number.isFinite(datasetId)) {
@@ -317,6 +382,14 @@ export default function DatasetDetailPage() {
   }
 
   function handleAnnotate(sample: Sample) {
+    if (!geometryTask) {
+      if (classificationTask) {
+        setSelected(sample);
+      } else {
+        setSettingsOpen(true);
+      }
+      return;
+    }
     const params = new URLSearchParams({
       sample: String(sample.id),
       sortBy,
@@ -342,6 +415,72 @@ export default function DatasetDetailPage() {
     }
     navigate(`/datasets/${datasetId}/annotate?${params.toString()}`);
   }
+
+  function focusSampleWorkspace(nextFilters: {
+    fileType?: string;
+    tag?: string;
+    annotationProgress?: string;
+  } = {}) {
+    applyGlobalFilters(nextFilters);
+    window.requestAnimationFrame(() => {
+      samplesSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
+  function handlePrimaryAction() {
+    if (!dataset) {
+      return;
+    }
+    if (!dataset.task_capabilities.supported) {
+      setSettingsOpen(true);
+      return;
+    }
+    if (!dataset.root_path) {
+      setScanOpen(true);
+      return;
+    }
+    if ((stats?.sample_count ?? 0) === 0 || (geometryTask && imageCount === 0)) {
+      void handleScan(dataset.root_path);
+      return;
+    }
+    if (unavailableCount > 0) {
+      setIssueModal("missing");
+      return;
+    }
+    if (classificationTask) {
+      focusSampleWorkspace({ tag: workflowPending > 0 ? "__untagged__" : undefined });
+      return;
+    }
+
+    const nextProgress = (stats?.by_annotation_progress.in_progress ?? 0) > 0
+      ? "in_progress"
+      : (stats?.by_annotation_progress.not_started ?? 0) > 0
+        ? "not_started"
+        : undefined;
+    const query = new URLSearchParams({
+      fileStatus: "normal",
+      sortBy: "created_at",
+      sortOrder: "asc"
+    });
+    if (nextProgress) {
+      query.set("annotationProgress", nextProgress);
+    }
+    navigate(`/datasets/${datasetId}/annotate?${query.toString()}`);
+  }
+
+  const primaryActionLabel = !dataset
+    ? "加载中"
+    : !dataset.task_capabilities.supported
+      ? "修改任务类型"
+      : !dataset.root_path
+        ? "设置扫描目录"
+        : (stats?.sample_count ?? 0) === 0 || (geometryTask && imageCount === 0)
+          ? "扫描样本"
+          : unavailableCount > 0
+            ? "处理不可用文件"
+            : classificationTask
+              ? workflowPending > 0 ? "整理未分类样本" : "查看分类结果"
+              : workflowPending > 0 ? "继续标注" : "复查标注结果";
 
   async function handleSave(payload: { split: string | null; notes: string | null; tags: string[] }) {
     if (!selected) {
@@ -622,7 +761,7 @@ export default function DatasetDetailPage() {
     if (!issue.sample_id) {
       return;
     }
-    if (issue.code === "FILE_UNAVAILABLE") {
+    if (issue.code === "FILE_UNAVAILABLE" || issue.code === "SAMPLE_TAG_MISSING") {
       try {
         setSelected(await getSample(issue.sample_id));
       } catch {
@@ -640,246 +779,311 @@ export default function DatasetDetailPage() {
   return (
     <main className="min-h-screen bg-canvas">
       <header className="border-b border-line bg-white/90 backdrop-blur">
-        <div className="mx-auto max-w-7xl px-5 py-5">
-          <Link to="/" className="inline-flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-900">
-            <ArrowLeft size={17} />
-            数据集
-          </Link>
-          <div className="mt-4 flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
+        <div className="mx-auto max-w-7xl px-5 py-4">
+          <div className="flex items-center justify-between gap-3">
+            <Link to="/" className="inline-flex min-h-11 items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-900">
+              <ArrowLeft size={17} />
+              数据集
+            </Link>
+            <button
+              type="button"
+              title="数据集设置"
+              onClick={() => setSettingsOpen(true)}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <Settings size={17} />
+              设置
+            </button>
+          </div>
+          <div className="mt-3 flex flex-col justify-between gap-3 lg:flex-row lg:items-end">
             <div className="min-w-0">
               <h1 className="truncate text-2xl font-semibold tracking-normal text-ink">{dataset?.name ?? "加载中"}</h1>
-              <p className="mt-2 max-w-3xl text-sm text-gray-500">{dataset?.description || "未填写描述"}</p>
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="flex h-10 min-w-0 overflow-hidden rounded-lg border border-line bg-gray-50 sm:items-stretch">
-                <div className="flex min-w-0 flex-1 items-center truncate px-3 text-sm text-gray-600">
-                  {dataset?.root_path || "未设置扫描目录"}
-                </div>
-                <button
-                  type="button"
-                  title="扫描当前目录"
-                  disabled={scanning}
-                  onClick={() => {
-                    if (dataset?.root_path) {
-                      void handleScan(dataset.root_path);
-                    } else {
-                      setScanOpen(true);
-                    }
-                  }}
-                  className="inline-flex h-full items-center justify-center gap-2 bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                >
-                  <RefreshCw size={16} className={scanning ? "animate-spin" : ""} />
-                  {scanning ? "扫描中" : "扫描"}
-                </button>
-              </div>
-              <button
-                type="button"
-                title="数据集设置"
-                onClick={() => setSettingsOpen(true)}
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
-              >
-                <Settings size={17} />
-                设置
-              </button>
+              <p className="mt-1 max-w-3xl text-sm leading-6 text-gray-500">{dataset?.description || "暂无数据集说明"}</p>
             </div>
           </div>
-          {dataset && (
-            <div className="mt-4 grid gap-2 text-sm text-gray-600 sm:grid-cols-2 xl:grid-cols-5">
-              <div className="rounded-lg border border-line bg-white px-3 py-2">项目：{dataset.project || "未设置"}</div>
-              <div className="rounded-lg border border-line bg-white px-3 py-2">负责人：{dataset.owner || "未设置"}</div>
-              <div className="rounded-lg border border-line bg-white px-3 py-2">来源：{dataset.source || "未设置"}</div>
-              <div className="rounded-lg border border-line bg-white px-3 py-2">模态：{dataset.modality || "未设置"}</div>
-              <div className="rounded-lg border border-line bg-white px-3 py-2">许可：{dataset.license || "未设置"}</div>
-            </div>
-          )}
         </div>
       </header>
 
       <section className="mx-auto max-w-7xl space-y-5 px-5 py-6">
         {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-8">
-          <StatCard
-            label="样本"
-            value={stats?.sample_count ?? 0}
-            icon={<Database size={18} />}
-            actionLabel="全部类型"
-            onClick={() => filterFileType("")}
-          />
-          <StatCard
-            label="图片"
-            value={imageCount}
-            icon={<ImageIcon size={18} />}
-            actionLabel="筛选图片"
-            onClick={() => filterFileType("image")}
-          />
-          <StatCard
-            label="视频"
-            value={videoCount}
-            icon={<Video size={18} />}
-            actionLabel="筛选视频"
-            onClick={() => filterFileType("video")}
-          />
-          <StatCard
-            label="标签"
-            value={tagCount}
-            icon={<Tags size={18} />}
-            tone="info"
-            actionLabel="查看统计"
-            onClick={() => setTagStatsOpen(true)}
-          />
-          <StatCard
-            label="标注"
-            value={annotatedSamples}
-            icon={<ClipboardCheck size={18} />}
-            tone={annotationCount > 0 ? "info" : "neutral"}
-            actionLabel={`${annotationCount} 对象`}
-          />
-          <StatCard
-            label="缺失"
-            value={unavailableCount}
-            icon={<AlertTriangle size={18} />}
-            tone={unavailableCount > 0 ? "danger" : "neutral"}
-            actionLabel={unavailableCount > 0 ? "查看/修复" : undefined}
-            onClick={() => setIssueModal("missing")}
-          />
-          <StatCard
-            label="重复"
-            value={duplicateSampleCount}
-            icon={<AlertTriangle size={18} />}
-            tone={duplicateSampleCount > 0 ? "warning" : "neutral"}
-            actionLabel={duplicateSampleCount > 0 ? `${duplicateGroupCount} 组` : undefined}
-            onClick={() => setIssueModal("duplicate")}
-          />
-          <StatCard label="容量" value={formatBytes(stats?.total_size ?? 0)} icon={<HardDrive size={18} />} />
-        </div>
-
-        <div className="grid gap-3 rounded-lg border border-line bg-white p-3 text-sm shadow-sm sm:grid-cols-4">
-          <span>train：{stats?.by_split.train ?? 0}</span>
-          <span>val：{stats?.by_split.val ?? 0}</span>
-          <span>test：{stats?.by_split.test ?? 0}</span>
-          <span>未划分：{stats?.by_split.unassigned ?? 0}</span>
-        </div>
-
-        <div className="grid gap-3 rounded-lg border border-line bg-white p-3 text-sm shadow-sm lg:grid-cols-[minmax(0,1fr)_minmax(280px,1.2fr)]">
-          <div className="flex flex-wrap items-center gap-2 text-gray-600">
-            <span className="font-medium text-ink">审查状态</span>
-            <button type="button" onClick={() => applyGlobalFilters({ reviewStatus: "not_reviewed" })} className="rounded-md border border-line px-2.5 py-1 text-xs hover:bg-gray-50">
-              未审核 {stats?.by_review_status.not_reviewed ?? 0}
-            </button>
-            <button type="button" onClick={() => applyGlobalFilters({ reviewStatus: "in_review" })} className="rounded-md border border-line px-2.5 py-1 text-xs hover:bg-gray-50">
-              待审核 {stats?.by_review_status.in_review ?? 0}
-            </button>
-            <button type="button" onClick={() => applyGlobalFilters({ reviewStatus: "approved" })} className="rounded-md border border-line px-2.5 py-1 text-xs hover:bg-gray-50">
-              已通过 {stats?.by_review_status.approved ?? 0}
-            </button>
-            <button type="button" onClick={() => applyGlobalFilters({ reviewStatus: "rejected" })} className="rounded-md border border-line px-2.5 py-1 text-xs hover:bg-gray-50">
-              已拒绝 {stats?.by_review_status.rejected ?? 0}
-            </button>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-gray-600 lg:justify-end">
-            <span className="font-medium text-ink">标注类别</span>
-            {annotationLabelRows.length > 0 ? (
-              annotationLabelRows.map(([label, count]) => (
-                <button key={label} type="button" onClick={() => applyGlobalFilters({ tag: label })} className="rounded-md border border-line px-2.5 py-1 text-xs hover:bg-gray-50">
-                  {label} {count}
+        {dataset && (
+          <section className="overflow-hidden rounded-2xl border border-line bg-white shadow-sm" aria-labelledby="dataset-workspace-status">
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] lg:grid-cols-[minmax(0,1.5fr)_minmax(300px,0.85fr)]">
+              <div className="min-w-0 space-y-5 p-5 sm:p-6">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-md bg-gray-900 px-2.5 py-1 text-xs font-semibold text-white">
+                    {dataset.task_capabilities.label}
+                  </span>
+                  <span className="text-xs text-gray-500">
+                    {dataset.task_capabilities.supported ? "任务能力已启用" : "需要迁移任务类型"}
+                  </span>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-[0.16em] text-gray-400">当前工作状态</p>
+                  <h2 id="dataset-workspace-status" className="mt-2 text-xl font-semibold text-ink">
+                    {workflowPending > 0
+                      ? classificationTask
+                        ? `还有 ${workflowPending} 个样本待分类`
+                        : `还有 ${workflowPending} 张图片待完成`
+                      : workflowTotal > 0
+                        ? classificationTask ? "样本分类已覆盖当前数据集" : "图片标注已覆盖当前数据集"
+                        : "等待扫描样本"}
+                  </h2>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600">
+                    {classificationTask
+                      ? "使用样本标签整理类别；对象类别和几何标注不会参与分类完成度。"
+                      : geometryTask
+                        ? `使用${dataset.task_capabilities.allowed_shape_types.includes("rectangle") ? "矩形框" : "多边形"}标注目标；完成度同时包含有对象图片和已确认无目标图片。`
+                        : dataset.task_capabilities.unsupported_reason}
+                  </p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-xl bg-gray-50 px-4 py-3">
+                    <div className="text-xs text-gray-500">{classificationTask ? "分类完成" : "标注完成"}</div>
+                    <div className="mt-1 text-lg font-semibold text-ink">{taskCompletedSamples} / {workflowTotal}</div>
+                  </div>
+                  <div className="rounded-xl bg-gray-50 px-4 py-3">
+                    <div className="text-xs text-gray-500">{uiCopy.reviewStatus}</div>
+                    <div className="mt-1 text-lg font-semibold text-ink">{stats?.by_review_status.in_review ?? 0} 待审核</div>
+                  </div>
+                  <div className="rounded-xl bg-gray-50 px-4 py-3">
+                    <div className="text-xs text-gray-500">文件状态</div>
+                    <div className={`mt-1 text-lg font-semibold ${unavailableCount > 0 ? "text-red-700" : "text-ink"}`}>
+                      {unavailableCount > 0 ? `${unavailableCount} 不可用` : "全部可用"}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex min-w-0 items-center gap-2 text-xs text-gray-500">
+                  <FolderOpen size={16} className="shrink-0" />
+                  <span className="truncate" title={dataset.root_path ?? undefined}>{dataset.root_path || "尚未设置扫描目录"}</span>
+                </div>
+              </div>
+              <div className="min-w-0 border-t border-line bg-gray-50/80 p-5 sm:p-6 lg:border-l lg:border-t-0">
+                <p className="text-xs font-medium uppercase tracking-[0.16em] text-gray-400">建议下一步</p>
+                <button
+                  type="button"
+                  onClick={handlePrimaryAction}
+                  disabled={scanning || !dataset}
+                  className="mt-3 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-gray-900 px-4 text-sm font-semibold text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
+                >
+                  {scanning ? <RefreshCw size={18} className="animate-spin" /> : <Play size={18} />}
+                  {scanning ? "正在扫描" : primaryActionLabel}
                 </button>
-              ))
-            ) : (
-              <span className="text-xs text-gray-400">暂无对象类别</span>
-            )}
-          </div>
-        </div>
-
-        {lastScanResult && (
-          <div className="grid gap-2 rounded-lg border border-line bg-white p-3 text-sm shadow-sm sm:grid-cols-3 xl:grid-cols-7">
-            <span>扫描 {lastScanResult.scanned}</span>
-            <span>新增 {lastScanResult.imported}</span>
-            <span>变更 {lastScanResult.updated}</span>
-            <span>未变 {lastScanResult.unchanged}</span>
-            <span>缺失 {lastScanResult.missing}</span>
-            <span>跳过 {lastScanResult.skipped_unsupported}</span>
-            <span>错误 {lastScanResult.errors.length}</span>
-          </div>
+                <div className="mt-5">
+                  <div className="flex items-center gap-2 text-sm font-medium text-ink">
+                    <ShieldCheck size={17} />
+                    关键阻断项
+                  </div>
+                  {keyBlockers.length === 0 ? (
+                    <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-xs leading-5 text-emerald-800">
+                      当前没有发现会阻断主流程的问题。
+                    </div>
+                  ) : (
+                    <div className="mt-3 space-y-2">
+                      {keyBlockers.slice(0, 3).map((blocker) => (
+                        <div
+                          key={blocker.title}
+                          className={`rounded-lg border px-3 py-2.5 ${
+                            blocker.tone === "danger"
+                              ? "border-red-200 bg-red-50 text-red-800"
+                              : "border-amber-200 bg-amber-50 text-amber-800"
+                          }`}
+                        >
+                          <div className="text-xs font-semibold">{blocker.title}</div>
+                          <div className="mt-1 text-xs leading-5 opacity-80">{blocker.detail}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
         )}
 
-        <SearchFilterBar
-          search={search}
-          fileType={fileType}
-          fileStatus={fileStatus}
-          tag={tag}
-          split={split}
-          reviewStatus={reviewStatus}
-          annotationProgress={annotationProgress}
-          onSearchChange={setSearch}
-          onFileTypeChange={setFileType}
-          onFileStatusChange={setFileStatus}
-          onTagChange={setTag}
-          onSplitChange={setSplit}
-          onReviewStatusChange={setReviewStatus}
-          onAnnotationProgressChange={setAnnotationProgress}
-          onClear={clearFilters}
-        />
+        <div className="grid gap-3 lg:grid-cols-2">
+          <details className="group rounded-xl border border-line bg-white shadow-sm">
+            <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
+              <div>
+                <div className="text-sm font-semibold text-ink">数据概览</div>
+                <div className="mt-0.5 text-xs text-gray-500">{stats?.sample_count ?? 0} 个样本 · {formatBytes(stats?.total_size ?? 0)}</div>
+              </div>
+              <ChevronDown size={18} className="shrink-0 text-gray-400 transition group-open:rotate-180" />
+            </summary>
+            <div className="space-y-4 border-t border-line px-4 py-4">
+              {dataset && (
+                <div className="grid gap-2 text-sm text-gray-600 sm:grid-cols-2 xl:grid-cols-5">
+                  <div className="rounded-lg bg-gray-50 px-3 py-2">项目：{dataset.project || "未设置"}</div>
+                  <div className="rounded-lg bg-gray-50 px-3 py-2">负责人：{dataset.owner || "未设置"}</div>
+                  <div className="rounded-lg bg-gray-50 px-3 py-2">来源：{dataset.source || "未设置"}</div>
+                  <div className="rounded-lg bg-gray-50 px-3 py-2">模态：{dataset.modality || "未设置"}</div>
+                  <div className="rounded-lg bg-gray-50 px-3 py-2">许可：{dataset.license || "未设置"}</div>
+                </div>
+              )}
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <StatCard label="样本" value={stats?.sample_count ?? 0} icon={<Database size={18} />} actionLabel="全部类型" onClick={() => filterFileType("")} />
+                <StatCard label="图片" value={imageCount} icon={<ImageIcon size={18} />} actionLabel="筛选图片" onClick={() => filterFileType("image")} />
+                <StatCard label="视频" value={videoCount} icon={<Video size={18} />} actionLabel="筛选视频" onClick={() => filterFileType("video")} />
+                <StatCard label={uiCopy.sampleTags} value={tagCount} icon={<Tags size={18} />} tone="info" actionLabel="查看分布" onClick={() => setTagStatsOpen(true)} />
+                <StatCard label={classificationTask ? "已分类" : "已标注"} value={taskCompletedSamples} icon={<ClipboardCheck size={18} />} tone={taskCompletedSamples > 0 ? "info" : "neutral"} actionLabel={classificationTask ? `${tagCount} 类别` : `${annotationCount} 对象`} />
+                <StatCard label="不可用" value={unavailableCount} icon={<AlertTriangle size={18} />} tone={unavailableCount > 0 ? "danger" : "neutral"} actionLabel={unavailableCount > 0 ? "查看并修复" : undefined} onClick={() => setIssueModal("missing")} />
+                <StatCard label="重复" value={duplicateSampleCount} icon={<AlertTriangle size={18} />} tone={duplicateSampleCount > 0 ? "warning" : "neutral"} actionLabel={duplicateSampleCount > 0 ? `${duplicateGroupCount} 组` : undefined} onClick={() => setIssueModal("duplicate")} />
+                <StatCard label="容量" value={formatBytes(stats?.total_size ?? 0)} icon={<HardDrive size={18} />} />
+              </div>
+              <div className="grid gap-3 rounded-lg bg-gray-50 p-3 text-sm sm:grid-cols-4">
+                <span>train：{stats?.by_split.train ?? 0}</span>
+                <span>val：{stats?.by_split.val ?? 0}</span>
+                <span>test：{stats?.by_split.test ?? 0}</span>
+                <span>未划分：{stats?.by_split.unassigned ?? 0}</span>
+              </div>
+              <div className="grid gap-3 rounded-lg border border-line p-3 text-sm lg:grid-cols-[minmax(0,1fr)_minmax(280px,1.2fr)]">
+                <div className="flex flex-wrap items-center gap-2 text-gray-600">
+                  <span className="font-medium text-ink">{uiCopy.reviewStatus}</span>
+                  {([
+                    ["not_reviewed", reviewStatusCopy.not_reviewed],
+                    ["in_review", reviewStatusCopy.in_review],
+                    ["approved", reviewStatusCopy.approved],
+                    ["rejected", reviewStatusCopy.rejected]
+                  ] as const).map(([status, label]) => (
+                    <button key={status} type="button" onClick={() => applyGlobalFilters({ reviewStatus: status })} className="min-h-9 rounded-md border border-line px-2.5 text-xs hover:bg-gray-50">
+                      {label} {stats?.by_review_status[status] ?? 0}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-gray-600 lg:justify-end">
+                  <span className="font-medium text-ink">{classificationTask ? uiCopy.sampleTags : uiCopy.annotationClasses}</span>
+                  {classificationTask && Object.keys(stats?.tag_counts ?? {}).length > 0 ? (
+                    Object.entries(stats?.tag_counts ?? {})
+                      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+                      .slice(0, 5)
+                      .map(([label, count]) => (
+                      <button key={label} type="button" onClick={() => applyGlobalFilters({ tag: label })} className="min-h-9 rounded-md border border-line px-2.5 text-xs hover:bg-gray-50">
+                        {label} {count}
+                      </button>
+                      ))
+                  ) : !classificationTask && annotationLabelRows.length > 0 ? (
+                    annotationLabelRows.map(([label, count]) => (
+                      <span key={label} className="rounded-md border border-line px-2.5 py-2 text-xs">
+                        {label} {count}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-xs text-gray-400">{classificationTask ? "暂无样本标签" : "暂无对象类别"}</span>
+                  )}
+                </div>
+              </div>
+              {lastScanResult && (
+                <div className="grid gap-2 rounded-lg border border-line p-3 text-sm sm:grid-cols-3 xl:grid-cols-7">
+                  <span>扫描 {lastScanResult.scanned}</span>
+                  <span>新增 {lastScanResult.imported}</span>
+                  <span>变更 {lastScanResult.updated}</span>
+                  <span>未变 {lastScanResult.unchanged}</span>
+                  <span>缺失 {lastScanResult.missing}</span>
+                  <span>跳过 {lastScanResult.skipped_unsupported}</span>
+                  <span>错误 {lastScanResult.errors.length}</span>
+                </div>
+              )}
+            </div>
+          </details>
 
-        <BatchActionBar
-          selectedCount={selectedSampleIds.size}
-          busy={batchBusy}
-          deleting={deletingSamples}
-          onApply={handleBatchApply}
-          onDelete={handleDeleteSelected}
-          onClear={() => setSelectedSampleIds(new Set())}
-        />
-
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <h2 className="inline-flex items-center gap-2 text-base font-semibold text-ink">
-            <FileText size={18} />
-            样本
-          </h2>
-          <div className="flex flex-wrap items-center gap-3">
-            {samples.length > 0 && (
+          <details className="group rounded-xl border border-line bg-white shadow-sm">
+            <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
+              <div>
+                <div className="text-sm font-semibold text-ink">管理与导出</div>
+                <div className="mt-0.5 text-xs text-gray-500">质量、划分、标签、导入与导出</div>
+              </div>
+              <ChevronDown size={18} className="shrink-0 text-gray-400 transition group-open:rotate-180" />
+            </summary>
+            <div className="flex flex-wrap gap-2 border-t border-line px-4 py-4">
               <button
                 type="button"
-                onClick={toggleVisibleSamples}
-                className="inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                onClick={() => setQualityOpen(true)}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
-                {allVisibleSelected ? <CheckSquare size={16} /> : <Square size={16} />}
-                {allVisibleSelected ? "取消本页" : "选择本页"}
+                <ClipboardCheck size={16} />
+                {uiCopy.datasetQuality}
               </button>
-            )}
-            <button
-              type="button"
-              onClick={() => setQualityOpen(true)}
-              className="inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-            >
-              <ClipboardCheck size={16} />
-              数据健康
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setSplitPlanResult(null);
-                setSplitPlanOpen(true);
-              }}
-              className="inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-            >
-              <FileText size={16} />
-              划分
-            </button>
-            <DatasetActionMenu
-              exportFormat={exportFormat}
-              onExportFormatChange={setExportFormat}
-              onManageTags={() => setTagsOpen(true)}
-              onImportMetadata={() => setMetadataImportOpen(true)}
-              onExport={() => void handleExport()}
-              onAnnotationExport={() => setAnnotationExportOpen(true)}
-            />
-            <span className="text-sm text-gray-500">
-              {sampleTotal} 项，第 {page} / {pageCount} 页
-            </span>
-          </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setSplitPlanResult(null);
+                  setSplitPlanOpen(true);
+                }}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                <FileText size={16} />
+                数据集划分
+              </button>
+              <DatasetActionMenu
+                exportFormat={exportFormat}
+                onExportFormatChange={setExportFormat}
+                onManageTags={() => setTagsOpen(true)}
+                onImportMetadata={() => setMetadataImportOpen(true)}
+                onExport={() => void handleExport()}
+                onAnnotationExport={() => setAnnotationExportOpen(true)}
+                annotationExportEnabled={geometryTask}
+                annotationExportHint={
+                  classificationTask ? "分类整理请使用 CSV 标签表" : dataset?.task_capabilities.unsupported_reason ?? undefined
+                }
+              />
+            </div>
+          </details>
         </div>
 
-        <div className="flex flex-col gap-3 rounded-lg border border-line bg-white p-3 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+        <section ref={samplesSectionRef} className="scroll-mt-4 space-y-4" aria-labelledby="sample-workspace-heading">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 id="sample-workspace-heading" className="inline-flex items-center gap-2 text-base font-semibold text-ink">
+                <FileText size={18} />
+                样本工作区
+              </h2>
+              <p className="mt-1 text-xs text-gray-500">搜索、筛选、选择并处理当前数据集样本。</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              {samples.length > 0 && (
+                <button
+                  type="button"
+                  onClick={toggleVisibleSamples}
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  {allVisibleSelected ? <CheckSquare size={16} /> : <Square size={16} />}
+                  {allVisibleSelected ? "取消本页选择" : "选择本页"}
+                </button>
+              )}
+              <span className="text-sm text-gray-500">{sampleTotal} 项，第 {page} / {pageCount} 页</span>
+            </div>
+          </div>
+
+          <SearchFilterBar
+            search={search}
+            fileType={fileType}
+            fileStatus={fileStatus}
+            tag={tag}
+            split={split}
+            reviewStatus={reviewStatus}
+            annotationProgress={annotationProgress}
+            showAnnotationProgress={!classificationTask}
+            onSearchChange={setSearch}
+            onFileTypeChange={setFileType}
+            onFileStatusChange={setFileStatus}
+            onTagChange={setTag}
+            onSplitChange={setSplit}
+            onReviewStatusChange={setReviewStatus}
+            onAnnotationProgressChange={setAnnotationProgress}
+            onClear={clearFilters}
+          />
+
+          <BatchActionBar
+            selectedCount={selectedSampleIds.size}
+            busy={batchBusy}
+            deleting={deletingSamples}
+            onApply={handleBatchApply}
+            onDelete={handleDeleteSelected}
+            onClear={() => setSelectedSampleIds(new Set())}
+          />
+
+          <div className="flex flex-col gap-3 rounded-lg border border-line bg-white p-3 shadow-sm lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-col gap-3 sm:flex-row">
             <select
               value={sortBy}
@@ -942,17 +1146,17 @@ export default function DatasetDetailPage() {
               <ChevronRight size={18} />
             </button>
           </div>
-        </div>
+          </div>
 
-        <SampleGrid
-          samples={samples}
-          selectedId={selected?.id}
-          selectedSampleIds={selectedSampleIds}
-          onSelect={handleSelect}
-          onToggleSelect={handleToggleSelect}
-          onAnnotate={handleAnnotate}
-        />
-      </section>
+          <SampleGrid
+            samples={samples}
+            selectedId={selected?.id}
+            selectedSampleIds={selectedSampleIds}
+            onSelect={handleSelect}
+            onToggleSelect={handleToggleSelect}
+            onAnnotate={geometryTask ? handleAnnotate : undefined}
+          />
+        </section>
 
       <ScanModal
         open={scanOpen}
@@ -971,7 +1175,7 @@ export default function DatasetDetailPage() {
         onSave={handleSave}
         onRepair={handleRepairCurrentSample}
         onDelete={handleDeleteCurrentSample}
-        onAnnotate={handleAnnotate}
+        onAnnotate={geometryTask ? handleAnnotate : undefined}
       />
       <DatasetSettingsModal
         dataset={dataset}
@@ -1039,13 +1243,18 @@ export default function DatasetDetailPage() {
       />
       <DatasetQualityModal
         open={qualityOpen}
+        taskType={dataset?.task_type}
         report={qualityReport}
         loading={qualityLoading}
         error={qualityError}
         onClose={() => setQualityOpen(false)}
         onRefresh={() => void loadQualityReport()}
         onFilterEmpty={() => {
-          applyGlobalFilters({ fileType: "image", annotationProgress: "not_started" });
+          if (classificationTask) {
+            applyGlobalFilters({ tag: "__untagged__" });
+          } else {
+            applyGlobalFilters({ fileType: "image", annotationProgress: "not_started" });
+          }
           setQualityOpen(false);
         }}
         onFilterReview={(status) => {
@@ -1069,10 +1278,12 @@ export default function DatasetDetailPage() {
       <AnnotationExportModal
         datasetId={datasetId}
         open={annotationExportOpen}
+        defaultFormat={defaultAnnotationExportFormat}
         currentQuery={annotationExportQuery}
         selectedSampleIds={annotationExportSelectedSampleIds}
         onClose={() => setAnnotationExportOpen(false)}
       />
+      </section>
     </main>
   );
 }

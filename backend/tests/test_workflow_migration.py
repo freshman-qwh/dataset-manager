@@ -15,7 +15,20 @@ def test_workflow_semantics_backfill_preserves_independent_states(tmp_path, monk
                 "annotation_progress VARCHAR(40) DEFAULT 'not_started')"
             )
         )
-        connection.execute(text("CREATE TABLE annotations (id INTEGER PRIMARY KEY, sample_id INTEGER)"))
+        connection.execute(
+            text(
+                "CREATE TABLE annotation_classes ("
+                "id INTEGER PRIMARY KEY, dataset_id INTEGER, name VARCHAR(120), "
+                "created_at DATETIME, updated_at DATETIME)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE annotations ("
+                "id INTEGER PRIMARY KEY, sample_id INTEGER, dataset_id INTEGER, "
+                "label VARCHAR(120), class_id INTEGER)"
+            )
+        )
         connection.execute(text("INSERT INTO datasets (id, task_type) VALUES (1, NULL)"))
         connection.execute(
             text(
@@ -24,7 +37,9 @@ def test_workflow_semantics_backfill_preserves_independent_states(tmp_path, monk
                 "(2, 'approved', 'completed_empty')"
             )
         )
-        connection.execute(text("INSERT INTO annotations (id, sample_id) VALUES (1, 1)"))
+        connection.execute(
+            text("INSERT INTO annotations (id, sample_id, dataset_id, label) VALUES (1, 1, 1, 'defect')")
+        )
 
     database._backfill_workflow_semantics()
 
@@ -33,7 +48,11 @@ def test_workflow_semantics_backfill_preserves_independent_states(tmp_path, monk
         rows = connection.execute(
             text("SELECT id, review_status, annotation_progress FROM samples ORDER BY id")
         ).all()
+        classes = connection.execute(text("SELECT dataset_id, name FROM annotation_classes")).all()
+        annotation_class_id = connection.execute(text("SELECT class_id FROM annotations WHERE id = 1")).scalar_one()
     assert rows == [
         (1, "not_reviewed", "in_progress"),
         (2, "approved", "completed_empty"),
     ]
+    assert classes == [(1, "defect")]
+    assert annotation_class_id is not None

@@ -11,6 +11,8 @@ class Annotation(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     sample_id: int = Field(foreign_key="samples.id", index=True)
     dataset_id: int = Field(foreign_key="datasets.id", index=True)
+    class_id: int | None = Field(default=None, foreign_key="annotation_classes.id", index=True)
+    # Kept for lightweight compatibility with older SQLite files. New writes use class_id.
     tag_id: int | None = Field(default=None, foreign_key="tags.id", index=True)
     label: str = Field(index=True, max_length=120)
     shape_type: str = Field(index=True, max_length=40)

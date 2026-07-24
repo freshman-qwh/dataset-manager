@@ -24,7 +24,9 @@ class DatasetQualityReport(BaseModel):
     generated_at: datetime
     sample_count: int
     image_sample_count: int
-    annotated_sample_count: int
+    samples_with_objects_count: int
+    confirmed_empty_sample_count: int
+    annotation_progress_counts: dict[str, int] = Field(default_factory=dict)
     annotation_count: int
     issue_count: int
     error_count: int

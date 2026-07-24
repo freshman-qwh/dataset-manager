@@ -1,5 +1,7 @@
 import { Filter, RotateCcw, Search } from "lucide-react";
 
+import { annotationProgressCopy, reviewStatusCopy, uiCopy } from "../utils/uiCopy";
+
 interface SearchFilterBarProps {
   search: string;
   fileType: string;
@@ -8,6 +10,7 @@ interface SearchFilterBarProps {
   split: string;
   reviewStatus: string;
   annotationProgress: string;
+  showAnnotationProgress?: boolean;
   onSearchChange: (value: string) => void;
   onFileTypeChange: (value: string) => void;
   onFileStatusChange: (value: string) => void;
@@ -26,6 +29,7 @@ export default function SearchFilterBar({
   split,
   reviewStatus,
   annotationProgress,
+  showAnnotationProgress = true,
   onSearchChange,
   onFileTypeChange,
   onFileStatusChange,
@@ -35,7 +39,7 @@ export default function SearchFilterBar({
   onAnnotationProgressChange,
   onClear
 }: SearchFilterBarProps) {
-  const tagValue = tag === "__untagged__" ? "无标签" : tag;
+  const tagValue = tag === "__untagged__" ? uiCopy.noSampleTags : tag;
   const hasFilters = Boolean(search || fileType || fileStatus || tag || split || reviewStatus || annotationProgress);
 
   return (
@@ -65,9 +69,9 @@ export default function SearchFilterBar({
         </label>
         <input
           value={tagValue}
-          onChange={(event) => onTagChange(event.target.value.trim() === "无标签" ? "__untagged__" : event.target.value)}
+          onChange={(event) => onTagChange(event.target.value.trim() === uiCopy.noSampleTags ? "__untagged__" : event.target.value)}
           className="w-full rounded-lg border border-line px-3 py-2 text-sm outline-none transition focus:border-gray-900 sm:w-32"
-          placeholder="样本标签 / 无标签"
+          placeholder={`${uiCopy.sampleTags} / ${uiCopy.noSampleTags}`}
         />
         <select
           value={split}
@@ -80,27 +84,29 @@ export default function SearchFilterBar({
           <option value="test">test</option>
           <option value="unassigned">未划分</option>
         </select>
-        <select
-          value={annotationProgress}
-          onChange={(event) => onAnnotationProgressChange(event.target.value)}
-          className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm outline-none transition focus:border-gray-900 sm:w-32"
-        >
-          <option value="">全部进度</option>
-          <option value="not_started">未开始</option>
-          <option value="in_progress">处理中</option>
-          <option value="completed_empty">已完成 · 无目标</option>
-          <option value="completed_with_objects">已完成 · 有对象</option>
-        </select>
+        {showAnnotationProgress && (
+          <select
+            value={annotationProgress}
+            onChange={(event) => onAnnotationProgressChange(event.target.value)}
+            className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm outline-none transition focus:border-gray-900 sm:w-32"
+          >
+            <option value="">全部{uiCopy.annotationProgress}</option>
+            <option value="not_started">{annotationProgressCopy.not_started}</option>
+            <option value="in_progress">{annotationProgressCopy.in_progress}</option>
+            <option value="completed_empty">{annotationProgressCopy.completed_empty}</option>
+            <option value="completed_with_objects">{annotationProgressCopy.completed_with_objects}</option>
+          </select>
+        )}
         <select
           value={reviewStatus}
           onChange={(event) => onReviewStatusChange(event.target.value)}
           className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm outline-none transition focus:border-gray-900 sm:w-32"
         >
-          <option value="">全部审核</option>
-          <option value="not_reviewed">未审核</option>
-          <option value="in_review">待审核</option>
-          <option value="approved">已通过</option>
-          <option value="rejected">已拒绝</option>
+          <option value="">全部{uiCopy.reviewStatus}</option>
+          <option value="not_reviewed">{reviewStatusCopy.not_reviewed}</option>
+          <option value="in_review">{reviewStatusCopy.in_review}</option>
+          <option value="approved">{reviewStatusCopy.approved}</option>
+          <option value="rejected">{reviewStatusCopy.rejected}</option>
         </select>
         <select
           value={fileStatus}

@@ -1,14 +1,15 @@
 import { CircleDot, Hand, MousePointer2, RotateCcw, RotateCw, Save, Square, Trash2, Waypoints } from "lucide-react";
 import type { ReactNode } from "react";
 
-import type { AnnotationShapeType, Tag } from "../../types/dataset";
+import type { AnnotationClass, AnnotationShapeType } from "../../types/dataset";
 
 export type AnnotationTool = "select" | "pan" | AnnotationShapeType;
 
 interface AnnotationToolbarProps {
   tool: AnnotationTool;
   label: string;
-  tags: Tag[];
+  annotationClasses: AnnotationClass[];
+  allowedShapeTypes: AnnotationShapeType[];
   dirty: boolean;
   saving: boolean;
   canUndo: boolean;
@@ -33,7 +34,8 @@ const tools: Array<{ id: AnnotationTool; title: string; icon: ReactNode }> = [
 export default function AnnotationToolbar({
   tool,
   label,
-  tags,
+  annotationClasses,
+  allowedShapeTypes,
   dirty,
   saving,
   canUndo,
@@ -46,10 +48,14 @@ export default function AnnotationToolbar({
   onRedo,
   onDeleteActive
 }: AnnotationToolbarProps) {
+  const visibleTools = tools.filter(
+    (item) => item.id === "select" || item.id === "pan" || allowedShapeTypes.includes(item.id as AnnotationShapeType)
+  );
+
   return (
     <aside className="flex w-full flex-col gap-3 border-b border-line bg-white p-3 lg:w-32 lg:border-b-0 lg:border-r">
       <div className="flex gap-2 lg:flex-col lg:items-center">
-        {tools.map((item) => (
+        {visibleTools.map((item) => (
           <button
             key={item.id}
             type="button"
@@ -101,20 +107,19 @@ export default function AnnotationToolbar({
         <span aria-hidden="true" className="mb-1 hidden text-[11px] font-medium text-gray-500 lg:block">
           当前类别
         </span>
-        <select
+        <input
+          list="annotation-class-options"
           value={label}
           title={label}
           onChange={(event) => onLabelChange(event.target.value)}
+          placeholder="输入或选择标注类别"
           className="h-10 w-full rounded-lg border border-line bg-white px-3 text-sm outline-none transition focus:border-gray-900 lg:px-2"
-        >
-          {label && !tags.some((tag) => tag.name === label) && <option value={label}>{label}</option>}
-          {tags.length === 0 && <option value={label || "object"}>{label || "object"}</option>}
-          {tags.map((tag) => (
-            <option key={tag.id} value={tag.name}>
-              {tag.name}
-            </option>
+        />
+        <datalist id="annotation-class-options">
+          {annotationClasses.map((annotationClass) => (
+            <option key={annotationClass.id} value={annotationClass.name} />
           ))}
-        </select>
+        </datalist>
       </label>
       <button
         type="button"

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session
 
 from app.core.database import get_session
-from app.schemas.annotation import AnnotationRead, AnnotationReplaceRequest
+from app.schemas.annotation import AnnotationRead, AnnotationReplaceRequest, AnnotationTagSyncResult
 from app.services import annotation_service
 
 router = APIRouter(prefix="/api", tags=["annotations"])
@@ -20,6 +20,17 @@ def replace_sample_annotations(
     session: Session = Depends(get_session),
 ) -> list[AnnotationRead]:
     return annotation_service.replace_sample_annotations(session, sample_id, payload)
+
+
+@router.post(
+    "/samples/{sample_id}/annotations/sync-sample-tags",
+    response_model=AnnotationTagSyncResult,
+)
+def sync_annotation_classes_to_sample_tags(
+    sample_id: int,
+    session: Session = Depends(get_session),
+) -> AnnotationTagSyncResult:
+    return annotation_service.sync_annotation_classes_to_sample_tags(session, sample_id)
 
 
 @router.post("/samples/{sample_id}/annotations/export-labelme")

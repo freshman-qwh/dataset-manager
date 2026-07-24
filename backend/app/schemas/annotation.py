@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -7,7 +8,7 @@ from app.core.workflow import ReviewStatus
 
 class AnnotationBase(BaseModel):
     label: str = Field(min_length=1, max_length=120)
-    tag_id: int | None = None
+    class_id: int | None = None
     shape_type: str = Field(pattern="^(rectangle|polygon|point|points)$")
     points: list[float] = Field(min_length=2)
     flags: dict[str, bool] = Field(default_factory=dict)
@@ -35,4 +36,11 @@ class AnnotationRead(AnnotationBase):
 class AnnotationReplaceRequest(BaseModel):
     annotations: list[AnnotationCreate] = Field(default_factory=list)
     review_status: ReviewStatus | None = None
-    sync_sample_tags: bool = True
+    save_mode: Literal["draft", "complete", "confirm_empty"] = "draft"
+
+
+class AnnotationTagSyncResult(BaseModel):
+    sample_id: int
+    source: Literal["annotation_classes"] = "annotation_classes"
+    added_tags: list[str] = Field(default_factory=list)
+    existing_tags: list[str] = Field(default_factory=list)

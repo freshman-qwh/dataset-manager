@@ -89,7 +89,7 @@ def export_manifest(
                     {
                         "id": annotation.id,
                         "label": annotation.label,
-                        "tag_id": annotation.tag_id,
+                        "class_id": annotation.class_id,
                         "shape_type": annotation.shape_type,
                         "points": annotation.points,
                         "flags": annotation.flags,
