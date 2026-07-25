@@ -196,6 +196,100 @@ def test_classification_quality_uses_sample_tags_instead_of_geometry_progress(tm
     app.dependency_overrides.clear()
 
 
+def test_training_readiness_summarizes_completion_review_split_and_format(tmp_path: Path):
+    with make_client() as client:
+        dataset_id, samples = create_quality_dataset(client, tmp_path)
+        train_sample_id = samples["train.png"]["id"]
+        empty_sample_id = samples["empty.png"]["id"]
+
+        assert client.put(
+            f"/api/samples/{train_sample_id}/annotations",
+            json={
+                "annotations": [
+                    {"label": "defect", "shape_type": "rectangle", "points": [1, 1, 6, 6]}
+                ],
+                "save_mode": "complete",
+            },
+        ).status_code == 200
+        assert client.put(
+            f"/api/samples/{empty_sample_id}/annotations",
+            json={"annotations": [], "save_mode": "confirm_empty"},
+        ).status_code == 200
+
+        response = client.get(f"/api/datasets/{dataset_id}/training-readiness")
+        assert response.status_code == 200
+        payload = response.json()
+
+        assert payload["dataset_id"] == dataset_id
+        assert payload["task_type"] == "detection"
+        assert payload["status"] == "blocked"
+        assert payload["recommended_export_format"] == "coco_detection"
+        assert payload["compatible_export_formats"] == [
+            "coco_detection",
+            "yolo_detection",
+            "voc",
+        ]
+        assert payload["scoped_sample_count"] == 3
+        assert payload["completed_sample_count"] == 2
+        assert payload["confirmed_empty_sample_count"] == 1
+        assert payload["pending_sample_count"] == 1
+        assert payload["pending_review_count"] == 1
+        assert payload["rejected_sample_count"] == 1
+        assert payload["blocking_issue_count"] >= 1
+        assert payload["suggested_fix_count"] >= 1
+        assert payload["split_counts"] == {"test": 1, "train": 1, "val": 1}
+        assert payload["split_covered_sample_count"] == 3
+        assert payload["split_coverage_percent"] == 100.0
+        assert payload["last_export_at"] is None
+
+    app.dependency_overrides.clear()
+
+
+def test_tagged_and_untagged_virtual_filters_return_exact_classification_ranges(tmp_path: Path):
+    data_root = tmp_path / "classification-filter"
+    data_root.mkdir()
+    (data_root / "labeled.png").write_bytes(png_bytes(10, 10))
+    (data_root / "pending.png").write_bytes(png_bytes(12, 10))
+
+    with make_client() as client:
+        dataset = client.post(
+            "/api/datasets",
+            json={
+                "name": "Classification Filter",
+                "root_path": str(data_root),
+                "task_type": "classification",
+            },
+        ).json()
+        assert client.post(
+            f"/api/datasets/{dataset['id']}/scan",
+            json={"folder_path": str(data_root)},
+        ).status_code == 200
+        samples = client.get(
+            f"/api/datasets/{dataset['id']}/samples",
+            params={"sort_by": "filename", "sort_order": "asc"},
+        ).json()["items"]
+        assert client.patch(
+            f"/api/samples/{samples[0]['id']}",
+            json={"tags": ["accepted"]},
+        ).status_code == 200
+
+        tagged = client.get(
+            f"/api/datasets/{dataset['id']}/samples",
+            params={"tag": "__tagged__", "sort_by": "filename", "sort_order": "asc"},
+        )
+        untagged = client.get(
+            f"/api/datasets/{dataset['id']}/samples",
+            params={"tag": "__untagged__", "sort_by": "filename", "sort_order": "asc"},
+        )
+
+        assert tagged.status_code == 200
+        assert [item["filename"] for item in tagged.json()["items"]] == ["labeled.png"]
+        assert untagged.status_code == 200
+        assert [item["filename"] for item in untagged.json()["items"]] == ["pending.png"]
+
+    app.dependency_overrides.clear()
+
+
 def test_annotation_progress_filter_is_independent_from_objects_and_review(tmp_path: Path):
     with make_client() as client:
         dataset_id, samples = create_quality_dataset(client, tmp_path)

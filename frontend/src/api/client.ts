@@ -38,7 +38,8 @@ import type {
   SplitPlanRequest,
   SplitPlanResult,
   Tag,
-  TagCreate
+  TagCreate,
+  TrainingReadinessReport
 } from "../types/dataset";
 
 export const API_BASE_URL =
@@ -87,6 +88,11 @@ export async function getDuplicateReport(datasetId: number): Promise<DuplicateRe
 
 export async function getDatasetQualityReport(datasetId: number): Promise<DatasetQualityReport> {
   const { data } = await client.get<DatasetQualityReport>(`/datasets/${datasetId}/quality-report`);
+  return data;
+}
+
+export async function getTrainingReadiness(datasetId: number): Promise<TrainingReadinessReport> {
+  const { data } = await client.get<TrainingReadinessReport>(`/datasets/${datasetId}/training-readiness`);
   return data;
 }
 

@@ -21,6 +21,7 @@ from app.schemas.scan import ScanRequest, ScanResult
 from app.schemas.split import SplitPlanRequest, SplitPlanResult
 from app.schemas.stats import DatasetStats
 from app.schemas.tag import TagCreate, TagRead
+from app.schemas.training_readiness import TrainingReadinessReport
 from app.services import (
     dataset_service,
     duplicate_service,
@@ -33,6 +34,7 @@ from app.services import (
     split_service,
     stats_service,
     tag_service,
+    training_readiness_service,
 )
 
 router = APIRouter(prefix="/api", tags=["datasets"])
@@ -235,6 +237,14 @@ def dataset_quality_report(
     session: Session = Depends(get_session),
 ) -> DatasetQualityReport:
     return quality_service.build_quality_report(session, dataset_id, issue_limit=issue_limit)
+
+
+@router.get("/datasets/{dataset_id}/training-readiness", response_model=TrainingReadinessReport)
+def dataset_training_readiness(
+    dataset_id: int,
+    session: Session = Depends(get_session),
+) -> TrainingReadinessReport:
+    return training_readiness_service.build_training_readiness_report(session, dataset_id)
 
 
 @router.get("/datasets/{dataset_id}/export-manifest")

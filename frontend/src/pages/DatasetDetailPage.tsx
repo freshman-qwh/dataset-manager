@@ -35,6 +35,7 @@ import {
   getExportTemplate,
   getManifestUrl,
   getSample,
+  getTrainingReadiness,
   listTags,
   listSamples,
   scanDataset,
@@ -60,6 +61,7 @@ import SplitPlanModal from "../components/SplitPlanModal";
 import StatCard from "../components/StatCard";
 import TagManagerModal from "../components/TagManagerModal";
 import TagStatsModal from "../components/TagStatsModal";
+import TrainingReadinessModal from "../components/TrainingReadinessModal";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import type {
   Dataset,
@@ -73,7 +75,8 @@ import type {
   ScanResult,
   SplitPlanRequest,
   SplitPlanResult,
-  Tag
+  Tag,
+  TrainingReadinessReport
 } from "../types/dataset";
 import type { AnnotationExportFormat } from "../types/annotationExport";
 import { buildDefaultPendingQueue, buildReviewQueue, readAnnotationQueue } from "../utils/annotationQueue";
@@ -156,6 +159,7 @@ export default function DatasetDetailPage() {
   const [missingRepairOpen, setMissingRepairOpen] = useState(false);
   const [splitPlanOpen, setSplitPlanOpen] = useState(false);
   const [qualityOpen, setQualityOpen] = useState(false);
+  const [trainingReadinessOpen, setTrainingReadinessOpen] = useState(false);
   const [issueModal, setIssueModal] = useState<"missing" | "duplicate" | null>(null);
   const [exportPreview, setExportPreview] = useState<ExportPreview | null>(null);
   const [annotationExportOpen, setAnnotationExportOpen] = useState(false);
@@ -169,10 +173,13 @@ export default function DatasetDetailPage() {
   const [repairingMissing, setRepairingMissing] = useState(false);
   const [applyingSplitPlan, setApplyingSplitPlan] = useState(false);
   const [qualityLoading, setQualityLoading] = useState(false);
+  const [trainingReadinessLoading, setTrainingReadinessLoading] = useState(false);
   const [missingRepairResult, setMissingRepairResult] = useState<MissingSampleRepairResult | null>(null);
   const [splitPlanResult, setSplitPlanResult] = useState<SplitPlanResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [qualityError, setQualityError] = useState<string | null>(null);
+  const [trainingReadiness, setTrainingReadiness] = useState<TrainingReadinessReport | null>(null);
+  const [trainingReadinessError, setTrainingReadinessError] = useState<string | null>(null);
   const autoScannedDatasetIds = useRef<Set<number>>(new Set());
   const samplesSectionRef = useRef<HTMLElement | null>(null);
   const debouncedSearch = useDebouncedValue(search);
@@ -222,6 +229,18 @@ export default function DatasetDetailPage() {
       setQualityError("质量检查失败，请确认后端服务可用后重试");
     } finally {
       setQualityLoading(false);
+    }
+  }, [datasetId]);
+
+  const loadTrainingReadiness = useCallback(async () => {
+    setTrainingReadinessLoading(true);
+    setTrainingReadinessError(null);
+    try {
+      setTrainingReadiness(await getTrainingReadiness(datasetId));
+    } catch {
+      setTrainingReadinessError("训练准备状态加载失败，请确认后端服务可用后重试");
+    } finally {
+      setTrainingReadinessLoading(false);
     }
   }, [datasetId]);
 
@@ -352,6 +371,12 @@ export default function DatasetDetailPage() {
       void loadQualityReport();
     }
   }, [datasetId, loadQualityReport, qualityOpen]);
+
+  useEffect(() => {
+    if (trainingReadinessOpen && Number.isFinite(datasetId)) {
+      void loadTrainingReadiness();
+    }
+  }, [datasetId, loadTrainingReadiness, trainingReadinessOpen]);
 
   useEffect(() => {
     if (!dataset?.auto_scan_on_open || !dataset.root_path || autoScannedDatasetIds.current.has(dataset.id)) {
@@ -643,11 +668,12 @@ export default function DatasetDetailPage() {
     }
   }
 
-  async function handleExport() {
+  async function handleExport(formatOverride?: string) {
     setError(null);
     try {
-      if (exportFormat === "csv") {
-        const template = await getExportTemplate(datasetId, exportFormat);
+      const targetFormat = formatOverride ?? exportFormat;
+      if (targetFormat === "csv") {
+        const template = await getExportTemplate(datasetId, targetFormat);
         const content = exportTemplateToCsv(template.payload);
         setExportPreview({
           title: "CSV 标签表",
@@ -999,22 +1025,14 @@ export default function DatasetDetailPage() {
             <div className="flex flex-wrap gap-2 border-t border-line px-4 py-4">
               <button
                 type="button"
-                onClick={() => setQualityOpen(true)}
-                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
-              >
-                <ClipboardCheck size={16} />
-                {uiCopy.datasetQuality}
-              </button>
-              <button
-                type="button"
                 onClick={() => {
-                  setSplitPlanResult(null);
-                  setSplitPlanOpen(true);
+                  setTrainingReadiness(null);
+                  setTrainingReadinessOpen(true);
                 }}
-                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 text-sm font-semibold text-white transition hover:bg-gray-800"
               >
-                <FileText size={16} />
-                数据集划分
+                <ShieldCheck size={17} />
+                准备训练
               </button>
               <DatasetActionMenu
                 exportFormat={exportFormat}
@@ -1263,6 +1281,59 @@ export default function DatasetDetailPage() {
           setQualityOpen(false);
         }}
         onOpenIssue={(issue) => void openQualityIssue(issue)}
+      />
+      <TrainingReadinessModal
+        open={trainingReadinessOpen}
+        report={trainingReadiness}
+        loading={trainingReadinessLoading}
+        error={trainingReadinessError}
+        onClose={() => setTrainingReadinessOpen(false)}
+        onRefresh={() => void loadTrainingReadiness()}
+        onShowCompleted={() => {
+          applyGlobalFilters(
+            classificationTask
+              ? { tag: "__tagged__" }
+              : { fileType: "image", annotationProgress: "completed_with_objects" }
+          );
+          setTrainingReadinessOpen(false);
+          window.requestAnimationFrame(() => samplesSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+        }}
+        onShowEmpty={() => {
+          applyGlobalFilters(
+            classificationTask
+              ? { tag: "__untagged__" }
+              : { fileType: "image", annotationProgress: "completed_empty" }
+          );
+          setTrainingReadinessOpen(false);
+          window.requestAnimationFrame(() => samplesSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+        }}
+        onShowReview={() => {
+          applyGlobalFilters({ fileType: classificationTask ? undefined : "image", reviewStatus: "in_review" });
+          setTrainingReadinessOpen(false);
+          window.requestAnimationFrame(() => samplesSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+        }}
+        onShowSplit={(nextSplit) => {
+          applyGlobalFilters({ split: nextSplit });
+          setTrainingReadinessOpen(false);
+          window.requestAnimationFrame(() => samplesSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+        }}
+        onOpenQuality={() => {
+          setTrainingReadinessOpen(false);
+          setQualityOpen(true);
+        }}
+        onOpenSplitPlan={() => {
+          setTrainingReadinessOpen(false);
+          setSplitPlanResult(null);
+          setSplitPlanOpen(true);
+        }}
+        onOpenExport={() => {
+          setTrainingReadinessOpen(false);
+          if (geometryTask) {
+            setAnnotationExportOpen(true);
+          } else {
+            void handleExport("csv");
+          }
+        }}
       />
       <SplitPlanModal
         open={splitPlanOpen}

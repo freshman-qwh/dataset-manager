@@ -299,6 +299,32 @@ export interface DatasetQualityReport {
   issues: QualityIssue[];
 }
 
+export type TrainingReadinessStatus = "blocked" | "needs_attention" | "ready";
+
+export interface TrainingReadinessReport {
+  dataset_id: number;
+  generated_at: string;
+  task_type: string;
+  task_label: string;
+  status: TrainingReadinessStatus;
+  recommended_export_format: string;
+  compatible_export_formats: string[];
+  advanced_export_formats: string[];
+  scoped_sample_count: number;
+  completed_sample_count: number;
+  confirmed_empty_sample_count: number;
+  pending_sample_count: number;
+  pending_review_count: number;
+  rejected_sample_count: number;
+  blocking_issue_count: number;
+  suggested_fix_count: number;
+  notice_count: number;
+  split_counts: Record<string, number>;
+  split_covered_sample_count: number;
+  split_coverage_percent: number;
+  last_export_at: string | null;
+}
+
 export interface DirectoryEntry {
   name: string;
   path: string;

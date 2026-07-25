@@ -39,7 +39,7 @@ export default function SearchFilterBar({
   onAnnotationProgressChange,
   onClear
 }: SearchFilterBarProps) {
-  const tagValue = tag === "__untagged__" ? uiCopy.noSampleTags : tag;
+  const tagValue = tag === "__untagged__" ? uiCopy.noSampleTags : tag === "__tagged__" ? "有标签" : tag;
   const hasFilters = Boolean(search || fileType || fileStatus || tag || split || reviewStatus || annotationProgress);
 
   return (
@@ -69,7 +69,10 @@ export default function SearchFilterBar({
         </label>
         <input
           value={tagValue}
-          onChange={(event) => onTagChange(event.target.value.trim() === uiCopy.noSampleTags ? "__untagged__" : event.target.value)}
+          onChange={(event) => {
+            const value = event.target.value.trim();
+            onTagChange(value === uiCopy.noSampleTags ? "__untagged__" : value === "有标签" ? "__tagged__" : event.target.value);
+          }}
           className="w-full rounded-lg border border-line px-3 py-2 text-sm outline-none transition focus:border-gray-900 sm:w-32"
           placeholder={`${uiCopy.sampleTags} / ${uiCopy.noSampleTags}`}
         />

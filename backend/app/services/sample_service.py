@@ -34,6 +34,7 @@ from app.utils.paths import relative_to_root, resolve_local_path
 REVIEW_STATUSES = set(REVIEW_STATUS_VALUES)
 ANNOTATION_PROGRESS_STATUSES = set(ANNOTATION_PROGRESS_VALUES)
 UNTAGGED_FILTER = "__untagged__"
+TAGGED_FILTER = "__tagged__"
 
 SORTABLE_SAMPLE_FIELDS = {
     "created_at",
@@ -131,6 +132,9 @@ def get_filtered_samples(
             tag = None
         elif normalized_tag == UNTAGGED_FILTER:
             samples = [sample for sample in samples if not sample.tags]
+            tag = None
+        elif normalized_tag == TAGGED_FILTER:
+            samples = [sample for sample in samples if sample.tags]
             tag = None
         else:
             tag = normalized_tag
