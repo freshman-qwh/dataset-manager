@@ -319,6 +319,8 @@ export interface TrainingReadinessReport {
   blocking_issue_count: number;
   suggested_fix_count: number;
   notice_count: number;
+  truncated_issue_count?: number;
+  issues?: QualityIssue[];
   split_counts: Record<string, number>;
   split_covered_sample_count: number;
   split_coverage_percent: number;

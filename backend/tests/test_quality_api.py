@@ -237,6 +237,17 @@ def test_training_readiness_summarizes_completion_review_split_and_format(tmp_pa
         assert payload["rejected_sample_count"] == 1
         assert payload["blocking_issue_count"] >= 1
         assert payload["suggested_fix_count"] >= 1
+        assert payload["notice_count"] >= 1
+        assert payload["truncated_issue_count"] == 0
+        assert len(payload["issues"]) == (
+            payload["blocking_issue_count"]
+            + payload["suggested_fix_count"]
+            + payload["notice_count"]
+        )
+        assert payload["issues"][0]["severity"] == "error"
+        assert payload["issues"][0]["code"]
+        assert payload["issues"][0]["title"]
+        assert payload["issues"][0]["message"]
         assert payload["split_counts"] == {"test": 1, "train": 1, "val": 1}
         assert payload["split_covered_sample_count"] == 3
         assert payload["split_coverage_percent"] == 100.0

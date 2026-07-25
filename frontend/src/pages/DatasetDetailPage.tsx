@@ -1283,10 +1283,13 @@ export default function DatasetDetailPage() {
         onOpenIssue={(issue) => void openQualityIssue(issue)}
       />
       <TrainingReadinessModal
+        datasetId={datasetId}
         open={trainingReadinessOpen}
         report={trainingReadiness}
         loading={trainingReadinessLoading}
         error={trainingReadinessError}
+        currentQuery={annotationExportQuery}
+        selectedSampleIds={annotationExportSelectedSampleIds}
         onClose={() => setTrainingReadinessOpen(false)}
         onRefresh={() => void loadTrainingReadiness()}
         onShowCompleted={() => {
@@ -1321,18 +1324,18 @@ export default function DatasetDetailPage() {
           setTrainingReadinessOpen(false);
           setQualityOpen(true);
         }}
+        onOpenIssue={(issue) => {
+          setTrainingReadinessOpen(false);
+          void openQualityIssue(issue);
+        }}
         onOpenSplitPlan={() => {
           setTrainingReadinessOpen(false);
           setSplitPlanResult(null);
           setSplitPlanOpen(true);
         }}
-        onOpenExport={() => {
+        onExportClassification={() => {
           setTrainingReadinessOpen(false);
-          if (geometryTask) {
-            setAnnotationExportOpen(true);
-          } else {
-            void handleExport("csv");
-          }
+          void handleExport("csv");
         }}
       />
       <SplitPlanModal

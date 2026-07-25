@@ -109,6 +109,8 @@ def build_training_readiness_report(
         blocking_issue_count=quality.error_count,
         suggested_fix_count=quality.warning_count,
         notice_count=quality.info_count,
+        truncated_issue_count=quality.truncated_issue_count,
+        issues=quality.issues,
         split_counts=dict(sorted(split_counts.items())),
         split_covered_sample_count=split_covered_sample_count,
         split_coverage_percent=split_coverage_percent,

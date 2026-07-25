@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.quality import QualityIssue
+
 
 TrainingReadinessStatus = Literal["blocked", "needs_attention", "ready"]
 
@@ -25,6 +27,8 @@ class TrainingReadinessReport(BaseModel):
     blocking_issue_count: int
     suggested_fix_count: int
     notice_count: int
+    truncated_issue_count: int
+    issues: list[QualityIssue] = Field(default_factory=list)
     split_counts: dict[str, int] = Field(default_factory=dict)
     split_covered_sample_count: int
     split_coverage_percent: float
