@@ -1,3 +1,9 @@
+import type {
+  AnnotationClassMapItem,
+  AnnotationExportFormat,
+  AnnotationExportSampleQuery
+} from "./annotationExport";
+
 export type DatasetTaskType = "detection" | "segmentation" | "classification";
 export type AnnotationProgress = "not_started" | "in_progress" | "completed_empty" | "completed_with_objects";
 export type ReviewStatus = "not_reviewed" | "in_review" | "approved" | "rejected";
@@ -300,6 +306,23 @@ export interface DatasetQualityReport {
 }
 
 export type TrainingReadinessStatus = "blocked" | "needs_attention" | "ready";
+export type TrainingReadinessScope = "filtered" | "all" | "split" | "selected";
+export type TrainingReadinessExportFormat = AnnotationExportFormat | "csv" | "manifest";
+
+export interface TrainingReadinessConfigInput {
+  format: TrainingReadinessExportFormat;
+  scope: TrainingReadinessScope;
+  split?: string | null;
+  include_empty: boolean;
+  sample_query: AnnotationExportSampleQuery;
+  class_map: AnnotationClassMapItem[];
+}
+
+export interface TrainingReadinessConfig extends TrainingReadinessConfigInput {
+  task_type: string;
+  saved_at: string;
+  last_export_at: string | null;
+}
 
 export interface TrainingReadinessReport {
   dataset_id: number;
@@ -325,6 +348,7 @@ export interface TrainingReadinessReport {
   split_covered_sample_count: number;
   split_coverage_percent: number;
   last_export_at: string | null;
+  last_config: TrainingReadinessConfig | null;
 }
 
 export interface DirectoryEntry {

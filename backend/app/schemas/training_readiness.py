@@ -3,10 +3,43 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.annotation_export import AnnotationClassMapItem, AnnotationExportSampleQuery
 from app.schemas.quality import QualityIssue
 
 
 TrainingReadinessStatus = Literal["blocked", "needs_attention", "ready"]
+TrainingReadinessScope = Literal["filtered", "all", "split", "selected"]
+TrainingReadinessExportFormat = Literal[
+    "labelme",
+    "coco_detection",
+    "coco_segmentation",
+    "yolo_detection",
+    "yolo_segmentation",
+    "voc",
+    "csv",
+    "manifest",
+]
+
+
+class TrainingReadinessConfigRequest(BaseModel):
+    format: TrainingReadinessExportFormat
+    scope: TrainingReadinessScope
+    split: str | None = Field(default=None, max_length=40)
+    include_empty: bool = False
+    sample_query: AnnotationExportSampleQuery = Field(default_factory=AnnotationExportSampleQuery)
+    class_map: list[AnnotationClassMapItem] = Field(default_factory=list)
+
+
+class TrainingReadinessConfig(BaseModel):
+    task_type: str
+    format: TrainingReadinessExportFormat
+    scope: TrainingReadinessScope
+    split: str | None = None
+    include_empty: bool
+    sample_query: AnnotationExportSampleQuery
+    class_map: list[AnnotationClassMapItem] = Field(default_factory=list)
+    saved_at: datetime
+    last_export_at: datetime | None = None
 
 
 class TrainingReadinessReport(BaseModel):
@@ -33,3 +66,4 @@ class TrainingReadinessReport(BaseModel):
     split_covered_sample_count: int
     split_coverage_percent: float
     last_export_at: datetime | None = None
+    last_config: TrainingReadinessConfig | None = None

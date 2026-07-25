@@ -252,6 +252,175 @@ def test_training_readiness_summarizes_completion_review_split_and_format(tmp_pa
         assert payload["split_covered_sample_count"] == 3
         assert payload["split_coverage_percent"] == 100.0
         assert payload["last_export_at"] is None
+        assert payload["last_config"] is None
+
+    app.dependency_overrides.clear()
+
+
+def test_training_readiness_persists_config_and_last_export(tmp_path: Path):
+    with make_client() as client:
+        dataset_id, samples = create_quality_dataset(client, tmp_path)
+        selected_sample_id = samples["train.png"]["id"]
+        config = {
+            "format": "coco_detection",
+            "scope": "selected",
+            "split": None,
+            "include_empty": True,
+            "sample_query": {
+                "sample_ids": [selected_sample_id],
+                "sort_by": "relative_path",
+                "sort_order": "asc",
+            },
+            "class_map": [
+                {"name": "defect", "id": 1, "coco_id": 1, "yolo_id": 0},
+            ],
+        }
+
+        saved_response = client.put(
+            f"/api/datasets/{dataset_id}/training-readiness/config",
+            json=config,
+        )
+        assert saved_response.status_code == 200
+        saved = saved_response.json()
+        assert saved["task_type"] == "detection"
+        assert saved["format"] == "coco_detection"
+        assert saved["scope"] == "selected"
+        assert saved["sample_query"]["sample_ids"] == [selected_sample_id]
+        assert saved["class_map"][0]["name"] == "defect"
+        assert saved["last_export_at"] is None
+        assert saved["saved_at"].endswith("Z") or saved["saved_at"].endswith("+00:00")
+
+        readiness = client.get(
+            f"/api/datasets/{dataset_id}/training-readiness"
+        ).json()
+        assert readiness["last_config"] == saved
+        assert readiness["last_export_at"] is None
+
+        exported_response = client.post(
+            f"/api/datasets/{dataset_id}/training-readiness/exports",
+            json=config,
+        )
+        assert exported_response.status_code == 200
+        exported = exported_response.json()
+        assert exported["last_export_at"] is not None
+        assert exported["last_export_at"].endswith("Z") or exported[
+            "last_export_at"
+        ].endswith("+00:00")
+
+        updated_config = {
+            **config,
+            "format": "yolo_detection",
+            "scope": "split",
+            "split": "train",
+            "sample_query": {
+                "split": "val",
+                "sort_by": "relative_path",
+                "sort_order": "asc",
+            },
+        }
+        updated_response = client.put(
+            f"/api/datasets/{dataset_id}/training-readiness/config",
+            json=updated_config,
+        )
+        assert updated_response.status_code == 200
+        updated = updated_response.json()
+        assert updated["format"] == "yolo_detection"
+        assert updated["split"] == "train"
+        assert updated["sample_query"]["split"] == "train"
+        assert updated["last_export_at"] == exported["last_export_at"]
+
+        refreshed = client.get(
+            f"/api/datasets/{dataset_id}/training-readiness"
+        ).json()
+        assert refreshed["last_config"] == updated
+        assert refreshed["last_export_at"] == exported["last_export_at"]
+
+    app.dependency_overrides.clear()
+
+
+def test_training_readiness_rejects_incompatible_or_incomplete_config(tmp_path: Path):
+    with make_client() as client:
+        dataset_id, _ = create_quality_dataset(client, tmp_path)
+        base_config = {
+            "format": "coco_detection",
+            "scope": "all",
+            "include_empty": False,
+            "sample_query": {},
+            "class_map": [],
+        }
+
+        incompatible = client.put(
+            f"/api/datasets/{dataset_id}/training-readiness/config",
+            json={**base_config, "format": "csv"},
+        )
+        assert incompatible.status_code == 422
+        assert "not available" in incompatible.json()["detail"]
+
+        missing_split = client.put(
+            f"/api/datasets/{dataset_id}/training-readiness/config",
+            json={**base_config, "scope": "split"},
+        )
+        assert missing_split.status_code == 422
+        assert "split is required" in missing_split.json()["detail"]
+
+        empty_selection = client.put(
+            f"/api/datasets/{dataset_id}/training-readiness/config",
+            json={**base_config, "scope": "selected"},
+        )
+        assert empty_selection.status_code == 422
+        assert "At least one sample" in empty_selection.json()["detail"]
+
+        foreign_selection = client.put(
+            f"/api/datasets/{dataset_id}/training-readiness/config",
+            json={
+                **base_config,
+                "scope": "selected",
+                "sample_query": {"sample_ids": [999999]},
+            },
+        )
+        assert foreign_selection.status_code == 422
+        assert "target dataset" in foreign_selection.json()["detail"]
+
+    app.dependency_overrides.clear()
+
+
+def test_classification_training_readiness_records_csv_export():
+    with make_client() as client:
+        dataset = client.post(
+            "/api/datasets",
+            json={"name": "Classification Training", "task_type": "classification"},
+        ).json()
+        config = {
+            "format": "csv",
+            "scope": "all",
+            "include_empty": False,
+            "sample_query": {
+                "sort_by": "relative_path",
+                "sort_order": "asc",
+            },
+            "class_map": [],
+        }
+
+        saved = client.put(
+            f"/api/datasets/{dataset['id']}/training-readiness/config",
+            json=config,
+        )
+        assert saved.status_code == 200
+        assert saved.json()["task_type"] == "classification"
+        assert saved.json()["format"] == "csv"
+
+        exported = client.post(
+            f"/api/datasets/{dataset['id']}/training-readiness/exports",
+            json=config,
+        )
+        assert exported.status_code == 200
+        assert exported.json()["last_export_at"] is not None
+
+        incompatible = client.put(
+            f"/api/datasets/{dataset['id']}/training-readiness/config",
+            json={**config, "format": "coco_detection"},
+        )
+        assert incompatible.status_code == 422
 
     app.dependency_overrides.clear()
 

@@ -41,6 +41,7 @@ import {
   scanDataset,
   repairMissingSamples,
   repairSample,
+  recordTrainingExport,
   updateDataset,
   updateSample
 } from "../api/client";
@@ -76,6 +77,7 @@ import type {
   SplitPlanRequest,
   SplitPlanResult,
   Tag,
+  TrainingReadinessConfigInput,
   TrainingReadinessReport
 } from "../types/dataset";
 import type { AnnotationExportFormat } from "../types/annotationExport";
@@ -668,7 +670,10 @@ export default function DatasetDetailPage() {
     }
   }
 
-  async function handleExport(formatOverride?: string) {
+  async function handleExport(
+    formatOverride?: string,
+    trainingConfig?: TrainingReadinessConfigInput
+  ) {
     setError(null);
     try {
       const targetFormat = formatOverride ?? exportFormat;
@@ -680,7 +685,8 @@ export default function DatasetDetailPage() {
           filename: `dataset-${datasetId}-labels.csv`,
           mimeType: "text/csv;charset=utf-8",
           content,
-          summary: template.description
+          summary: template.description,
+          trainingConfig
         });
         return;
       }
@@ -712,12 +718,20 @@ export default function DatasetDetailPage() {
     }
   }
 
-  function handleDownloadExport() {
+  async function handleDownloadExport() {
     if (!exportPreview) {
       return;
     }
-    downloadTextFile(exportPreview.filename, exportPreview.content, exportPreview.mimeType);
+    const preview = exportPreview;
+    downloadTextFile(preview.filename, preview.content, preview.mimeType);
     setExportPreview(null);
+    if (preview.trainingConfig) {
+      try {
+        await recordTrainingExport(datasetId, preview.trainingConfig);
+      } catch {
+        setError("文件已经下载，但未能记录最近导出时间；下载内容不受影响");
+      }
+    }
   }
 
   function clearFilters() {
@@ -1333,9 +1347,9 @@ export default function DatasetDetailPage() {
           setSplitPlanResult(null);
           setSplitPlanOpen(true);
         }}
-        onExportClassification={() => {
+        onExportClassification={(trainingConfig) => {
           setTrainingReadinessOpen(false);
-          void handleExport("csv");
+          void handleExport("csv", trainingConfig);
         }}
       />
       <SplitPlanModal

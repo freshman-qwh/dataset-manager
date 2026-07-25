@@ -3,5 +3,14 @@ from app.models.annotation_class import AnnotationClass
 from app.models.dataset import Dataset
 from app.models.sample import Sample, SampleTagLink
 from app.models.tag import Tag
+from app.models.training_readiness_state import TrainingReadinessState
 
-__all__ = ["Annotation", "AnnotationClass", "Dataset", "Sample", "SampleTagLink", "Tag"]
+__all__ = [
+    "Annotation",
+    "AnnotationClass",
+    "Dataset",
+    "Sample",
+    "SampleTagLink",
+    "Tag",
+    "TrainingReadinessState",
+]

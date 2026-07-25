@@ -39,6 +39,8 @@ import type {
   SplitPlanResult,
   Tag,
   TagCreate,
+  TrainingReadinessConfig,
+  TrainingReadinessConfigInput,
   TrainingReadinessReport
 } from "../types/dataset";
 
@@ -93,6 +95,28 @@ export async function getDatasetQualityReport(datasetId: number): Promise<Datase
 
 export async function getTrainingReadiness(datasetId: number): Promise<TrainingReadinessReport> {
   const { data } = await client.get<TrainingReadinessReport>(`/datasets/${datasetId}/training-readiness`);
+  return data;
+}
+
+export async function saveTrainingReadinessConfig(
+  datasetId: number,
+  payload: TrainingReadinessConfigInput
+): Promise<TrainingReadinessConfig> {
+  const { data } = await client.put<TrainingReadinessConfig>(
+    `/datasets/${datasetId}/training-readiness/config`,
+    payload
+  );
+  return data;
+}
+
+export async function recordTrainingExport(
+  datasetId: number,
+  payload: TrainingReadinessConfigInput
+): Promise<TrainingReadinessConfig> {
+  const { data } = await client.post<TrainingReadinessConfig>(
+    `/datasets/${datasetId}/training-readiness/exports`,
+    payload
+  );
   return data;
 }
 

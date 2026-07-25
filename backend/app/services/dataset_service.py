@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 from app.models.dataset import Dataset, utc_now
 from app.models.sample import Sample
 from app.models.tag import Tag
+from app.models.training_readiness_state import TrainingReadinessState
 from app.schemas.dataset import DatasetCreate, DatasetRead, DatasetUpdate
 from app.core.workflow import task_capabilities
 
@@ -77,6 +78,14 @@ def delete_dataset(session: Session, dataset_id: int) -> None:
     tags = session.exec(select(Tag).where(Tag.dataset_id == dataset_id)).all()
     for tag in tags:
         session.delete(tag)
+
+    training_states = session.exec(
+        select(TrainingReadinessState).where(
+            TrainingReadinessState.dataset_id == dataset_id
+        )
+    ).all()
+    for training_state in training_states:
+        session.delete(training_state)
 
     session.delete(dataset)
     session.commit()

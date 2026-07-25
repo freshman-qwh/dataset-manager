@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlmodel import Session
 
 from app.core.database import get_session
@@ -21,7 +21,11 @@ from app.schemas.scan import ScanRequest, ScanResult
 from app.schemas.split import SplitPlanRequest, SplitPlanResult
 from app.schemas.stats import DatasetStats
 from app.schemas.tag import TagCreate, TagRead
-from app.schemas.training_readiness import TrainingReadinessReport
+from app.schemas.training_readiness import (
+    TrainingReadinessConfig,
+    TrainingReadinessConfigRequest,
+    TrainingReadinessReport,
+)
 from app.services import (
     dataset_service,
     duplicate_service,
@@ -245,6 +249,44 @@ def dataset_training_readiness(
     session: Session = Depends(get_session),
 ) -> TrainingReadinessReport:
     return training_readiness_service.build_training_readiness_report(session, dataset_id)
+
+
+@router.put(
+    "/datasets/{dataset_id}/training-readiness/config",
+    response_model=TrainingReadinessConfig,
+)
+def save_dataset_training_readiness_config(
+    dataset_id: int,
+    payload: TrainingReadinessConfigRequest,
+    session: Session = Depends(get_session),
+) -> TrainingReadinessConfig:
+    try:
+        return training_readiness_service.save_training_readiness_config(
+            session,
+            dataset_id,
+            payload,
+        )
+    except training_readiness_service.TrainingReadinessConfigError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+
+@router.post(
+    "/datasets/{dataset_id}/training-readiness/exports",
+    response_model=TrainingReadinessConfig,
+)
+def record_dataset_training_export(
+    dataset_id: int,
+    payload: TrainingReadinessConfigRequest,
+    session: Session = Depends(get_session),
+) -> TrainingReadinessConfig:
+    try:
+        return training_readiness_service.record_training_export(
+            session,
+            dataset_id,
+            payload,
+        )
+    except training_readiness_service.TrainingReadinessConfigError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
 
 @router.get("/datasets/{dataset_id}/export-manifest")

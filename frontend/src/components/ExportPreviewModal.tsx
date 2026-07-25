@@ -1,5 +1,6 @@
 import { Download } from "lucide-react";
 
+import type { TrainingReadinessConfigInput } from "../types/dataset";
 import Modal from "./Modal";
 
 export interface ExportPreview {
@@ -8,6 +9,7 @@ export interface ExportPreview {
   mimeType: string;
   content: string;
   summary: string;
+  trainingConfig?: TrainingReadinessConfigInput;
 }
 
 interface ExportPreviewModalProps {

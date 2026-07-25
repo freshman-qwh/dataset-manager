@@ -1,12 +1,18 @@
 import { AlertTriangle, CheckCircle2, Download, Info, LoaderCircle, SearchCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { downloadAnnotationExport, precheckAnnotationExport } from "../api/client";
+import {
+  downloadAnnotationExport,
+  precheckAnnotationExport,
+  recordTrainingExport,
+  saveTrainingReadinessConfig
+} from "../api/client";
 import type {
   AnnotationExportFormat,
   AnnotationExportPrecheckResponse,
   AnnotationExportSampleQuery
 } from "../types/annotationExport";
+import type { TrainingReadinessConfigInput } from "../types/dataset";
 import { uiCopy } from "../utils/uiCopy";
 import Modal from "./Modal";
 
@@ -84,6 +90,7 @@ export default function AnnotationExportModal({
   const [precheck, setPrecheck] = useState<AnnotationExportPrecheckResponse | null>(null);
   const [checking, setChecking] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [downloadCompleted, setDownloadCompleted] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const selectedFormat = useMemo(
@@ -106,6 +113,7 @@ export default function AnnotationExportModal({
 
   useEffect(() => {
     setPrecheck(null);
+    setDownloadCompleted(false);
     setError(null);
   }, [format, includeEmpty, sampleQuery]);
 
@@ -117,8 +125,22 @@ export default function AnnotationExportModal({
     }
     setFormat(defaultFormat);
     setPrecheck(null);
+    setDownloadCompleted(false);
     setError(null);
   }, [defaultFormat, open]);
+
+  function trainingConfig(
+    classMap: AnnotationExportPrecheckResponse["class_map"] = []
+  ): TrainingReadinessConfigInput {
+    return {
+      format,
+      scope,
+      split: scope === "split" ? selectedSplit : null,
+      include_empty: includeEmpty,
+      sample_query: sampleQuery,
+      class_map: classMap
+    };
+  }
 
   async function handlePrecheck() {
     if (scope === "selected" && selectedSampleIds.length === 0) {
@@ -134,6 +156,11 @@ export default function AnnotationExportModal({
         include_empty: includeEmpty
       });
       setPrecheck(result);
+      try {
+        await saveTrainingReadinessConfig(datasetId, trainingConfig(result.class_map));
+      } catch {
+        setError("预检已完成，但未能保存本次训练配置。");
+      }
     } catch {
       setError(`${uiCopy.exportCheck}失败，请确认后端服务可用。`);
     } finally {
@@ -149,6 +176,14 @@ export default function AnnotationExportModal({
     setError(null);
     try {
       const result = await downloadAnnotationExport(datasetId, format, sampleQuery, includeEmpty);
+      try {
+        await recordTrainingExport(datasetId, trainingConfig(precheck.class_map));
+      } catch {
+        triggerDownload(result.blob, result.filename);
+        setDownloadCompleted(true);
+        setError("文件已经下载，但未能记录最近导出时间；下载内容不受影响。");
+        return;
+      }
       triggerDownload(result.blob, result.filename);
       onClose();
     } catch {
@@ -347,11 +382,11 @@ export default function AnnotationExportModal({
           <button
             type="button"
             onClick={() => void handleDownload()}
-            disabled={!precheck || precheck.blocked || downloading || checking}
+            disabled={!precheck || precheck.blocked || downloading || checking || downloadCompleted}
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
           >
             {downloading ? <LoaderCircle size={17} className="animate-spin" /> : <Download size={17} />}
-            {downloading ? "生成中" : "确认并下载"}
+            {downloadCompleted ? "已下载" : downloading ? "生成中" : "确认并下载"}
           </button>
         </div>
       </div>

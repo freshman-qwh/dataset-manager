@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ClipboardCheck,
+  Clock3,
   Download,
   FileOutput,
   GitBranch,
@@ -16,9 +17,14 @@ import {
   ShieldAlert,
   Wrench
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { downloadAnnotationExport, precheckAnnotationExport } from "../api/client";
+import {
+  downloadAnnotationExport,
+  precheckAnnotationExport,
+  recordTrainingExport,
+  saveTrainingReadinessConfig
+} from "../api/client";
 import type {
   AnnotationExportFormat,
   AnnotationExportIssue,
@@ -28,13 +34,14 @@ import type {
 import type {
   QualityIssue,
   QualityIssueSeverity,
+  TrainingReadinessConfigInput,
   TrainingReadinessReport,
+  TrainingReadinessScope,
   TrainingReadinessStatus
 } from "../types/dataset";
 import Modal from "./Modal";
 
 type ReadinessStep = 1 | 2 | 3 | 4;
-type ExportScope = "filtered" | "all" | "split" | "selected";
 
 interface TrainingReadinessModalProps {
   datasetId: number;
@@ -53,7 +60,7 @@ interface TrainingReadinessModalProps {
   onOpenQuality: () => void;
   onOpenIssue: (issue: QualityIssue) => void;
   onOpenSplitPlan: () => void;
-  onExportClassification: () => void;
+  onExportClassification: (config: TrainingReadinessConfigInput) => void;
 }
 
 const STEPS: Array<{ number: ReadinessStep; label: string; hint: string }> = [
@@ -239,14 +246,21 @@ export default function TrainingReadinessModal({
 }: TrainingReadinessModalProps) {
   const [step, setStep] = useState<ReadinessStep>(1);
   const [format, setFormat] = useState<AnnotationExportFormat>("labelme");
-  const [scope, setScope] = useState<ExportScope>("filtered");
+  const [scope, setScope] = useState<TrainingReadinessScope>("filtered");
   const [selectedSplit, setSelectedSplit] = useState("train");
   const [includeEmpty, setIncludeEmpty] = useState(false);
+  const [configuredQuery, setConfiguredQuery] = useState<AnnotationExportSampleQuery>(currentQuery);
+  const [configuredSelectedSampleIds, setConfiguredSelectedSampleIds] = useState<number[]>(selectedSampleIds);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [precheck, setPrecheck] = useState<AnnotationExportPrecheckResponse | null>(null);
   const [checking, setChecking] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [downloadCompleted, setDownloadCompleted] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [restoredSavedAt, setRestoredSavedAt] = useState<string | null>(null);
+  const [configStatus, setConfigStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const restoredConfigRef = useRef(false);
+  const precheckRequestRef = useRef(0);
 
   const classificationTask = report?.task_type === "classification";
   const status = report ? READINESS_COPY[report.status] : null;
@@ -266,13 +280,14 @@ export default function TrainingReadinessModal({
       return { split: selectedSplit, sort_by: "relative_path", sort_order: "asc" };
     }
     if (scope === "selected") {
-      return { sample_ids: selectedSampleIds, sort_by: "relative_path", sort_order: "asc" };
+      return { sample_ids: configuredSelectedSampleIds, sort_by: "relative_path", sort_order: "asc" };
     }
-    return currentQuery;
-  }, [currentQuery, scope, selectedSampleIds, selectedSplit]);
+    return configuredQuery;
+  }, [configuredQuery, configuredSelectedSampleIds, scope, selectedSplit]);
 
   useEffect(() => {
     if (!open) {
+      precheckRequestRef.current += 1;
       setChecking(false);
       setDownloading(false);
       return;
@@ -281,45 +296,135 @@ export default function TrainingReadinessModal({
     setScope("filtered");
     setSelectedSplit("train");
     setIncludeEmpty(false);
+    setConfiguredQuery(currentQuery);
+    setConfiguredSelectedSampleIds(selectedSampleIds);
     setShowAdvanced(false);
     setPrecheck(null);
+    setDownloadCompleted(false);
     setExportError(null);
+    setRestoredSavedAt(null);
+    setConfigStatus("idle");
+    restoredConfigRef.current = false;
+    precheckRequestRef.current += 1;
   }, [open]);
 
   useEffect(() => {
-    if (report && isAnnotationExportFormat(report.recommended_export_format)) {
+    if (!open || !report || restoredConfigRef.current) {
+      return;
+    }
+    const lastConfig = report.last_config;
+    if (lastConfig && lastConfig.task_type === report.task_type) {
+      if (isAnnotationExportFormat(lastConfig.format)) {
+        setFormat(lastConfig.format);
+      }
+      setScope(lastConfig.scope);
+      setSelectedSplit(lastConfig.split ?? "train");
+      setIncludeEmpty(lastConfig.include_empty);
+      setConfiguredQuery(lastConfig.sample_query);
+      setConfiguredSelectedSampleIds(
+        lastConfig.sample_query.sample_ids ?? selectedSampleIds
+      );
+      setRestoredSavedAt(lastConfig.saved_at);
+    } else if (isAnnotationExportFormat(report.recommended_export_format)) {
       setFormat(report.recommended_export_format);
     }
-  }, [report]);
+    restoredConfigRef.current = true;
+  }, [open, report, selectedSampleIds]);
 
   useEffect(() => {
+    precheckRequestRef.current += 1;
+    setChecking(false);
     setPrecheck(null);
+    setDownloadCompleted(false);
     setExportError(null);
+    setConfigStatus("idle");
   }, [format, includeEmpty, sampleQuery]);
+
+  function buildTrainingConfig(
+    classMap: AnnotationExportPrecheckResponse["class_map"] = []
+  ): TrainingReadinessConfigInput {
+    if (classificationTask) {
+      return {
+        format: "csv",
+        scope: "all",
+        split: null,
+        include_empty: false,
+        sample_query: { sort_by: "relative_path", sort_order: "asc" },
+        class_map: []
+      };
+    }
+    return {
+      format,
+      scope,
+      split: scope === "split" ? selectedSplit : null,
+      include_empty: includeEmpty,
+      sample_query: sampleQuery,
+      class_map: classMap
+    };
+  }
+
+  async function persistConfig(
+    classMap: AnnotationExportPrecheckResponse["class_map"] = []
+  ) {
+    setConfigStatus("saving");
+    try {
+      const saved = await saveTrainingReadinessConfig(
+        datasetId,
+        buildTrainingConfig(classMap)
+      );
+      setRestoredSavedAt(saved.saved_at);
+      setConfigStatus("saved");
+    } catch {
+      setConfigStatus("error");
+    }
+  }
+
+  function selectScope(nextScope: TrainingReadinessScope) {
+    setScope(nextScope);
+    if (nextScope === "filtered") {
+      setConfiguredQuery(currentQuery);
+    }
+    if (nextScope === "selected" && selectedSampleIds.length > 0) {
+      setConfiguredSelectedSampleIds(selectedSampleIds);
+    }
+  }
 
   async function runPrecheck() {
     if (classificationTask) {
       setStep(4);
+      await persistConfig();
       return;
     }
-    if (scope === "selected" && selectedSampleIds.length === 0) {
+    if (scope === "selected" && configuredSelectedSampleIds.length === 0) {
       setExportError("请先在样本列表中选择至少一个样本。");
       return;
     }
     setStep(4);
     setChecking(true);
     setExportError(null);
+    const requestId = precheckRequestRef.current + 1;
+    precheckRequestRef.current = requestId;
     try {
-      setPrecheck(await precheckAnnotationExport(datasetId, {
+      const result = await precheckAnnotationExport(datasetId, {
         format,
         sample_query: sampleQuery,
         include_empty: includeEmpty
-      }));
+      });
+      if (precheckRequestRef.current !== requestId) {
+        return;
+      }
+      setPrecheck(result);
+      await persistConfig(result.class_map);
     } catch {
+      if (precheckRequestRef.current !== requestId) {
+        return;
+      }
       setPrecheck(null);
       setExportError("导出预检失败，请确认后端服务可用后重试。");
     } finally {
-      setChecking(false);
+      if (precheckRequestRef.current === requestId) {
+        setChecking(false);
+      }
     }
   }
 
@@ -339,6 +444,14 @@ export default function TrainingReadinessModal({
     setExportError(null);
     try {
       const result = await downloadAnnotationExport(datasetId, format, sampleQuery, includeEmpty);
+      try {
+        await recordTrainingExport(datasetId, buildTrainingConfig(precheck.class_map));
+      } catch {
+        triggerDownload(result.blob, result.filename);
+        setDownloadCompleted(true);
+        setConfigStatus("error");
+        return;
+      }
       triggerDownload(result.blob, result.filename);
       onClose();
     } catch {
@@ -443,7 +556,11 @@ export default function TrainingReadinessModal({
             </h3>
             <div className="mt-3 rounded-lg bg-white px-3 py-3">
               <div className="text-sm font-semibold text-ink">
-                {classificationTask ? "CSV 标签表" : FORMAT_OPTIONS[format]?.label ?? report.recommended_export_format}
+                {classificationTask
+                  ? "CSV 标签表"
+                  : isAnnotationExportFormat(report.recommended_export_format)
+                    ? FORMAT_OPTIONS[report.recommended_export_format].label
+                    : report.recommended_export_format}
               </div>
               <div className="mt-1 text-xs text-gray-500">根据当前任务类型自动推荐，下一步仍可调整</div>
             </div>
@@ -627,12 +744,12 @@ export default function TrainingReadinessModal({
               ["filtered", "当前筛选结果", "使用页面中正在查看的筛选条件"],
               ["all", "全部图片", "忽略页面筛选，导出所有图片"],
               ["split", "指定 split", "只导出 train、val、test 或未划分样本"],
-              ["selected", `已选样本（${selectedSampleIds.length}）`, "只导出样本列表中已选择的图片"]
-            ] as Array<[ExportScope, string, string]>).map(([value, label, description]) => (
+              ["selected", `已选样本（${configuredSelectedSampleIds.length}）`, "只导出样本列表中已选择的图片"]
+            ] as Array<[TrainingReadinessScope, string, string]>).map(([value, label, description]) => (
               <button
                 key={value}
                 type="button"
-                onClick={() => setScope(value)}
+                onClick={() => selectScope(value)}
                 className={`rounded-xl border p-3 text-left ${
                   scope === value ? "border-gray-900 bg-gray-50" : "border-line bg-white hover:border-gray-300"
                 }`}
@@ -673,7 +790,7 @@ export default function TrainingReadinessModal({
               <span className="mt-1 block text-xs leading-5 text-gray-500">启用后会为没有目标的图片生成空记录或空标签文件。</span>
             </span>
           </label>
-          {scope === "selected" && selectedSampleIds.length === 0 && (
+          {scope === "selected" && configuredSelectedSampleIds.length === 0 && (
             <div role="alert" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
               当前没有已选样本，请返回样本列表选择，或改用其他范围。
             </div>
@@ -794,7 +911,7 @@ export default function TrainingReadinessModal({
     );
   }
 
-  const canContinue = Boolean(report) && !(step === 3 && scope === "selected" && selectedSampleIds.length === 0);
+  const canContinue = Boolean(report) && !(step === 3 && scope === "selected" && configuredSelectedSampleIds.length === 0);
   const classificationBlocked = classificationTask && Boolean(report?.blocking_issue_count);
 
   return (
@@ -842,6 +959,36 @@ export default function TrainingReadinessModal({
               正在汇总训练准备状态
             </div>
           )}
+          {report && step >= 3 && (restoredSavedAt || configStatus !== "idle") && (
+            <div
+              role={configStatus === "error" ? "alert" : "status"}
+              className={`mb-4 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs leading-5 ${
+                configStatus === "error"
+                  ? "border-amber-200 bg-amber-50 text-amber-800"
+                  : configStatus === "saved"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : "border-line bg-gray-50 text-gray-600"
+              }`}
+            >
+              {configStatus === "saving" ? (
+                <Loader2 size={15} className="mt-0.5 shrink-0 animate-spin" />
+              ) : (
+                <Clock3 size={15} className="mt-0.5 shrink-0" />
+              )}
+              <span>
+                {configStatus === "saving" && "正在保存本次训练配置…"}
+                {configStatus === "saved" && "本次训练配置已保存，下次打开会自动恢复。"}
+                {configStatus === "error" && (
+                  downloadCompleted
+                    ? "文件已经下载，但未能记录最近导出时间；原始数据与下载内容不受影响。"
+                    : "本次配置未能保存；仍可查看预检结果，请确认服务状态后重试。"
+                )}
+                {configStatus === "idle" && restoredSavedAt && (
+                  <>已恢复上次配置 · {new Date(restoredSavedAt).toLocaleString()}</>
+                )}
+              </span>
+            </div>
+          )}
           {report && step === 1 && renderSummary()}
           {report && step === 2 && renderIssues()}
           {report && step === 3 && renderConfirmation()}
@@ -878,7 +1025,7 @@ export default function TrainingReadinessModal({
             {step === 4 && classificationTask && (
               <button
                 type="button"
-                onClick={onExportClassification}
+                onClick={() => onExportClassification(buildTrainingConfig())}
                 disabled={classificationBlocked}
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 text-sm font-semibold text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
               >
@@ -890,11 +1037,11 @@ export default function TrainingReadinessModal({
               <button
                 type="button"
                 onClick={() => void handleDownload()}
-                disabled={!precheck || precheck.blocked || checking || downloading}
+                disabled={!precheck || precheck.blocked || checking || downloading || downloadCompleted}
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 text-sm font-semibold text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
               >
                 {downloading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-                {downloading ? "生成中" : "确认并下载"}
+                {downloadCompleted ? "已下载" : downloading ? "生成中" : "确认并下载"}
               </button>
             )}
           </div>
