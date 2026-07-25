@@ -7,6 +7,7 @@ import {
   Image as ImageIcon,
   ListFilter,
   Loader2,
+  RefreshCw,
   Tags
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -111,6 +112,7 @@ export default function AnnotationPage() {
   const [navigationLoading, setNavigationLoading] = useState(false);
   const [sampleLoading, setSampleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [workspaceLoadFailed, setWorkspaceLoadFailed] = useState(false);
   const [draftState, setDraftState] = useState<AnnotationDraftState>(EMPTY_DRAFT_STATE);
   const [draftCommand, setDraftCommand] = useState<AnnotationDraftCommand | null>(null);
   const [focusCommand, setFocusCommand] = useState<AnnotationFocusCommand | null>(null);
@@ -119,6 +121,7 @@ export default function AnnotationPage() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [creatingClass, setCreatingClass] = useState(false);
   const [lastAdvanceMs, setLastAdvanceMs] = useState<number | null>(null);
+  const [sessionCompletedCount, setSessionCompletedCount] = useState(0);
   const [autoSaveOnNavigation, setAutoSaveOnNavigation] = useState(() => {
     try {
       return window.localStorage.getItem(AUTO_SAVE_ON_NAVIGATION_KEY) === "true";
@@ -276,6 +279,7 @@ export default function AnnotationPage() {
     setSampleLoading(!initialLoad);
     setNavigationLoading(true);
     setError(null);
+    setWorkspaceLoadFailed(false);
     try {
       const targetSampleId = Number.isFinite(requestedSampleId) && requestedSampleId > 0 ? requestedSampleId : null;
       const [nextDataset, nextAnnotationClasses, nextNavigation] = await Promise.all([
@@ -382,6 +386,7 @@ export default function AnnotationPage() {
       if (requestId === workspaceRequestIdRef.current) {
         pendingAdvanceRef.current = null;
         pendingNavigationStatusRef.current = null;
+        setWorkspaceLoadFailed(true);
         setStatus("标注工作区加载失败");
         setError("标注工作区加载失败");
       }
@@ -570,21 +575,42 @@ export default function AnnotationPage() {
     }
     setSaving(true);
     setError(null);
+    setWorkspaceLoadFailed(false);
     try {
-      const saved = await replaceSampleAnnotations(sample.id, {
-        annotations: saveMode === "confirm_empty" ? [] : buildSavePayload(),
-        save_mode: saveMode
-      });
+      let saved: AnnotationObject[];
+      try {
+        saved = await replaceSampleAnnotations(sample.id, {
+          annotations: saveMode === "confirm_empty" ? [] : buildSavePayload(),
+          save_mode: saveMode
+        });
+      } catch {
+        setStatus("保存失败，修改仍保留，可修正后重试");
+        setError("标注保存失败；当前修改仍保留，请检查对象类别、坐标或服务连接后重试");
+        return false;
+      }
       annotationCacheRef.current.set(sample.id, Promise.resolve(saved));
       reset(normalizeObjects(saved));
       setActiveObjectId(saved[0]?.client_id ?? null);
       setClean();
-      const [nextSample, nextAnnotationClasses] = await Promise.all([
-        getSample(sample.id),
-        listAnnotationClasses(datasetId)
-      ]);
-      setSample(nextSample);
-      setAnnotationClasses(nextAnnotationClasses);
+      setSample((current) => current ? {
+        ...current,
+        annotation_progress:
+          saveMode === "complete"
+            ? "completed_with_objects"
+            : saveMode === "confirm_empty"
+              ? "completed_empty"
+              : "in_progress",
+        review_status:
+          saveMode !== "draft" && current.review_status === "not_reviewed"
+            ? "in_review"
+            : current.review_status
+      } : current);
+      if (
+        !sampleCompleted
+        && (saveMode === "complete" || saveMode === "confirm_empty")
+      ) {
+        setSessionCompletedCount((current) => current + 1);
+      }
       setStatus(
         saveMode === "complete"
           ? "已标记为完成（有对象）"
@@ -592,10 +618,19 @@ export default function AnnotationPage() {
             ? "已确认无目标"
             : "标注草稿已保存"
       );
+      try {
+        const [nextSample, nextAnnotationClasses] = await Promise.all([
+          getSample(sample.id),
+          listAnnotationClasses(datasetId)
+        ]);
+        setSample(nextSample);
+        setAnnotationClasses(nextAnnotationClasses);
+      } catch {
+        setWorkspaceLoadFailed(true);
+        setStatus("标注已保存，状态刷新未完成");
+        setError("标注已保存，但工作区状态刷新失败；可重新加载确认最新状态");
+      }
       return true;
-    } catch {
-      setError("标注保存失败，请检查对象类别和坐标是否有效");
-      return false;
     } finally {
       setSaving(false);
     }
@@ -1143,7 +1178,22 @@ export default function AnnotationPage() {
         </div>
       </header>
 
-      {error && <div role="alert" className="shrink-0 border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+      {error && (
+        <div role="alert" className="flex shrink-0 items-center justify-between gap-3 border-b border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+          <span>{error}</span>
+          {workspaceLoadFailed && (
+            <button
+              type="button"
+              onClick={() => void loadWorkspace()}
+              disabled={loading || navigationLoading}
+              className="inline-flex min-h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 transition hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RefreshCw size={14} />
+              重新加载工作区
+            </button>
+          )}
+        </div>
+      )}
       <section className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
         <AnnotationToolbar
           tool={tool}
@@ -1213,7 +1263,8 @@ export default function AnnotationPage() {
         <div className="flex items-center justify-between gap-3">
           <span className="truncate">{status}</span>
           <span className="shrink-0">
-            {lastAdvanceMs !== null ? `上次推进 ${lastAdvanceMs} ms` : "快捷键在右上角帮助中查看"}
+            本次完成 {sessionCompletedCount}
+            {lastAdvanceMs !== null ? ` · 上次推进 ${lastAdvanceMs} ms` : " · 快捷键在右上角帮助中查看"}
           </span>
         </div>
       </footer>
