@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
@@ -204,29 +205,92 @@ def get_sample_navigation(
     split: str | None = None,
     review_status: str | None = None,
     annotation_progress: str | None = None,
+    queue_scope: str = "current_filter",
     sort_by: str = "created_at",
     sort_order: str = "desc",
 ) -> SampleNavigationResponse:
     safe_sort_by = sort_by if sort_by in SORTABLE_SAMPLE_FIELDS else "created_at"
     safe_sort_order = "asc" if sort_order.lower() == "asc" else "desc"
-    context_status = "duplicate" if file_status == "duplicate" else "normal"
+    safe_queue_scope = (
+        queue_scope
+        if queue_scope in {"all_pending", "current_filter", "current_split"}
+        else "current_filter"
+    )
+    context_status = (
+        "duplicate"
+        if safe_queue_scope == "current_filter" and file_status == "duplicate"
+        else "normal"
+    )
+    queue_split = split
+    if safe_queue_scope == "current_split" and not queue_split and sample_id is not None:
+        current_sample = session.get(Sample, sample_id)
+        if current_sample and current_sample.dataset_id == dataset_id:
+            queue_split = current_sample.split or "unassigned"
+
+    use_index_queue = safe_queue_scope in {"all_pending", "current_split"} or (
+        safe_queue_scope == "current_filter"
+        and context_status == "normal"
+        and not search
+        and not tag
+    )
+    if use_index_queue:
+        sample_ids = _get_queue_ids(
+            session,
+            dataset_id,
+            split=(
+                queue_split
+                if safe_queue_scope == "current_split"
+                else split if safe_queue_scope == "current_filter" else None
+            ),
+            review_status=review_status if safe_queue_scope == "current_filter" else None,
+            annotation_progress=annotation_progress if safe_queue_scope == "current_filter" else None,
+            pending_only=safe_queue_scope in {"all_pending", "current_split"},
+            sort_by=safe_sort_by,
+            sort_order=safe_sort_order,
+        )
+        current_index = None
+        if sample_id is not None:
+            current_index = next((index for index, item_id in enumerate(sample_ids) if item_id == sample_id), None)
+        elif sample_ids:
+            current_index = 0
+        current_id = sample_ids[current_index] if current_index is not None else None
+        previous_id = sample_ids[current_index - 1] if current_index is not None and current_index > 0 else None
+        next_id = (
+            sample_ids[current_index + 1]
+            if current_index is not None and current_index < len(sample_ids) - 1
+            else None
+        )
+        current_sample = session.get(Sample, current_id) if current_id is not None else None
+        previous_sample = session.get(Sample, previous_id) if previous_id is not None else None
+        next_sample = session.get(Sample, next_id) if next_id is not None else None
+        return SampleNavigationResponse(
+            current_sample=to_sample_read(current_sample) if current_sample else None,
+            previous_sample=to_sample_read(previous_sample) if previous_sample else None,
+            next_sample=to_sample_read(next_sample) if next_sample else None,
+            current_index=current_index,
+            total=len(sample_ids),
+            remaining=max(len(sample_ids) - (1 if current_index is not None else 0), 0),
+            queue_scope=safe_queue_scope,
+            sort_by=safe_sort_by,
+            sort_order=safe_sort_order,
+        )
+
     samples = get_filtered_samples(
         session,
         dataset_id,
-        search=search,
+        search=search if safe_queue_scope == "current_filter" else None,
         file_type="image",
         file_status=context_status,
-        tag=tag,
-        split=split,
-        review_status=review_status,
-        annotation_progress=annotation_progress,
+        tag=tag if safe_queue_scope == "current_filter" else None,
+        split=queue_split if safe_queue_scope != "all_pending" else None,
+        review_status=review_status if safe_queue_scope == "current_filter" else None,
+        annotation_progress=annotation_progress if safe_queue_scope == "current_filter" else None,
         sort_by=safe_sort_by,
         sort_order=safe_sort_order,
     )
     # The duplicate status is a virtual filter. Keep the annotation workspace
     # constrained to normal image files after duplicate hash filtering.
     samples = [sample for sample in samples if sample.file_type == "image" and sample.file_status == "normal"]
-
     current_index: int | None = None
     if sample_id is not None:
         current_index = next((index for index, sample in enumerate(samples) if sample.id == sample_id), None)
@@ -243,9 +307,53 @@ def get_sample_navigation(
         next_sample=to_sample_read(next_sample) if next_sample else None,
         current_index=current_index,
         total=len(samples),
+        remaining=max(len(samples) - (1 if current_index is not None else 0), 0),
+        queue_scope=safe_queue_scope,
         sort_by=safe_sort_by,
         sort_order=safe_sort_order,
     )
+
+
+def _get_queue_ids(
+    session: Session,
+    dataset_id: int,
+    split: str | None,
+    review_status: str | None,
+    annotation_progress: str | None,
+    pending_only: bool,
+    sort_by: str,
+    sort_order: str,
+) -> list[int]:
+    sort_column = getattr(Sample, sort_by)
+    statement = select(Sample.id, sort_column).where(
+        Sample.dataset_id == dataset_id,
+        Sample.file_type == "image",
+        Sample.file_status == "normal",
+    )
+    if pending_only:
+        statement = statement.where(
+            or_(
+                Sample.annotation_progress.in_(("not_started", "in_progress")),
+                Sample.annotation_progress.is_(None),
+                ~Sample.annotation_progress.in_(tuple(ANNOTATION_PROGRESS_STATUSES)),
+            )
+        )
+    elif annotation_progress:
+        statement = statement.where(Sample.annotation_progress == annotation_progress)
+    if review_status:
+        statement = statement.where(Sample.review_status == review_status)
+    if split == "unassigned":
+        statement = statement.where(Sample.split.is_(None))
+    elif split:
+        statement = statement.where(Sample.split == split)
+    rows = session.exec(statement).all()
+    reverse = sort_order != "asc"
+    sorted_rows = sorted(
+        rows,
+        key=lambda row: row[1].casefold() if isinstance(row[1], str) else row[1] if row[1] is not None else "",
+        reverse=reverse,
+    )
+    return [int(row[0]) for row in sorted_rows if row[0] is not None]
 
 
 def get_sample_or_404(session: Session, sample_id: int) -> Sample:

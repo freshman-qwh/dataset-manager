@@ -11,6 +11,7 @@ import type {
   AnnotationClass,
   AnnotationClassCreate,
   AnnotationObject,
+  AnnotationQueueScope,
   AnnotationReplaceRequest,
   AnnotationTagSyncResult,
   Dataset,
@@ -156,8 +157,13 @@ export async function listSamples(params: SampleQuery): Promise<SampleListRespon
   return data;
 }
 
-export async function getSampleNavigation(params: Omit<SampleQuery, "fileType" | "page" | "pageSize"> & { sampleId?: number | null }): Promise<SampleNavigationResponse> {
-  const { datasetId, sampleId, search, fileStatus, tag, split, reviewStatus, annotationProgress, sortBy, sortOrder } = params;
+export async function getSampleNavigation(
+  params: Omit<SampleQuery, "fileType" | "page" | "pageSize"> & {
+    sampleId?: number | null;
+    queueScope?: AnnotationQueueScope;
+  }
+): Promise<SampleNavigationResponse> {
+  const { datasetId, sampleId, search, fileStatus, tag, split, reviewStatus, annotationProgress, queueScope, sortBy, sortOrder } = params;
   const { data } = await client.get<SampleNavigationResponse>(`/datasets/${datasetId}/samples/navigation`, {
     params: {
       sample_id: sampleId || undefined,
@@ -167,6 +173,7 @@ export async function getSampleNavigation(params: Omit<SampleQuery, "fileType" |
       split: split || undefined,
       review_status: reviewStatus || undefined,
       annotation_progress: annotationProgress || undefined,
+      queue_scope: queueScope || undefined,
       sort_by: sortBy,
       sort_order: sortOrder
     }

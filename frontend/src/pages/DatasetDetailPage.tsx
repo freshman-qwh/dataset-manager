@@ -76,6 +76,7 @@ import type {
   Tag
 } from "../types/dataset";
 import type { AnnotationExportFormat } from "../types/annotationExport";
+import { buildDefaultPendingQueue, buildReviewQueue, readAnnotationQueue } from "../utils/annotationQueue";
 import { reviewStatusCopy, uiCopy } from "../utils/uiCopy";
 
 function formatBytes(value: number): string {
@@ -246,14 +247,20 @@ export default function DatasetDetailPage() {
   const unavailableCount = missingCount + permissionDeniedCount;
   const duplicateSampleCount = stats?.duplicate_samples ?? 0;
   const duplicateGroupCount = stats?.duplicate_groups ?? 0;
-  const annotatedSamples = stats?.samples_with_objects ?? 0;
+  const completedGeometrySamples =
+    (stats?.by_annotation_progress.completed_empty ?? 0)
+    + (stats?.by_annotation_progress.completed_with_objects ?? 0);
   const annotationCount = stats?.annotation_count ?? 0;
   const tagCount = useMemo(() => Object.keys(stats?.tag_counts ?? {}).length, [stats]);
   const geometryTask = dataset?.task_capabilities.supported === true && dataset.task_capabilities.annotation_mode === "geometry";
   const classificationTask = dataset?.task_type === "classification";
+  const storedAnnotationQueue = useMemo(
+    () => geometryTask ? readAnnotationQueue(datasetId) : null,
+    [datasetId, geometryTask]
+  );
   const taskCompletedSamples = classificationTask
     ? Math.max((stats?.sample_count ?? 0) - (stats?.untagged_samples ?? 0), 0)
-    : annotatedSamples;
+    : completedGeometrySamples;
   const workflowTotal = classificationTask ? stats?.sample_count ?? 0 : imageCount;
   const workflowPending = Math.max(workflowTotal - taskCompletedSamples, 0);
   const rejectedCount = stats?.by_review_status.rejected ?? 0;
@@ -392,6 +399,8 @@ export default function DatasetDetailPage() {
     }
     const params = new URLSearchParams({
       sample: String(sample.id),
+      queue: "current_filter",
+      resume: "1",
       sortBy,
       sortOrder
     });
@@ -452,20 +461,10 @@ export default function DatasetDetailPage() {
       return;
     }
 
-    const nextProgress = (stats?.by_annotation_progress.in_progress ?? 0) > 0
-      ? "in_progress"
-      : (stats?.by_annotation_progress.not_started ?? 0) > 0
-        ? "not_started"
-        : undefined;
-    const query = new URLSearchParams({
-      fileStatus: "normal",
-      sortBy: "created_at",
-      sortOrder: "asc"
-    });
-    if (nextProgress) {
-      query.set("annotationProgress", nextProgress);
-    }
-    navigate(`/datasets/${datasetId}/annotate?${query.toString()}`);
+    const query = workflowPending > 0
+      ? storedAnnotationQueue?.query ?? buildDefaultPendingQueue()
+      : buildReviewQueue(storedAnnotationQueue);
+    navigate(`/datasets/${datasetId}/annotate?${query}`);
   }
 
   const primaryActionLabel = !dataset
@@ -480,7 +479,9 @@ export default function DatasetDetailPage() {
             ? "处理不可用文件"
             : classificationTask
               ? workflowPending > 0 ? "整理未分类样本" : "查看分类结果"
-              : workflowPending > 0 ? "继续标注" : "复查标注结果";
+              : workflowPending > 0
+                ? storedAnnotationQueue ? "继续标注" : "开始标注"
+                : "复查标注结果";
 
   async function handleSave(payload: { split: string | null; notes: string | null; tags: string[] }) {
     if (!selected) {

@@ -1,6 +1,7 @@
 export type DatasetTaskType = "detection" | "segmentation" | "classification";
 export type AnnotationProgress = "not_started" | "in_progress" | "completed_empty" | "completed_with_objects";
 export type ReviewStatus = "not_reviewed" | "in_review" | "approved" | "rejected";
+export type AnnotationQueueScope = "all_pending" | "current_filter" | "current_split";
 
 export interface DatasetTaskCapabilities {
   label: string;
@@ -117,6 +118,8 @@ export interface SampleNavigationResponse {
   next_sample: Sample | null;
   current_index: number | null;
   total: number;
+  remaining: number;
+  queue_scope: AnnotationQueueScope;
   sort_by: string;
   sort_order: "asc" | "desc" | string;
 }

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -111,5 +112,7 @@ class SampleNavigationResponse(BaseModel):
     next_sample: SampleRead | None = None
     current_index: int | None = None
     total: int
+    remaining: int
+    queue_scope: Literal["all_pending", "current_filter", "current_split"]
     sort_by: str
     sort_order: str

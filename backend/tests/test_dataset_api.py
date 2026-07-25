@@ -326,6 +326,8 @@ def test_sample_navigation_uses_context_and_skips_non_normal_images(tmp_path: Pa
         assert navigation.status_code == 200
         payload = navigation.json()
         assert payload["total"] == 2
+        assert payload["remaining"] == 1
+        assert payload["queue_scope"] == "current_filter"
         assert payload["current_index"] == 0
         assert payload["current_sample"]["filename"] == "a.png"
         assert payload["previous_sample"] is None
@@ -340,8 +342,106 @@ def test_sample_navigation_uses_context_and_skips_non_normal_images(tmp_path: Pa
             },
         ).json()
         assert second_navigation["current_index"] == 1
+        assert second_navigation["remaining"] == 1
         assert second_navigation["previous_sample"]["filename"] == "a.png"
         assert second_navigation["next_sample"] is None
+
+    app.dependency_overrides.clear()
+
+
+def test_sample_navigation_supports_pending_filter_and_split_queues(tmp_path: Path):
+    data_root = tmp_path / "navigation-queues"
+    data_root.mkdir()
+    for filename in ["a.png", "b.png", "c.png", "d.png"]:
+        (data_root / filename).write_bytes(PNG_1X1)
+
+    with make_client() as client:
+        dataset = client.post(
+            "/api/datasets",
+            json={"name": "Navigation queues", "root_path": str(data_root)},
+        ).json()
+        assert client.post(
+            f"/api/datasets/{dataset['id']}/scan",
+            json={"folder_path": str(data_root)},
+        ).status_code == 200
+        samples = client.get(
+            f"/api/datasets/{dataset['id']}/samples",
+            params={"sort_by": "filename", "sort_order": "asc"},
+        ).json()["items"]
+        by_name = {sample["filename"]: sample for sample in samples}
+
+        for filename, split, progress in [
+            ("a.png", "train", "not_started"),
+            ("b.png", "train", "in_progress"),
+            ("c.png", "train", "completed_with_objects"),
+            ("d.png", "val", "not_started"),
+        ]:
+            response = client.patch(
+                f"/api/samples/{by_name[filename]['id']}",
+                json={"split": split, "annotation_progress": progress},
+            )
+            assert response.status_code == 200
+
+        all_pending = client.get(
+            f"/api/datasets/{dataset['id']}/samples/navigation",
+            params={
+                "queue_scope": "all_pending",
+                "search": "d.png",
+                "split": "val",
+                "sort_by": "filename",
+                "sort_order": "asc",
+            },
+        ).json()
+        assert all_pending["queue_scope"] == "all_pending"
+        assert all_pending["total"] == 3
+        assert all_pending["remaining"] == 2
+        assert all_pending["current_sample"]["filename"] == "a.png"
+        assert all_pending["next_sample"]["filename"] == "b.png"
+
+        current_filter = client.get(
+            f"/api/datasets/{dataset['id']}/samples/navigation",
+            params={
+                "queue_scope": "current_filter",
+                "search": "d.png",
+                "sort_by": "filename",
+                "sort_order": "asc",
+            },
+        ).json()
+        assert current_filter["total"] == 1
+        assert current_filter["remaining"] == 0
+        assert current_filter["current_sample"]["filename"] == "d.png"
+
+        current_split = client.get(
+            f"/api/datasets/{dataset['id']}/samples/navigation",
+            params={
+                "queue_scope": "current_split",
+                "sample_id": by_name["b.png"]["id"],
+                "search": "d.png",
+                "review_status": "approved",
+                "annotation_progress": "completed_with_objects",
+                "sort_by": "filename",
+                "sort_order": "asc",
+            },
+        ).json()
+        assert current_split["queue_scope"] == "current_split"
+        assert current_split["total"] == 2
+        assert current_split["current_index"] == 1
+        assert current_split["remaining"] == 1
+        assert current_split["previous_sample"]["filename"] == "a.png"
+
+        completed_outside_queue = client.get(
+            f"/api/datasets/{dataset['id']}/samples/navigation",
+            params={
+                "queue_scope": "current_split",
+                "sample_id": by_name["c.png"]["id"],
+                "sort_by": "filename",
+                "sort_order": "asc",
+            },
+        ).json()
+        assert completed_outside_queue["total"] == 2
+        assert completed_outside_queue["current_index"] is None
+        assert completed_outside_queue["remaining"] == 2
+        assert completed_outside_queue["current_sample"] is None
 
     app.dependency_overrides.clear()
 

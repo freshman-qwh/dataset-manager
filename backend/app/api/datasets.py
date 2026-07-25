@@ -130,6 +130,10 @@ def dataset_sample_navigation(
         default=None,
         pattern="^(not_started|in_progress|completed_empty|completed_with_objects)$",
     ),
+    queue_scope: str = Query(
+        default="current_filter",
+        pattern="^(all_pending|current_filter|current_split)$",
+    ),
     sort_by: str = Query(default="created_at"),
     sort_order: str = Query(default="desc", pattern="^(asc|desc)$"),
     session: Session = Depends(get_session),
@@ -145,6 +149,7 @@ def dataset_sample_navigation(
         split=split,
         review_status=review_status,
         annotation_progress=annotation_progress,
+        queue_scope=queue_scope,
         sort_by=sort_by,
         sort_order=sort_order,
     )
