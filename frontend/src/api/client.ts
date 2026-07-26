@@ -48,6 +48,7 @@ import type {
   DatabaseRepairPreview,
   DatabaseRepairResult
 } from "../types/system";
+import type { Job, JobListResponse } from "../types/job";
 
 export const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8000/api";
@@ -59,6 +60,21 @@ const client = axios.create({
 
 export async function listDatasets(): Promise<Dataset[]> {
   const { data } = await client.get<Dataset[]>("/datasets");
+  return data;
+}
+
+export async function listJobs(limit = 100): Promise<JobListResponse> {
+  const { data } = await client.get<JobListResponse>("/jobs", { params: { limit } });
+  return data;
+}
+
+export async function cancelJob(jobId: number): Promise<Job> {
+  const { data } = await client.post<Job>(`/jobs/${jobId}/cancel`);
+  return data;
+}
+
+export async function retryJob(jobId: number): Promise<Job> {
+  const { data } = await client.post<Job>(`/jobs/${jobId}/retry`);
   return data;
 }
 

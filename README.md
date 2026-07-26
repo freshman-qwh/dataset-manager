@@ -8,7 +8,7 @@
 - 产品价值是让个人研究者无需部署团队协作平台，也能安全、直观地获得可训练、可复核、可复现的数据集。
 - 视频和 CSV 当前只作为通用样本资产登记与筛选对象，不扩展为视频逐帧标注或表格标注平台。
 - MVP 不追求复刻 CVAT / Label Studio 的项目、任务、权限和在线协作体系，也不以增加更多图形工具为主要目标。
-- 下一阶段优先收敛状态语义、连续标注和“准备训练”闭环；详细计划见 `TODO.md` 与 `docs/product-architecture-ux-performance-review.md`。
+- 下一阶段优先把增量扫描安全迁移到已完成的本地任务中心；详细计划见 `TODO.md` 与 `docs/post-ux-d-roadmap.md`。
 
 ## 已实现功能
 
@@ -30,6 +30,7 @@
 - 样本记录删除：单选/多选删除数据库元数据，不删除本地原始文件
 - CSV/JSON 元数据导入：批量写入标签、split、备注和自定义属性
 - 数据集统计、manifest JSON、CSV 标签表，以及 LabelMe、COCO detection/segmentation、YOLO detection/segmentation、Pascal VOC 标注导出
+- Alembic 安全迁移、数据库完整性预览/显式修复，以及支持进度、取消、重试和重启恢复的本地任务中心
 - React + TypeScript + Vite + Tailwind 前端
 - 数据集列表、创建弹窗、详情页、样本网格、详情侧边栏、标签管理、搜索筛选
 
