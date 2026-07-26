@@ -85,7 +85,9 @@ const EXPORT_STAGE_COPY: Record<string, string> = {
 function usesExportJob(format: AnnotationExportFormat): format is TaskExportFormat {
   return format === "labelme"
     || format === "coco_detection"
-    || format === "coco_segmentation";
+    || format === "coco_segmentation"
+    || format === "yolo_detection"
+    || format === "yolo_segmentation";
 }
 
 function triggerDownload(blob: Blob, filename: string) {

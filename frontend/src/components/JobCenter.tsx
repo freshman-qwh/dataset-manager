@@ -86,7 +86,9 @@ function annotationExportSummary(job: Job): string | null {
   const formatCopy: Record<string, string> = {
     labelme: "LabelMe",
     coco_detection: "COCO detection",
-    coco_segmentation: "COCO segmentation"
+    coco_segmentation: "COCO segmentation",
+    yolo_detection: "YOLO detection",
+    yolo_segmentation: "YOLO segmentation"
   };
   return `${formatCopy[format] ?? format} · ${sampleCount} 个样本${typeof size === "number" ? ` · ${Math.ceil(size / 1024)} KiB` : ""}`;
 }

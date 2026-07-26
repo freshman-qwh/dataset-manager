@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlmodel import Session, SQLModel
 
-from app.api import annotation_exports, annotations, datasets, jobs
+from app.api import annotation_exports, annotations, datasets, jobs, samples
 from app.core.database import create_legacy_baseline_tables, get_session
 from app.models.dataset import Dataset
 from app.services import (
@@ -41,6 +41,7 @@ def _png_bytes(width: int = 32, height: int = 24) -> bytes:
 def _make_app(engine) -> FastAPI:
     app = FastAPI()
     app.include_router(datasets.router)
+    app.include_router(samples.router)
     app.include_router(annotations.router)
     app.include_router(annotation_exports.router)
     app.include_router(jobs.router)
@@ -61,7 +62,9 @@ def _create_export_dataset(
 ) -> int:
     raw_root.mkdir()
     for index in range(count):
-        (raw_root / f"sample-{index:02}.png").write_bytes(_png_bytes())
+        (raw_root / f"sample-{index:02}.png").write_bytes(
+            _png_bytes() + bytes([index])
+        )
     created = client.post(
         "/api/datasets",
         json={"name": "Async LabelMe", "root_path": str(raw_root)},
@@ -77,7 +80,11 @@ def _create_export_dataset(
         params={"page_size": 200, "sort_by": "relative_path", "sort_order": "asc"},
     )
     assert listed.status_code == 200
-    for sample in listed.json()["items"]:
+    for index, sample in enumerate(listed.json()["items"]):
+        assert client.patch(
+            f"/api/samples/{sample['id']}",
+            json={"split": "train" if index % 2 == 0 else "val"},
+        ).status_code == 200
         saved = client.put(
             f"/api/samples/{sample['id']}/annotations",
             json={
@@ -143,6 +150,8 @@ def test_coco_json_file_writer_preserves_bytes_and_checks_large_output(
         ("labelme", "application/zip"),
         ("coco_detection", "application/json"),
         ("coco_segmentation", "application/json"),
+        ("yolo_detection", "application/zip"),
+        ("yolo_segmentation", "application/zip"),
     ],
 )
 def test_annotation_export_job_freezes_request_and_matches_sync_artifact(
@@ -216,12 +225,22 @@ def test_annotation_export_job_freezes_request_and_matches_sync_artifact(
             params={"format": export_format},
         )
         assert synchronous.status_code == 200
-        if export_format == "labelme":
+        if export_format not in {"coco_detection", "coco_segmentation"}:
             assert _archive_contents(downloaded.content) == _archive_contents(
                 synchronous.content
             )
         else:
             assert downloaded.content == synchronous.content
+        if export_format in {"yolo_detection", "yolo_segmentation"}:
+            archive = _archive_contents(downloaded.content)
+            assert "classes.txt" in archive
+            assert "data.yaml" in archive
+            assert "export_report.json" in archive
+            assert "labels/train/sample-00.txt" in archive
+            assert "labels/val/sample-01.txt" in archive
+            assert f"task: {'detect' if export_format == 'yolo_detection' else 'segment'}" in archive[
+                "data.yaml"
+            ].decode("utf-8")
         assert {path.name: path.read_bytes() for path in raw_root.iterdir()} == before
         assert not list(artifact_root.rglob("*.part"))
 
@@ -230,7 +249,13 @@ def test_annotation_export_job_freezes_request_and_matches_sync_artifact(
 
 @pytest.mark.parametrize(
     "export_format",
-    ["labelme", "coco_detection", "coco_segmentation"],
+    [
+        "labelme",
+        "coco_detection",
+        "coco_segmentation",
+        "yolo_detection",
+        "yolo_segmentation",
+    ],
 )
 def test_cancelled_annotation_export_removes_partial_artifact(
     tmp_path: Path,
@@ -303,7 +328,13 @@ def test_cancelled_annotation_export_removes_partial_artifact(
 
 @pytest.mark.parametrize(
     "export_format",
-    ["labelme", "coco_detection", "coco_segmentation"],
+    [
+        "labelme",
+        "coco_detection",
+        "coco_segmentation",
+        "yolo_detection",
+        "yolo_segmentation",
+    ],
 )
 def test_annotation_export_job_failure_cleans_partial_artifact(
     tmp_path: Path,
@@ -362,9 +393,100 @@ def test_annotation_export_job_failure_cleans_partial_artifact(
     engine.dispose()
 
 
+def test_yolo_export_job_retry_reuses_snapshot_and_publishes_artifact(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    engine = create_engine(
+        f"sqlite:///{(tmp_path / 'retry-yolo.db').as_posix()}",
+        connect_args={"check_same_thread": False},
+    )
+    SQLModel.metadata.create_all(engine)
+    artifact_root = tmp_path / "artifacts"
+    monkeypatch.setattr(
+        job_artifact_service,
+        "job_artifact_root",
+        lambda: artifact_root,
+    )
+    app = _make_app(engine)
+    original_export = annotation_export_service.export_annotations_to_path
+
+    with TestClient(app) as client:
+        dataset_id = _create_export_dataset(client, tmp_path / "raw")
+        created = client.post(
+            f"/api/datasets/{dataset_id}/annotation-export-jobs",
+            json={
+                "format": "yolo_detection",
+                "sample_query": {
+                    "split": "train",
+                    "sort_by": "relative_path",
+                    "sort_order": "asc",
+                },
+            },
+        ).json()
+        job_id = created["job"]["id"]
+
+        def failed_export(*args, **kwargs):
+            destination = args[3]
+            destination.write_bytes(b"partial archive")
+            raise OSError("simulated retryable failure")
+
+        monkeypatch.setattr(
+            annotation_export_service,
+            "export_annotations_to_path",
+            failed_export,
+        )
+        runner = JobRunner(engine)
+        runner.register_handler(
+            annotation_export_job_service.ANNOTATION_EXPORT_JOB_TYPE,
+            annotation_export_job_service.run_annotation_export_job,
+        )
+        assert runner.run_once() is True
+        assert client.get(f"/api/jobs/{job_id}").json()["status"] == "failed"
+        assert not (artifact_root / f"job-{job_id}").exists()
+
+        monkeypatch.setattr(
+            annotation_export_service,
+            "export_annotations_to_path",
+            original_export,
+        )
+        retried_response = client.post(f"/api/jobs/{job_id}/retry")
+        assert retried_response.status_code == 201
+        retried = retried_response.json()
+        assert retried["retry_of_id"] == job_id
+        assert retried["parameters"] == created["job"]["parameters"]
+        assert runner.run_once() is True
+
+        completed = client.get(f"/api/jobs/{retried['id']}").json()
+        assert completed["status"] == "succeeded"
+        downloaded = client.get(f"/api/jobs/{retried['id']}/artifact")
+        assert downloaded.status_code == 200
+        synchronous = client.get(
+            f"/api/datasets/{dataset_id}/annotation-export",
+            params={
+                "format": "yolo_detection",
+                "split": "train",
+                "sort_by": "relative_path",
+                "sort_order": "asc",
+            },
+        )
+        assert synchronous.status_code == 200
+        assert _archive_contents(downloaded.content) == _archive_contents(
+            synchronous.content
+        )
+
+    engine.dispose()
+
+
 @pytest.mark.parametrize(
     "export_format",
-    ["labelme", "coco_detection", "coco_segmentation"],
+    [
+        "labelme",
+        "coco_detection",
+        "coco_segmentation",
+        "yolo_detection",
+        "yolo_segmentation",
+    ],
 )
 def test_annotation_export_job_rejects_unmigrated_database(
     tmp_path: Path,

@@ -30,7 +30,7 @@
 - 基线日期：`2026-07-26`
 - 当前能力：数据集创建、增量扫描、样本登记、标签体系、批量 split、搜索筛选、预览增强、重复样本识别、元数据导入、统计、manifest、图片几何标注、数据质量工作台，以及 LabelMe、COCO detection/segmentation、YOLO detection/segmentation、Pascal VOC 标注导出。
 - 标注基线：已具备 annotation 表、读取/全量替换保存 API、保存前几何校验、统一质量报告、统一导出预检与真实训练格式导出、manifest annotations、SVG 标注页、矩形/polygon/点、对象列表、类别与常用对象属性编辑、隐藏/锁定、删除、撤销/重做、快捷键、适配画布，以及可恢复的连续标注队列、明确的草稿/完成/无目标动作和有界相邻预取。
-- 当前目标：`F2-3A/F2-3B/F2-3C/F2-3D1` 已完成应用内有界产物以及 LabelMe、COCO detection/segmentation 任务化；下一切片迁移 YOLO detection/segmentation，并验收 split 目录、类别配置、取消清理和重试。
+- 当前目标：`F2-3A/F2-3B/F2-3C/F2-3D1/F2-3D2` 已完成应用内有界产物以及 LabelMe、COCO、YOLO detection/segmentation 任务化；下一切片迁移 Pascal VOC，完成 100k 容量/峰值内存、磁盘失败、下载过期和训练准备向导任务路径统一验收。
 
 ## 评审后的实施顺序
 
@@ -226,8 +226,8 @@ UX-D 完成门槛：
   - [x] `F2-3C` 前端主流程切换到 LabelMe 导出任务，支持活动任务/成功产物恢复、阶段进度、失败状态和下载；任务中心提供产物下载，未迁移旧库收到 409 后明确回退同步兼容。
   - [ ] `F2-3D` 逐项迁移 COCO、YOLO、VOC，完成 100k 容量/内存基准和同步产物一致性对照。
     - [x] `F2-3D1` 抽取可复用任务导出适配边界，迁移 COCO detection/segmentation；JSON 使用约 1 MiB 有界编码缓冲直接写入任务产物，真实副本两种异步产物与同步 API SHA-256 一致。
-    - [ ] `F2-3D2` 迁移 YOLO detection/segmentation，验收 split 目录、类别文件、data.yaml、取消清理和任务重试。
-    - [ ] `F2-3D3` 迁移 Pascal VOC，完成 100k 隔离容量/峰值内存、同步产物一致性、磁盘失败和下载过期验收。
+    - [x] `F2-3D2` 迁移 YOLO detection/segmentation，验收 split 目录、类别文件、data.yaml、取消清理和任务重试。
+    - [ ] `F2-3D3` 迁移 Pascal VOC，完成 100k 隔离容量/峰值内存、同步产物一致性、磁盘失败、下载过期及训练准备向导任务路径统一验收。
 - [ ] `P2` `工程` F2-4 次级长任务：按缩略图、元数据/标注导入、轻量备份逐项迁移，每项独立验收。
 - [x] `P2` `工程` SQLite 并发基线：统一 WAL、5 秒 busy_timeout、foreign_keys、短事务和 1000 页自动 checkpoint；隔离 1 写 4 读及显式锁等待基准记录 locked 错误、读写 p50/p95、WAL 大小与被动 checkpoint 页数。
 - [ ] `P2` `优化` UX-D 性能余项：真实达到高标注密度时再评估 revision 统计缓存和重复报告分页；不阻止 F2-0/F2-1。

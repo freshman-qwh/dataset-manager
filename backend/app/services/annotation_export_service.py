@@ -215,7 +215,7 @@ def export_annotations_to_path(
             checkpoint=checkpoint,
             progress=progress,
         )
-    else:
+    elif export_format in {"coco_detection", "coco_segmentation"}:
         payload = _build_coco_payload(
             prepared.dataset_name,
             export_format,
@@ -226,6 +226,16 @@ def export_annotations_to_path(
             progress=progress,
         )
         _write_json_file(payload, destination, checkpoint=checkpoint)
+    else:
+        _write_yolo_zip(
+            export_format,
+            prepared.export_samples,
+            prepared.precheck.class_map,
+            prepared.report,
+            destination,
+            checkpoint=checkpoint,
+            progress=progress,
+        )
     return AnnotationExportFileArtifact(
         path=destination,
         media_type=spec.media_type,
@@ -253,6 +263,16 @@ def annotation_export_artifact_spec(
         return AnnotationExportArtifactSpec(
             filename=f"dataset-{dataset_id}-coco-segmentation.json",
             media_type="application/json;charset=utf-8",
+        )
+    if export_format == "yolo_detection":
+        return AnnotationExportArtifactSpec(
+            filename=f"dataset-{dataset_id}-yolo-detection.zip",
+            media_type="application/zip",
+        )
+    if export_format == "yolo_segmentation":
+        return AnnotationExportArtifactSpec(
+            filename=f"dataset-{dataset_id}-yolo-segmentation.zip",
+            media_type="application/zip",
         )
     raise ValueError(f"Annotation export jobs do not support format: {export_format}")
 
@@ -550,10 +570,27 @@ def _export_yolo_zip(
     class_map: list[AnnotationClassMapItem],
     report: dict[str, object],
 ) -> bytes:
-    class_ids = {item.name: item.yolo_id for item in class_map}
     buffer = BytesIO()
-    with ZipFile(buffer, mode="w", compression=ZIP_DEFLATED) as archive:
-        for item in export_samples:
+    _write_yolo_zip(export_format, export_samples, class_map, report, buffer)
+    return buffer.getvalue()
+
+
+def _write_yolo_zip(
+    export_format: AnnotationExportFormat,
+    export_samples: list[_ExportSample],
+    class_map: list[AnnotationClassMapItem],
+    report: dict[str, object],
+    destination: Path | BinaryIO,
+    *,
+    checkpoint: Callable[[], None] | None = None,
+    progress: Callable[[int, int], None] | None = None,
+) -> None:
+    class_ids = {item.name: item.yolo_id for item in class_map}
+    total = len(export_samples)
+    with ZipFile(destination, mode="w", compression=ZIP_DEFLATED) as archive:
+        for index, item in enumerate(export_samples, start=1):
+            if checkpoint is not None and (index == 1 or index % 25 == 0):
+                checkpoint()
             lines: list[str] = []
             for annotation in item.annotations:
                 class_id = class_ids[annotation.label.strip()]
@@ -570,10 +607,13 @@ def _export_yolo_zip(
             split_name = _safe_split(item.sample.split)
             label_path = PurePosixPath("labels") / split_name / _safe_relative_path(item.sample.relative_path).with_suffix(".txt")
             archive.writestr(str(label_path), ("\n".join(lines) + ("\n" if lines else "")).encode("utf-8"))
+            if progress is not None and (index == total or index % 25 == 0):
+                progress(index, total)
+        if checkpoint is not None:
+            checkpoint()
         archive.writestr("data.yaml", _yolo_data_yaml(export_format, class_map).encode("utf-8"))
         archive.writestr("classes.txt", ("\n".join(item.name for item in class_map) + "\n").encode("utf-8"))
         archive.writestr("export_report.json", _json_bytes(report))
-    return buffer.getvalue()
 
 
 def _yolo_data_yaml(export_format: AnnotationExportFormat, class_map: list[AnnotationClassMapItem]) -> str:

@@ -29,6 +29,8 @@ FORMAT_TITLE = {
     "labelme": "LabelMe",
     "coco_detection": "COCO detection",
     "coco_segmentation": "COCO segmentation",
+    "yolo_detection": "YOLO detection",
+    "yolo_segmentation": "YOLO segmentation",
 }
 
 
@@ -138,9 +140,9 @@ def run_annotation_export_job(
                     current=current,
                     total=total,
                     stage=(
-                        "writing_archive"
-                        if snapshot.format == "labelme"
-                        else "writing_json"
+                        "writing_json"
+                        if snapshot.format in {"coco_detection", "coco_segmentation"}
+                        else "writing_archive"
                     ),
                 ),
             )
