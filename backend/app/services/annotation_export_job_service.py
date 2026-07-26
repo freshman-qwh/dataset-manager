@@ -25,6 +25,11 @@ from app.services.job_runner import JobContext
 
 
 ANNOTATION_EXPORT_JOB_TYPE = "annotation.export"
+FORMAT_TITLE = {
+    "labelme": "LabelMe",
+    "coco_detection": "COCO detection",
+    "coco_segmentation": "COCO segmentation",
+}
 
 
 def create_annotation_export_job(
@@ -84,7 +89,7 @@ def create_annotation_export_job(
         session,
         JobCreate(
             job_type=ANNOTATION_EXPORT_JOB_TYPE,
-            title=f"导出 LabelMe：{dataset.name}",
+            title=f"导出 {FORMAT_TITLE[payload.format]}：{dataset.name}",
             dataset_id=dataset_id,
             parameters=parameters,
             progress_total=precheck.sample_count,
@@ -111,16 +116,20 @@ def run_annotation_export_job(
                 "An annotation.export job requires dataset_id."
             )
         context.report_progress(current=0, stage="prechecking")
-        filename = f"dataset-{job.dataset_id}-labelme-annotations.zip"
+        artifact_spec = annotation_export_service.annotation_export_artifact_spec(
+            job.dataset_id,
+            snapshot.format,
+        )
         with job_artifact_service.JobArtifactWorkspace(
             job_artifact_service.job_artifact_root(),
             job_id=context.job_id,
-            filename=filename,
-            media_type="application/zip",
+            filename=artifact_spec.filename,
+            media_type=artifact_spec.media_type,
         ) as workspace:
-            exported = annotation_export_service.export_labelme_annotations_to_path(
+            exported = annotation_export_service.export_annotations_to_path(
                 session,
                 job.dataset_id,
+                snapshot.format,
                 workspace.path,
                 query=snapshot.sample_query,
                 include_empty=snapshot.include_empty,
@@ -128,7 +137,11 @@ def run_annotation_export_job(
                 progress=lambda current, total: context.report_progress(
                     current=current,
                     total=total,
-                    stage="writing_archive",
+                    stage=(
+                        "writing_archive"
+                        if snapshot.format == "labelme"
+                        else "writing_json"
+                    ),
                 ),
             )
             exported_sample_count = int(

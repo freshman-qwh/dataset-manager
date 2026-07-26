@@ -57,6 +57,12 @@ class AnnotationExportFileArtifact:
     report: dict[str, object]
 
 
+@dataclass(frozen=True)
+class AnnotationExportArtifactSpec:
+    filename: str
+    media_type: str
+
+
 class AnnotationExportBlockedError(Exception):
     def __init__(self, precheck: AnnotationExportPrecheckResponse) -> None:
         super().__init__("Annotation export was blocked by precheck errors.")
@@ -168,29 +174,87 @@ def export_labelme_annotations_to_path(
     checkpoint: Callable[[], None] | None = None,
     progress: Callable[[int, int], None] | None = None,
 ) -> AnnotationExportFileArtifact:
-    prepared = _prepare_export(
+    return export_annotations_to_path(
         session,
         dataset_id,
         "labelme",
+        destination,
+        query=query,
+        include_empty=include_empty,
+        checkpoint=checkpoint,
+        progress=progress,
+    )
+
+
+def export_annotations_to_path(
+    session: Session,
+    dataset_id: int,
+    export_format: AnnotationExportFormat,
+    destination: Path,
+    *,
+    query: AnnotationExportSampleQuery,
+    include_empty: bool,
+    checkpoint: Callable[[], None] | None = None,
+    progress: Callable[[int, int], None] | None = None,
+) -> AnnotationExportFileArtifact:
+    spec = annotation_export_artifact_spec(dataset_id, export_format)
+    prepared = _prepare_export(
+        session,
+        dataset_id,
+        export_format,
         query=query,
         include_empty=include_empty,
         checkpoint=checkpoint,
     )
-    _write_labelme_zip(
-        session,
-        prepared.export_samples,
-        prepared.report,
-        destination,
-        checkpoint=checkpoint,
-        progress=progress,
-    )
+    if export_format == "labelme":
+        _write_labelme_zip(
+            session,
+            prepared.export_samples,
+            prepared.report,
+            destination,
+            checkpoint=checkpoint,
+            progress=progress,
+        )
+    else:
+        payload = _build_coco_payload(
+            prepared.dataset_name,
+            export_format,
+            prepared.export_samples,
+            prepared.precheck.class_map,
+            prepared.report,
+            checkpoint=checkpoint,
+            progress=progress,
+        )
+        _write_json_file(payload, destination, checkpoint=checkpoint)
     return AnnotationExportFileArtifact(
         path=destination,
-        media_type="application/zip",
-        filename=f"dataset-{dataset_id}-labelme-annotations.zip",
+        media_type=spec.media_type,
+        filename=spec.filename,
         precheck=prepared.precheck,
         report=prepared.report,
     )
+
+
+def annotation_export_artifact_spec(
+    dataset_id: int,
+    export_format: AnnotationExportFormat,
+) -> AnnotationExportArtifactSpec:
+    if export_format == "labelme":
+        return AnnotationExportArtifactSpec(
+            filename=f"dataset-{dataset_id}-labelme-annotations.zip",
+            media_type="application/zip",
+        )
+    if export_format == "coco_detection":
+        return AnnotationExportArtifactSpec(
+            filename=f"dataset-{dataset_id}-coco-detection.json",
+            media_type="application/json;charset=utf-8",
+        )
+    if export_format == "coco_segmentation":
+        return AnnotationExportArtifactSpec(
+            filename=f"dataset-{dataset_id}-coco-segmentation.json",
+            media_type="application/json;charset=utf-8",
+        )
+    raise ValueError(f"Annotation export jobs do not support format: {export_format}")
 
 
 def _prepare_export(
@@ -398,12 +462,18 @@ def _build_coco_payload(
     export_samples: list[_ExportSample],
     class_map: list[AnnotationClassMapItem],
     report: dict[str, object],
+    *,
+    checkpoint: Callable[[], None] | None = None,
+    progress: Callable[[int, int], None] | None = None,
 ) -> dict[str, object]:
     category_ids = {item.name: item.coco_id for item in class_map}
     images: list[dict[str, object]] = []
     annotations: list[dict[str, object]] = []
     annotation_id = 1
+    total = len(export_samples)
     for image_id, item in enumerate(export_samples, start=1):
+        if checkpoint is not None and (image_id == 1 or image_id % 25 == 0):
+            checkpoint()
         images.append(
             {
                 "id": image_id,
@@ -435,6 +505,10 @@ def _build_coco_payload(
                 coco_annotation["attributes"] = standard_attributes
             annotations.append(coco_annotation)
             annotation_id += 1
+        if progress is not None and (image_id == total or image_id % 25 == 0):
+            progress(image_id, total)
+    if checkpoint is not None:
+        checkpoint()
     return {
         "info": {"description": dataset_name, "version": "dataset-manager"},
         "licenses": [],
@@ -446,6 +520,28 @@ def _build_coco_payload(
         ],
         "dataset_manager": report,
     }
+
+
+def _write_json_file(
+    payload: dict[str, object],
+    destination: Path,
+    *,
+    checkpoint: Callable[[], None] | None = None,
+) -> None:
+    encoder = json.JSONEncoder(ensure_ascii=False, indent=2)
+    buffer = bytearray()
+    with destination.open("wb") as stream:
+        for chunk in encoder.iterencode(payload):
+            buffer.extend(chunk.encode("utf-8"))
+            if len(buffer) >= 1024 * 1024:
+                stream.write(buffer)
+                buffer.clear()
+                if checkpoint is not None:
+                    checkpoint()
+        buffer.extend(b"\n")
+        stream.write(buffer)
+    if checkpoint is not None:
+        checkpoint()
 
 
 def _export_yolo_zip(

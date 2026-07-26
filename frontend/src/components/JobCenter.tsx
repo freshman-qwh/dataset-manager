@@ -24,7 +24,8 @@ const stageCopy: Record<string, string> = {
   missing_detection: "检查缺失文件",
   prechecking: "导出预检",
   writing_archive: "写入导出包",
-  finalizing: "校验导出包",
+  writing_json: "写入 COCO JSON",
+  finalizing: "校验导出产物",
   completed: "已完成",
   failed: "失败",
   cancelled: "已取消",
@@ -82,7 +83,12 @@ function annotationExportSummary(job: Job): string | null {
     return null;
   }
   const size = (artifact as Record<string, unknown>).size_bytes;
-  return `LabelMe · ${sampleCount} 个样本${typeof size === "number" ? ` · ${Math.ceil(size / 1024)} KiB` : ""}`;
+  const formatCopy: Record<string, string> = {
+    labelme: "LabelMe",
+    coco_detection: "COCO detection",
+    coco_segmentation: "COCO segmentation"
+  };
+  return `${formatCopy[format] ?? format} · ${sampleCount} 个样本${typeof size === "number" ? ` · ${Math.ceil(size / 1024)} KiB` : ""}`;
 }
 
 function triggerDownload(blob: Blob, filename: string) {

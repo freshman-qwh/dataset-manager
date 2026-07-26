@@ -62,7 +62,7 @@ export interface AnnotationExportDownload {
 }
 
 export interface AnnotationExportJobCreateRequest {
-  format: "labelme";
+  format: "labelme" | "coco_detection" | "coco_segmentation";
   sample_query: AnnotationExportSampleQuery;
   include_empty: boolean;
 }

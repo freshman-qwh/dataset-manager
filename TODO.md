@@ -30,7 +30,7 @@
 - 基线日期：`2026-07-26`
 - 当前能力：数据集创建、增量扫描、样本登记、标签体系、批量 split、搜索筛选、预览增强、重复样本识别、元数据导入、统计、manifest、图片几何标注、数据质量工作台，以及 LabelMe、COCO detection/segmentation、YOLO detection/segmentation、Pascal VOC 标注导出。
 - 标注基线：已具备 annotation 表、读取/全量替换保存 API、保存前几何校验、统一质量报告、统一导出预检与真实训练格式导出、manifest annotations、SVG 标注页、矩形/polygon/点、对象列表、类别与常用对象属性编辑、隐藏/锁定、删除、撤销/重做、快捷键、适配画布，以及可恢复的连续标注队列、明确的草稿/完成/无目标动作和有界相邻预取。
-- 当前目标：`F2-3A/F2-3B/F2-3C` 已完成应用内有界产物、LabelMe 导出任务后端及前端主流程迁移；下一切片按 COCO → YOLO → VOC 的顺序迁移剩余格式，并完成 100k 容量/内存与同步产物一致性验收。
+- 当前目标：`F2-3A/F2-3B/F2-3C/F2-3D1` 已完成应用内有界产物以及 LabelMe、COCO detection/segmentation 任务化；下一切片迁移 YOLO detection/segmentation，并验收 split 目录、类别配置、取消清理和重试。
 
 ## 评审后的实施顺序
 
@@ -225,7 +225,7 @@ UX-D 完成门槛：
   - [x] `F2-3B` 固化导出格式、范围、split、class map、空样本策略和查询条件；LabelMe ZIP 已迁移到任务 runner，支持同请求去重、协作取消、失败清理、大小/hash 与安全文件流下载。
   - [x] `F2-3C` 前端主流程切换到 LabelMe 导出任务，支持活动任务/成功产物恢复、阶段进度、失败状态和下载；任务中心提供产物下载，未迁移旧库收到 409 后明确回退同步兼容。
   - [ ] `F2-3D` 逐项迁移 COCO、YOLO、VOC，完成 100k 容量/内存基准和同步产物一致性对照。
-    - [ ] `F2-3D1` 抽取可复用任务导出适配边界，迁移 COCO detection/segmentation，并逐文件对照同步 JSON/ZIP 内容。
+    - [x] `F2-3D1` 抽取可复用任务导出适配边界，迁移 COCO detection/segmentation；JSON 使用约 1 MiB 有界编码缓冲直接写入任务产物，真实副本两种异步产物与同步 API SHA-256 一致。
     - [ ] `F2-3D2` 迁移 YOLO detection/segmentation，验收 split 目录、类别文件、data.yaml、取消清理和任务重试。
     - [ ] `F2-3D3` 迁移 Pascal VOC，完成 100k 隔离容量/峰值内存、同步产物一致性、磁盘失败和下载过期验收。
 - [ ] `P2` `工程` F2-4 次级长任务：按缩略图、元数据/标注导入、轻量备份逐项迁移，每项独立验收。

@@ -68,7 +68,7 @@ class AnnotationExportPrecheckResponse(BaseModel):
 
 
 class AnnotationExportJobCreateRequest(BaseModel):
-    format: Literal["labelme"] = "labelme"
+    format: Literal["labelme", "coco_detection", "coco_segmentation"] = "labelme"
     sample_query: AnnotationExportSampleQuery = Field(default_factory=AnnotationExportSampleQuery)
     include_empty: bool = False
 

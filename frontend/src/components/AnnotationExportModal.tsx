@@ -14,6 +14,7 @@ import {
 } from "../api/client";
 import type {
   AnnotationExportFormat,
+  AnnotationExportJobCreateRequest,
   AnnotationExportPrecheckResponse,
   AnnotationExportSampleQuery
 } from "../types/annotationExport";
@@ -70,6 +71,23 @@ const FORMAT_OPTIONS: Array<{
   }
 ];
 
+type TaskExportFormat = AnnotationExportJobCreateRequest["format"];
+
+const EXPORT_STAGE_COPY: Record<string, string> = {
+  queued: "等待开始",
+  prechecking: "导出预检",
+  writing_archive: "写入导出包",
+  writing_json: "写入 COCO JSON",
+  finalizing: "校验导出产物",
+  completed: "已完成"
+};
+
+function usesExportJob(format: AnnotationExportFormat): format is TaskExportFormat {
+  return format === "labelme"
+    || format === "coco_detection"
+    || format === "coco_segmentation";
+}
+
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -97,11 +115,12 @@ function stableSerialize(value: unknown): string {
 
 function jobMatchesRequest(
   job: Job,
+  format: TaskExportFormat,
   query: AnnotationExportSampleQuery,
   includeEmpty: boolean
 ): boolean {
   return job.job_type === "annotation.export"
-    && job.parameters.format === "labelme"
+    && job.parameters.format === format
     && job.parameters.include_empty === includeEmpty
     && stableSerialize(job.parameters.sample_query) === stableSerialize(query);
 }
@@ -168,12 +187,12 @@ export default function AnnotationExportModal({
   }, [defaultFormat, open]);
 
   useEffect(() => {
-    if (!open || format !== "labelme") return;
+    if (!open || !usesExportJob(format)) return;
     let disposed = false;
     void listJobs(100, { datasetId, jobType: "annotation.export" })
       .then((response) => {
         if (disposed) return;
-        const matching = response.items.find((job) => jobMatchesRequest(job, sampleQuery, includeEmpty));
+        const matching = response.items.find((job) => jobMatchesRequest(job, format, sampleQuery, includeEmpty));
         if (matching) setExportJob(matching);
       })
       .catch(() => {
@@ -247,7 +266,8 @@ export default function AnnotationExportModal({
   }
 
   async function handleDownload() {
-    const completedJobAvailable = format === "labelme" && exportJob?.status === "succeeded";
+    const taskExport = usesExportJob(format);
+    const completedJobAvailable = taskExport && exportJob?.status === "succeeded";
     if ((!precheck || precheck.blocked) && !completedJobAvailable) {
       return;
     }
@@ -255,7 +275,7 @@ export default function AnnotationExportModal({
     setError(null);
     setCompatibilityNotice(null);
     try {
-      if (format === "labelme") {
+      if (taskExport) {
         if (exportJob?.status === "succeeded") {
           const result = await downloadJobArtifact(exportJob.id);
           triggerDownload(result.blob, result.filename);
@@ -270,7 +290,7 @@ export default function AnnotationExportModal({
           return;
         }
         const response = await createAnnotationExportJob(datasetId, {
-          format: "labelme",
+          format,
           sample_query: sampleQuery,
           include_empty: includeEmpty
         });
@@ -292,14 +312,14 @@ export default function AnnotationExportModal({
       triggerDownload(result.blob, result.filename);
       onClose();
     } catch (caught) {
-      if (format === "labelme" && exportJob?.status === "succeeded") {
+      if (taskExport && exportJob?.status === "succeeded") {
         setExportJob(null);
         setPrecheck(null);
         setError("导出产物已不可用，请重新运行导出检查并提交任务。");
         return;
       }
       if (
-        format === "labelme"
+        taskExport
         && axios.isAxiosError(caught)
         && caught.response?.status === 409
       ) {
@@ -514,7 +534,7 @@ export default function AnnotationExportModal({
               </div>
             )}
           </div>
-          {format === "labelme" && exportJob ? (
+          {usesExportJob(format) && exportJob ? (
             <div
               aria-live="polite"
               className={`rounded-lg border px-3 py-3 text-sm ${
@@ -527,14 +547,14 @@ export default function AnnotationExportModal({
             >
               <div className="font-medium">
                 {exportJob.status === "succeeded"
-                  ? "导出包已生成，可以下载"
+                  ? "导出产物已生成，可以下载"
                   : exportJobFailed
                     ? `任务${exportJob.status === "cancelled" ? "已取消" : exportJob.status === "interrupted" ? "已中断" : "失败"}，可以重新提交`
                     : "导出任务正在后台生成"}
               </div>
               <div className="mt-1 text-xs leading-5">
                 {exportJobActive
-                  ? `阶段：${exportJob.stage}${exportJobProgress !== null ? ` · ${exportJobProgress}%` : ""}。可以关闭弹窗并继续浏览。`
+                  ? `阶段：${EXPORT_STAGE_COPY[exportJob.stage] ?? exportJob.stage}${exportJobProgress !== null ? ` · ${exportJobProgress}%` : ""}。可以关闭弹窗并继续浏览。`
                   : exportJob.status === "succeeded"
                     ? "产物保存在应用存储中，不会写入原始数据目录。"
                     : "可在任务中心查看错误、重试或取消状态。"}
@@ -571,10 +591,10 @@ export default function AnnotationExportModal({
               ? "已下载"
               : downloading
                 ? "处理中"
-                : format !== "labelme"
+                : !usesExportJob(format)
                   ? "确认并下载"
                   : exportJob?.status === "succeeded"
-                    ? "下载导出包"
+                    ? "下载导出产物"
                     : exportJobFailed
                       ? "重新提交任务"
                       : "提交导出任务"}

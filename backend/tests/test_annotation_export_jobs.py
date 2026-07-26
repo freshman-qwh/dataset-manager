@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 from io import BytesIO
+import json
 from pathlib import Path
 import struct
 import threading
@@ -10,6 +11,7 @@ from zipfile import ZipFile
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import pytest
 from sqlalchemy import create_engine
 from sqlmodel import Session, SQLModel
 
@@ -108,9 +110,46 @@ def _wait_for_terminal(engine, job_id: int, timeout: float = 5.0):
     raise AssertionError(f"Job {job_id} did not reach a terminal state.")
 
 
-def test_labelme_export_job_freezes_request_and_matches_sync_archive(
+def test_coco_json_file_writer_preserves_bytes_and_checks_large_output(
+    tmp_path: Path,
+) -> None:
+    payload = {
+        "images": [
+            {"id": index, "file_name": f"{index:05}-{'x' * 512}.png"}
+            for index in range(2500)
+        ]
+    }
+    destination = tmp_path / "large-coco.json"
+    checkpoints: list[int] = []
+
+    annotation_export_service._write_json_file(
+        payload,
+        destination,
+        checkpoint=lambda: checkpoints.append(destination.stat().st_size),
+    )
+
+    expected = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode(
+        "utf-8"
+    )
+    assert destination.read_bytes() == expected
+    assert len(expected) > 1024 * 1024
+    assert len(checkpoints) >= 2
+    assert checkpoints[-1] == len(expected)
+
+
+@pytest.mark.parametrize(
+    ("export_format", "expected_media_type"),
+    [
+        ("labelme", "application/zip"),
+        ("coco_detection", "application/json"),
+        ("coco_segmentation", "application/json"),
+    ],
+)
+def test_annotation_export_job_freezes_request_and_matches_sync_artifact(
     tmp_path: Path,
     monkeypatch,
+    export_format: str,
+    expected_media_type: str,
 ) -> None:
     engine = create_engine(
         f"sqlite:///{(tmp_path / 'export-job.db').as_posix()}",
@@ -130,7 +169,7 @@ def test_labelme_export_job_freezes_request_and_matches_sync_archive(
         dataset_id = _create_export_dataset(client, raw_root)
         before = {path.name: path.read_bytes() for path in raw_root.iterdir()}
         payload = {
-            "format": "labelme",
+            "format": export_format,
             "sample_query": {
                 "sort_by": "relative_path",
                 "sort_order": "asc",
@@ -144,7 +183,7 @@ def test_labelme_export_job_freezes_request_and_matches_sync_archive(
         assert created.status_code == 201
         job = created.json()["job"]
         assert created.json()["created"] is True
-        assert job["parameters"]["format"] == "labelme"
+        assert job["parameters"]["format"] == export_format
         assert job["parameters"]["class_map"][0]["name"] == "object"
         assert len(job["parameters"]["request_fingerprint"]) == 64
 
@@ -170,25 +209,33 @@ def test_labelme_export_job_freezes_request_and_matches_sync_archive(
 
         downloaded = client.get(f"/api/jobs/{job['id']}/artifact")
         assert downloaded.status_code == 200
-        assert downloaded.headers["content-type"] == "application/zip"
+        assert downloaded.headers["content-type"].startswith(expected_media_type)
         assert sha256(downloaded.content).hexdigest() == artifact["sha256"]
         synchronous = client.get(
             f"/api/datasets/{dataset_id}/annotation-export",
-            params={"format": "labelme"},
+            params={"format": export_format},
         )
         assert synchronous.status_code == 200
-        assert _archive_contents(downloaded.content) == _archive_contents(
-            synchronous.content
-        )
+        if export_format == "labelme":
+            assert _archive_contents(downloaded.content) == _archive_contents(
+                synchronous.content
+            )
+        else:
+            assert downloaded.content == synchronous.content
         assert {path.name: path.read_bytes() for path in raw_root.iterdir()} == before
         assert not list(artifact_root.rglob("*.part"))
 
     engine.dispose()
 
 
-def test_cancelled_labelme_export_removes_partial_artifact(
+@pytest.mark.parametrize(
+    "export_format",
+    ["labelme", "coco_detection", "coco_segmentation"],
+)
+def test_cancelled_annotation_export_removes_partial_artifact(
     tmp_path: Path,
     monkeypatch,
+    export_format: str,
 ) -> None:
     engine = create_engine(
         f"sqlite:///{(tmp_path / 'cancel-export.db').as_posix()}",
@@ -209,13 +256,14 @@ def test_cancelled_labelme_export_removes_partial_artifact(
         dataset_id = _create_export_dataset(client, tmp_path / "raw")
         created = client.post(
             f"/api/datasets/{dataset_id}/annotation-export-jobs",
-            json={"format": "labelme"},
+            json={"format": export_format},
         ).json()
         job_id = created["job"]["id"]
 
         def blocked_export(
             session,
             dataset_id,
+            requested_format,
             destination,
             *,
             query,
@@ -231,7 +279,7 @@ def test_cancelled_labelme_export_removes_partial_artifact(
 
         monkeypatch.setattr(
             annotation_export_service,
-            "export_labelme_annotations_to_path",
+            "export_annotations_to_path",
             blocked_export,
         )
         runner = JobRunner(engine, poll_interval_seconds=0.01)
@@ -253,9 +301,14 @@ def test_cancelled_labelme_export_removes_partial_artifact(
     engine.dispose()
 
 
-def test_labelme_export_job_failure_cleans_partial_artifact(
+@pytest.mark.parametrize(
+    "export_format",
+    ["labelme", "coco_detection", "coco_segmentation"],
+)
+def test_annotation_export_job_failure_cleans_partial_artifact(
     tmp_path: Path,
     monkeypatch,
+    export_format: str,
 ) -> None:
     engine = create_engine(
         f"sqlite:///{(tmp_path / 'failed-export.db').as_posix()}",
@@ -274,13 +327,14 @@ def test_labelme_export_job_failure_cleans_partial_artifact(
         dataset_id = _create_export_dataset(client, tmp_path / "raw")
         created = client.post(
             f"/api/datasets/{dataset_id}/annotation-export-jobs",
-            json={"format": "labelme"},
+            json={"format": export_format},
         ).json()
         job_id = created["job"]["id"]
 
         def failed_export(
             session,
             dataset_id,
+            requested_format,
             destination,
             **kwargs,
         ):
@@ -289,7 +343,7 @@ def test_labelme_export_job_failure_cleans_partial_artifact(
 
         monkeypatch.setattr(
             annotation_export_service,
-            "export_labelme_annotations_to_path",
+            "export_annotations_to_path",
             failed_export,
         )
         runner = JobRunner(engine)
@@ -308,8 +362,13 @@ def test_labelme_export_job_failure_cleans_partial_artifact(
     engine.dispose()
 
 
+@pytest.mark.parametrize(
+    "export_format",
+    ["labelme", "coco_detection", "coco_segmentation"],
+)
 def test_annotation_export_job_rejects_unmigrated_database(
     tmp_path: Path,
+    export_format: str,
 ) -> None:
     engine = create_engine(
         f"sqlite:///{(tmp_path / 'legacy.db').as_posix()}",
@@ -327,7 +386,7 @@ def test_annotation_export_job_rejects_unmigrated_database(
     with TestClient(_make_app(engine)) as client:
         response = client.post(
             f"/api/datasets/{dataset_id}/annotation-export-jobs",
-            json={"format": "labelme"},
+            json={"format": export_format},
         )
         assert response.status_code == 409
 

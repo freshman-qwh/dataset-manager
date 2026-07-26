@@ -12,7 +12,8 @@
 - `F2-3A` 已完成：job 专属 `.part` 临时产物、原子发布、分块 hash、异常清理与安全路径解析已落地。
 - `F2-3B` 已完成：LabelMe 请求参数快照、同请求去重、有界 ZIP、协作取消、失败清理、结果大小/hash 与文件流下载已通过自动化和真实 API 验收。
 - `F2-3C` 已完成：LabelMe 前端主流程、状态/成功恢复、弹窗及任务中心下载和未迁移旧库 409 同步回退已通过迁移副本与旧库备份副本浏览器验收。
-- 当前切片为 `F2-3D1`：抽取剩余格式共用的任务导出适配边界，先迁移 COCO detection/segmentation 并对照同步产物内容。
+- `F2-3D1` 已完成：COCO detection/segmentation 复用任务参数与文件产物边界，约 1 MiB 有界 JSON 编码写入、同步产物一致性、取消/失败清理、前端恢复和旧库回退已通过自动化、API 与浏览器验收。
+- 当前切片为 `F2-3D2`：迁移 YOLO detection/segmentation，重点验收 split 标签目录、`classes.txt`、`data.yaml`、取消清理和重试。
 
 ## 1. 决策摘要
 
@@ -332,9 +333,9 @@ UI：
 
 ## 10. 下一步建议
 
-下一轮只启动 `F2-3D1`：
+下一轮只启动 `F2-3D2`：
 
-1. 抽取 LabelMe 已验证的任务参数、进度、产物发布和结果摘要共用边界，不改变同步导出契约。
-2. 迁移 COCO detection/segmentation，确保大 JSON/ZIP 直接写应用临时文件，并在取消或失败时只清理任务产物。
-3. 对同一隔离数据集逐文件比较同步与异步 COCO JSON、导出报告和类别映射；固定任务运行期间的范围与配置。
-4. COCO 验收后再进入 `F2-3D2` YOLO；YOLO 通过后进入 `F2-3D3` VOC 与 100k 容量/峰值内存总验收，避免多格式一次性铺开。
+1. 在现有文件产物适配边界中增加 YOLO detection/segmentation，不改变同步 ZIP 目录与文本格式。
+2. 将标签文件、`classes.txt`、`data.yaml` 和 `export_report.json` 直接写入任务 ZIP；每个样本或固定批次提供取消检查点和进度。
+3. 对同一隔离数据集逐文件比较同步与异步 ZIP，覆盖 train/val/test/unassigned、空标签、bbox/polygon 转换和类别顺序。
+4. 验证活动去重、失败清理、取消、显式重试、任务中心摘要和未迁移旧库同步回退；完成后再进入 `F2-3D3` VOC 与 100k 总验收。
