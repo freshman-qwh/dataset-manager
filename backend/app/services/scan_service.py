@@ -58,7 +58,7 @@ class ScanStopped(RuntimeError):
 def _record_error(counters: ScanCounters, errors: list[str], message: str) -> None:
     counters.error_count += 1
     if len(errors) < 50:
-        errors.append(message)
+        errors.append(message[:1000])
 
 
 def _is_under_root(path_value: str, root: Path) -> bool:

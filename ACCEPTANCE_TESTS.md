@@ -2,6 +2,28 @@
 
 本文件记录人工验收重点。最新一轮放在最前，历史步骤合并为核心回归清单，避免验收文档过长。
 
+## [v0.4.0 F2-2 扫描任务与增量扫描 · 第二阶段] - 2026-07-26
+
+验收范围：异步扫描创建、活动任务去重、runner 阶段/进度、协作取消部分结果、显式重试、旧库安全降级和真实 API。
+
+步骤：
+
+1. 在迁移库调用 `POST /api/datasets/{id}/scan-jobs`；确认返回 201、`created=true`、类型为 `dataset.scan`，参数快照保存规范化目录。
+2. 对同一数据集并发提交两个扫描请求；确认仅一个返回 created=true，另一个复用相同 job id，数据库只有一个 queued/running 扫描。
+3. 等待首次任务完成；确认状态依次经过 queued/running/succeeded，阶段覆盖 enumerating/hashing/writing/missing_detection/completed，最终结果与同步扫描契约一致。
+4. 在首个 100 条批次 hash 期间请求取消；确认任务先记录 cancel_requested_at，批次安全提交后成为 cancelled，result 包含 imported=100、batches_committed=1。
+5. 对取消任务显式重试；确认新任务保留 retry_of_id，已提交 100 条计入 unchanged，只补入剩余记录，最终样本总数正确。
+6. 在处理器运行时停止服务；确认检查点把任务置为 interrupted 并保留部分结果；重启不盲目续跑，用户可显式重试。
+7. 使用未迁移真实库调用异步端点；确认返回 409、jobs 表仍不存在、健康检查和同步扫描端点保持可用。
+8. 使用迁移副本真实 API 扫描 2 个受支持文件和 1 个不支持文件；确认首次 hashed=2/imported=2，二次 hashed=0/hash_skipped_unchanged=2。
+9. 运行后端全量测试、前端生产构建和 `git diff --check`。
+
+通过标准：
+
+- SQLite 仅有一个任务 worker 和一个扫描元数据写通道；hash worker 只读原始文件。
+- 取消、停止、失败和重试均有可解释终态与有界结果，不产生永久 running 或重复活动扫描。
+- F2-2B 不改变详情页现有调用；前端迁移与旧库兼容提示在 F2-2C 单独验收。
+
 ## [v0.4.0 F2-2 扫描任务与增量扫描 · 第一阶段] - 2026-07-26
 
 验收范围：增量判断、hash 并发边界、分批提交、缺失/权限分类、协作停止部分结果和原始文件安全。

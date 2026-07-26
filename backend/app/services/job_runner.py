@@ -20,9 +20,27 @@ logger = logging.getLogger(__name__)
 class JobCancelled(RuntimeError):
     """Raised by a cooperative checkpoint after cancellation was requested."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        result: dict[str, object] | None = None,
+    ):
+        super().__init__(message)
+        self.result = result
+
 
 class JobInterrupted(RuntimeError):
     """Raised by a cooperative checkpoint while the runner is stopping."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        result: dict[str, object] | None = None,
+    ):
+        super().__init__(message)
+        self.result = result
 
 
 @dataclass(frozen=True)
@@ -181,6 +199,7 @@ class JobRunner:
                 job.id,
                 "cancelled",
                 stage="cancelled",
+                result=exc.result,
                 error={"code": "cancel_requested", "message": str(exc)},
             )
         except JobInterrupted as exc:
@@ -188,6 +207,7 @@ class JobRunner:
                 job.id,
                 "interrupted",
                 stage="process_stopped",
+                result=exc.result,
                 error={"code": "runner_stopped", "message": str(exc)},
             )
         except Exception as exc:  # A task failure must not terminate the worker.

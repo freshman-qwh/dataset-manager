@@ -151,6 +151,26 @@ def list_jobs(
     return JobListResponse(items=[to_job_read(job) for job in jobs], total=total)
 
 
+def find_active_job(
+    session: Session,
+    *,
+    job_type: str,
+    dataset_id: int,
+) -> JobRead | None:
+    ensure_jobs_schema(session)
+    job = session.exec(
+        select(Job)
+        .where(
+            Job.job_type == job_type,
+            Job.dataset_id == dataset_id,
+            Job.status.in_(["queued", "running"]),
+        )
+        .order_by(Job.created_at.asc(), Job.id.asc())
+        .limit(1)
+    ).first()
+    return to_job_read(job) if job is not None else None
+
+
 def transition_job(
     session: Session,
     job_id: int,

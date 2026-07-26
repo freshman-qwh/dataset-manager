@@ -140,6 +140,7 @@ GET    /api/datasets/{id}
 PATCH  /api/datasets/{id}
 DELETE /api/datasets/{id}
 POST   /api/datasets/{id}/scan
+POST   /api/datasets/{id}/scan-jobs
 GET    /api/datasets/{id}/samples
 PATCH  /api/datasets/{id}/samples/batch
 POST   /api/datasets/{id}/samples/delete

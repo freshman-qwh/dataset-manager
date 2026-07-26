@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlmodel import Session
 
 from app.core.database import get_session
+from app.core.job_runtime import job_runner
 from app.schemas.dataset import DatasetCreate, DatasetRead, DatasetUpdate
 from app.schemas.duplicates import DuplicateReport
 from app.schemas.export_template import ExportTemplateResponse
@@ -17,7 +18,7 @@ from app.schemas.sample import (
     SampleListResponse,
     SampleNavigationResponse,
 )
-from app.schemas.scan import ScanRequest, ScanResult
+from app.schemas.scan import ScanJobCreateResponse, ScanRequest, ScanResult
 from app.schemas.split import SplitPlanRequest, SplitPlanResult
 from app.schemas.stats import DatasetStats
 from app.schemas.tag import TagCreate, TagRead
@@ -30,10 +31,12 @@ from app.services import (
     dataset_service,
     duplicate_service,
     export_template_service,
+    job_service,
     manifest_service,
     metadata_import_service,
     quality_service,
     sample_service,
+    scan_job_service,
     scan_service,
     split_service,
     stats_service,
@@ -84,6 +87,30 @@ def scan_dataset(
     session: Session = Depends(get_session),
 ) -> ScanResult:
     return scan_service.scan_dataset(session, dataset_id, payload)
+
+
+@router.post(
+    "/datasets/{dataset_id}/scan-jobs",
+    response_model=ScanJobCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_dataset_scan_job(
+    dataset_id: int,
+    payload: ScanRequest,
+    response: Response,
+    session: Session = Depends(get_session),
+) -> ScanJobCreateResponse:
+    try:
+        result = scan_job_service.create_scan_job(session, dataset_id, payload)
+    except job_service.JobSchemaUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    if not result.created:
+        response.status_code = status.HTTP_200_OK
+    job_runner.notify()
+    return result
 
 
 @router.get("/datasets/{dataset_id}/samples", response_model=SampleListResponse)
