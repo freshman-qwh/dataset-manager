@@ -38,7 +38,9 @@
 ```text
 dataset-manager/
   backend/
+    migrations/
     app/
+      cli/
       api/
       core/
       models/
@@ -213,6 +215,24 @@ PORT=8000
 ```
 
 SQLite 数据库默认写入 `database/app.db`。原始数据建议放在 `storage/datasets/` 或用户指定的本地目录。
+
+## 数据库迁移与备份
+
+正式 schema 迁移使用 Alembic，但不会在应用启动时自动替换实际数据库。先查看状态或创建在线只读备份：
+
+```bash
+cd backend
+python -m app.cli.database status --database ../database/app.db
+python -m app.cli.database backup --database ../database/app.db --backup-dir ../database/backups
+```
+
+升级前必须停止后端和所有数据库使用者。升级命令会先创建并校验备份，再在临时副本中迁移；只有迁移、版本检查和 SQLite 校验全部成功后才原子替换目标数据库：
+
+```bash
+python -m app.cli.database upgrade --database ../database/app.db --backup-dir ../database/backups
+```
+
+如果命令报告数据库占用或存在 WAL/SHM/journal 侧车文件，先停止相关进程，不要手工删除仍在使用的侧车文件。迁移失败时原库保持不变，可从命令返回的备份路径恢复。完整边界和验收步骤见 `docs/database-migrations.md` 与 `ACCEPTANCE_TESTS.md`。
 
 ## 测试
 
