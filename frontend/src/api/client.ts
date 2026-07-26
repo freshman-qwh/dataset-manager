@@ -48,7 +48,7 @@ import type {
   DatabaseRepairPreview,
   DatabaseRepairResult
 } from "../types/system";
-import type { Job, JobListResponse } from "../types/job";
+import type { Job, JobListResponse, ScanJobCreateResponse } from "../types/job";
 
 export const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8000/api";
@@ -63,8 +63,22 @@ export async function listDatasets(): Promise<Dataset[]> {
   return data;
 }
 
-export async function listJobs(limit = 100): Promise<JobListResponse> {
-  const { data } = await client.get<JobListResponse>("/jobs", { params: { limit } });
+export async function listJobs(
+  limit = 100,
+  filters?: { datasetId?: number; jobType?: string }
+): Promise<JobListResponse> {
+  const { data } = await client.get<JobListResponse>("/jobs", {
+    params: {
+      limit,
+      dataset_id: filters?.datasetId,
+      job_type: filters?.jobType
+    }
+  });
+  return data;
+}
+
+export async function getJob(jobId: number): Promise<Job> {
+  const { data } = await client.get<Job>(`/jobs/${jobId}`);
   return data;
 }
 
@@ -212,6 +226,17 @@ export async function scanDataset(datasetId: number, folderPath: string): Promis
   const { data } = await client.post<ScanResult>(`/datasets/${datasetId}/scan`, {
     folder_path: folderPath
   });
+  return data;
+}
+
+export async function createScanJob(
+  datasetId: number,
+  folderPath: string
+): Promise<ScanJobCreateResponse> {
+  const { data } = await client.post<ScanJobCreateResponse>(
+    `/datasets/${datasetId}/scan-jobs`,
+    { folder_path: folderPath }
+  );
   return data;
 }
 

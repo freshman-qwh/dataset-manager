@@ -15,6 +15,18 @@ const statusCopy: Record<JobStatus, string> = {
 };
 
 const terminalRetryStatuses = new Set<JobStatus>(["failed", "cancelled", "interrupted"]);
+const stageCopy: Record<string, string> = {
+  queued: "等待开始",
+  starting: "正在启动",
+  enumerating: "枚举文件",
+  hashing: "校验变化文件",
+  writing: "写入元数据",
+  missing_detection: "检查缺失文件",
+  completed: "已完成",
+  failed: "失败",
+  cancelled: "已取消",
+  process_stopped: "进程已停止"
+};
 
 function statusTone(status: JobStatus): string {
   if (status === "running") return "bg-blue-50 text-blue-700";
@@ -36,6 +48,21 @@ function formatTime(value: string): string {
 function errorMessage(job: Job): string | null {
   const message = job.error?.message;
   return typeof message === "string" ? message : null;
+}
+
+function scanResultSummary(job: Job): string | null {
+  if (job.job_type !== "dataset.scan" || !job.result) return null;
+  const imported = job.result.imported;
+  const updated = job.result.updated;
+  const unchanged = job.result.unchanged;
+  if (
+    typeof imported !== "number"
+    || typeof updated !== "number"
+    || typeof unchanged !== "number"
+  ) {
+    return null;
+  }
+  return `新增 ${imported} · 变更 ${updated} · 未变 ${unchanged}`;
 }
 
 export default function JobCenter() {
@@ -68,6 +95,12 @@ export default function JobCenter() {
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  useEffect(() => {
+    const refresh = () => void load(true);
+    window.addEventListener("dataset-manager:jobs-changed", refresh);
+    return () => window.removeEventListener("dataset-manager:jobs-changed", refresh);
   }, [load]);
 
   useEffect(() => {
@@ -190,7 +223,7 @@ export default function JobCenter() {
                           <span className={`shrink-0 rounded-full px-2 py-1 text-xs font-medium ${statusTone(job.status)}`}>{statusCopy[job.status]}</span>
                         </div>
                         <div className="mt-3 flex items-center justify-between text-xs text-muted">
-                          <span>{job.stage}</span>
+                          <span>{stageCopy[job.stage] ?? job.stage}</span>
                           {progress !== null ? <span>{progress}%</span> : null}
                         </div>
                         {progress !== null ? (
@@ -199,6 +232,7 @@ export default function JobCenter() {
                           </div>
                         ) : null}
                         {errorMessage(job) ? <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">{errorMessage(job)}</p> : null}
+                        {scanResultSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{scanResultSummary(job)}</p> : null}
                         {canCancel || canRetry ? (
                           <div className="mt-3 flex justify-end gap-2">
                             {canCancel ? (

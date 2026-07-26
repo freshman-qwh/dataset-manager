@@ -252,6 +252,10 @@ export interface ScanResult {
   missing: number;
   skipped_existing: number;
   skipped_unsupported: number;
+  hashed: number;
+  hash_skipped_unchanged: number;
+  batches_committed: number;
+  error_count: number;
   errors: string[];
 }
 

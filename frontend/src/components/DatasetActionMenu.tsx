@@ -1,4 +1,4 @@
-import { Download, MoreHorizontal, Tags, Upload } from "lucide-react";
+import { Download, MoreHorizontal, RefreshCw, Tags, Upload } from "lucide-react";
 import { useState } from "react";
 
 import { uiCopy } from "../utils/uiCopy";
@@ -7,22 +7,26 @@ interface DatasetActionMenuProps {
   exportFormat: string;
   onExportFormatChange: (value: string) => void;
   onManageTags: () => void;
+  onScan: () => void;
   onImportMetadata: () => void;
   onExport: () => void;
   onAnnotationExport: () => void;
   annotationExportEnabled?: boolean;
   annotationExportHint?: string;
+  scanning?: boolean;
 }
 
 export default function DatasetActionMenu({
   exportFormat,
   onExportFormatChange,
   onManageTags,
+  onScan,
   onImportMetadata,
   onExport,
   onAnnotationExport,
   annotationExportEnabled = true,
-  annotationExportHint
+  annotationExportHint,
+  scanning = false
 }: DatasetActionMenuProps) {
   const [open, setOpen] = useState(false);
 
@@ -43,6 +47,15 @@ export default function DatasetActionMenu({
       </button>
       {open && (
         <div className="absolute right-0 z-20 mt-2 w-64 rounded-lg border border-line bg-white p-2 shadow-soft">
+          <button
+            type="button"
+            onClick={() => closeAfter(onScan)}
+            disabled={scanning}
+            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300"
+          >
+            <RefreshCw size={16} className={scanning ? "animate-spin" : ""} />
+            {scanning ? "扫描任务运行中" : "更新扫描"}
+          </button>
           <button
             type="button"
             onClick={() => closeAfter(onManageTags)}

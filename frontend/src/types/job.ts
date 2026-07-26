@@ -32,3 +32,8 @@ export interface JobListResponse {
   items: Job[];
   total: number;
 }
+
+export interface ScanJobCreateResponse {
+  job: Job;
+  created: boolean;
+}

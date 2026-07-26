@@ -1,3 +1,4 @@
+import axios from "axios";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -25,6 +26,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   applySplitPlan,
   batchUpdateSamples,
+  createScanJob,
   deleteDataset,
   deleteSample,
   deleteSamples,
@@ -34,9 +36,11 @@ import {
   getDatasetStats,
   getExportTemplate,
   getManifestUrl,
+  getJob,
   getSample,
   getTrainingReadiness,
   listTags,
+  listJobs,
   listSamples,
   scanDataset,
   repairMissingSamples,
@@ -81,6 +85,7 @@ import type {
   TrainingReadinessReport
 } from "../types/dataset";
 import type { AnnotationExportFormat } from "../types/annotationExport";
+import type { Job } from "../types/job";
 import { buildDefaultPendingQueue, buildReviewQueue, readAnnotationQueue } from "../utils/annotationQueue";
 import {
   invalidateDatasetDetailCache,
@@ -100,6 +105,35 @@ function formatBytes(value: number): string {
     return `${(value / 1024 / 1024).toFixed(1)} MB`;
   }
   return `${(value / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+function scanResultFromJob(job: Job): ScanResult | null {
+  const result = job.result;
+  if (!result) {
+    return null;
+  }
+  const numericFields: Array<keyof ScanResult> = [
+    "dataset_id",
+    "scanned",
+    "imported",
+    "updated",
+    "unchanged",
+    "missing",
+    "skipped_existing",
+    "skipped_unsupported",
+    "hashed",
+    "hash_skipped_unchanged",
+    "batches_committed",
+    "error_count"
+  ];
+  if (
+    numericFields.some((field) => typeof result[field] !== "number")
+    || !Array.isArray(result.errors)
+    || result.errors.some((error) => typeof error !== "string")
+  ) {
+    return null;
+  }
+  return result as unknown as ScanResult;
 }
 
 function downloadTextFile(filename: string, content: string, mimeType: string) {
@@ -172,6 +206,8 @@ export default function DatasetDetailPage() {
   const [exportPreview, setExportPreview] = useState<ExportPreview | null>(null);
   const [annotationExportOpen, setAnnotationExportOpen] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [scanJobId, setScanJobId] = useState<number | null>(null);
+  const [scanNotice, setScanNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [deletingDataset, setDeletingDataset] = useState(false);
@@ -439,35 +475,133 @@ export default function DatasetDetailPage() {
     }
   }, [datasetId, loadTrainingReadiness, trainingReadinessOpen]);
 
+  const startScan = useCallback(async (
+    targetDatasetId: number,
+    path: string,
+    closeModal: boolean
+  ) => {
+    setScanning(true);
+    setError(null);
+    setScanNotice(null);
+    try {
+      const response = await createScanJob(targetDatasetId, path);
+      setScanJobId(response.job.id);
+      setScanNotice(response.created ? "扫描任务已提交，可继续浏览当前数据" : "已有扫描任务正在运行，已恢复状态跟踪");
+      if (closeModal) setScanOpen(false);
+      window.dispatchEvent(new Event("dataset-manager:jobs-changed"));
+      return;
+    } catch (caught) {
+      if (!axios.isAxiosError(caught) || caught.response?.status !== 409) {
+        setError("扫描任务提交失败，请检查目录和后端服务");
+        setScanning(false);
+        return;
+      }
+    }
+
+    setScanNotice("任务中心尚未启用，本次使用兼容扫描；完成前请保持页面打开");
+    try {
+      const result = await scanDataset(targetDatasetId, path);
+      setLastScanResult(result);
+      await Promise.all([loadOverview(), loadSamples()]);
+      setScanNotice(`兼容扫描完成：新增 ${result.imported}，变更 ${result.updated}，未变 ${result.unchanged}`);
+      if (closeModal) setScanOpen(false);
+    } catch {
+      setScanNotice(null);
+      setError("兼容扫描失败，请检查目录是否存在且可读取");
+    } finally {
+      setScanning(false);
+    }
+  }, [loadOverview, loadSamples]);
+
+  useEffect(() => {
+    if (!Number.isFinite(datasetId)) return;
+    let disposed = false;
+    setScanJobId(null);
+    setScanning(false);
+    setScanNotice(null);
+    setLastScanResult(null);
+    void listJobs(20, { datasetId, jobType: "dataset.scan" })
+      .then((response) => {
+        if (disposed) return;
+        const active = response.items.find((job) => job.status === "queued" || job.status === "running");
+        if (active) {
+          setScanJobId(active.id);
+          setScanning(true);
+          setScanNotice("已恢复正在运行的扫描任务");
+        }
+      })
+      .catch(() => {
+        // A 409 means the old database will use the synchronous compatibility path.
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [datasetId]);
+
+  useEffect(() => {
+    if (scanJobId === null) return;
+    let disposed = false;
+    let timer: number | undefined;
+
+    const poll = async () => {
+      try {
+        const job = await getJob(scanJobId);
+        if (disposed) return;
+        if (job.status === "queued" || job.status === "running") {
+          timer = window.setTimeout(() => void poll(), 750);
+          return;
+        }
+
+        const result = scanResultFromJob(job);
+        if (result) setLastScanResult(result);
+        setScanJobId(null);
+        setScanning(false);
+        if (job.status === "succeeded") {
+          setScanNotice(result
+            ? `扫描完成：新增 ${result.imported}，变更 ${result.updated}，未变 ${result.unchanged}`
+            : "扫描任务已完成");
+        } else if (job.status === "cancelled" || job.status === "interrupted") {
+          setScanNotice(result
+            ? `扫描${job.status === "cancelled" ? "已取消" : "已中断"}，已安全提交 ${result.imported + result.updated + result.unchanged} 条`
+            : `扫描${job.status === "cancelled" ? "已取消" : "已中断"}`);
+        } else {
+          const message = typeof job.error?.message === "string" ? job.error.message : "请在任务抽屉查看错误";
+          setScanNotice(null);
+          setError(`扫描任务失败：${message}`);
+        }
+        window.dispatchEvent(new Event("dataset-manager:jobs-changed"));
+        try {
+          await Promise.all([loadOverview(), loadSamples()]);
+        } catch {
+          setError("扫描任务已结束，但数据刷新失败，请手动刷新页面");
+        }
+      } catch {
+        if (!disposed) {
+          setScanNotice(null);
+          setError("扫描任务状态读取失败，请在任务抽屉中查看");
+          setScanning(false);
+          setScanJobId(null);
+        }
+      }
+    };
+
+    void poll();
+    return () => {
+      disposed = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [loadOverview, loadSamples, scanJobId]);
+
   useEffect(() => {
     if (!dataset?.auto_scan_on_open || !dataset.root_path || autoScannedDatasetIds.current.has(dataset.id)) {
       return;
     }
     autoScannedDatasetIds.current.add(dataset.id);
-    setScanning(true);
-    setError(null);
-    void scanDataset(dataset.id, dataset.root_path)
-      .then(async (result) => {
-        setLastScanResult(result);
-        await Promise.all([loadOverview(), loadSamples()]);
-      })
-      .catch(() => setError("自动扫描失败，请检查扫描目录是否存在且可读取"))
-      .finally(() => setScanning(false));
-  }, [dataset, loadOverview, loadSamples]);
+    void startScan(dataset.id, dataset.root_path, false);
+  }, [dataset, startScan]);
 
   async function handleScan(path: string) {
-    setScanning(true);
-    setError(null);
-    try {
-      const result = await scanDataset(datasetId, path);
-      setLastScanResult(result);
-      await Promise.all([loadOverview(), loadSamples()]);
-      setScanOpen(false);
-    } catch {
-      setError("扫描失败，请检查目录是否存在且可读取");
-    } finally {
-      setScanning(false);
-    }
+    await startScan(datasetId, path, true);
   }
 
   async function handleSelect(sample: Sample) {
@@ -970,8 +1104,11 @@ export default function DatasetDetailPage() {
                   className="mt-3 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-gray-900 px-4 text-sm font-semibold text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
                 >
                   {scanning ? <RefreshCw size={18} className="animate-spin" /> : <Play size={18} />}
-                  {scanning ? "正在扫描" : primaryActionLabel}
+                  {scanning ? (scanJobId !== null ? "扫描任务运行中" : "兼容扫描中") : primaryActionLabel}
                 </button>
+                {scanNotice ? (
+                  <p aria-live="polite" className="mt-2 text-xs leading-5 text-gray-600">{scanNotice}</p>
+                ) : null}
                 <div className="mt-5">
                   <div className="flex items-center gap-2 text-sm font-medium text-ink">
                     <ShieldCheck size={17} />
@@ -1076,14 +1213,16 @@ export default function DatasetDetailPage() {
                 </div>
               </div>
               {lastScanResult && (
-                <div className="grid gap-2 rounded-lg border border-line p-3 text-sm sm:grid-cols-3 xl:grid-cols-7">
+                <div className="grid gap-2 rounded-lg border border-line p-3 text-sm sm:grid-cols-3 xl:grid-cols-9">
                   <span>扫描 {lastScanResult.scanned}</span>
                   <span>新增 {lastScanResult.imported}</span>
                   <span>变更 {lastScanResult.updated}</span>
                   <span>未变 {lastScanResult.unchanged}</span>
                   <span>缺失 {lastScanResult.missing}</span>
+                  <span>计算 hash {lastScanResult.hashed}</span>
+                  <span>跳过 hash {lastScanResult.hash_skipped_unchanged}</span>
                   <span>跳过 {lastScanResult.skipped_unsupported}</span>
-                  <span>错误 {lastScanResult.errors.length}</span>
+                  <span>错误 {lastScanResult.error_count}</span>
                 </div>
               )}
             </div>
@@ -1113,10 +1252,12 @@ export default function DatasetDetailPage() {
                 exportFormat={exportFormat}
                 onExportFormatChange={setExportFormat}
                 onManageTags={() => setTagsOpen(true)}
+                onScan={() => setScanOpen(true)}
                 onImportMetadata={() => setMetadataImportOpen(true)}
                 onExport={() => void handleExport()}
                 onAnnotationExport={() => setAnnotationExportOpen(true)}
                 annotationExportEnabled={geometryTask}
+                scanning={scanning}
                 annotationExportHint={
                   classificationTask ? "分类整理请使用 CSV 标签表" : dataset?.task_capabilities.unsupported_reason ?? undefined
                 }
