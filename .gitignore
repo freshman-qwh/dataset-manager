@@ -74,6 +74,7 @@ storage/datasets/
 storage/thumbnails/
 storage/cache/
 storage/tmp/
+storage/job-artifacts/
 
 # Large dataset files and archives
 *.zip
