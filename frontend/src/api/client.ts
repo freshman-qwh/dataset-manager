@@ -71,8 +71,8 @@ export async function deleteDataset(datasetId: number): Promise<void> {
   await client.delete(`/datasets/${datasetId}`);
 }
 
-export async function getDataset(datasetId: number): Promise<Dataset> {
-  const { data } = await client.get<Dataset>(`/datasets/${datasetId}`);
+export async function getDataset(datasetId: number, signal?: AbortSignal): Promise<Dataset> {
+  const { data } = await client.get<Dataset>(`/datasets/${datasetId}`, { signal });
   return data;
 }
 
@@ -83,8 +83,8 @@ export async function listDirectories(path?: string): Promise<DirectoryListRespo
   return data;
 }
 
-export async function getDuplicateReport(datasetId: number): Promise<DuplicateReport> {
-  const { data } = await client.get<DuplicateReport>(`/datasets/${datasetId}/duplicates`);
+export async function getDuplicateReport(datasetId: number, signal?: AbortSignal): Promise<DuplicateReport> {
+  const { data } = await client.get<DuplicateReport>(`/datasets/${datasetId}/duplicates`, { signal });
   return data;
 }
 
@@ -120,8 +120,8 @@ export async function recordTrainingExport(
   return data;
 }
 
-export async function listTags(datasetId: number): Promise<Tag[]> {
-  const { data } = await client.get<Tag[]>(`/datasets/${datasetId}/tags`);
+export async function listTags(datasetId: number, signal?: AbortSignal): Promise<Tag[]> {
+  const { data } = await client.get<Tag[]>(`/datasets/${datasetId}/tags`, { signal });
   return data;
 }
 
@@ -167,9 +167,10 @@ export async function scanDataset(datasetId: number, folderPath: string): Promis
   return data;
 }
 
-export async function listSamples(params: SampleQuery): Promise<SampleListResponse> {
+export async function listSamples(params: SampleQuery, signal?: AbortSignal): Promise<SampleListResponse> {
   const { datasetId, search, fileType, fileStatus, tag, split, reviewStatus, annotationProgress, page, pageSize, sortBy, sortOrder } = params;
   const { data } = await client.get<SampleListResponse>(`/datasets/${datasetId}/samples`, {
+    signal,
     params: {
       search: search || undefined,
       file_type: fileType || undefined,
@@ -287,8 +288,8 @@ export async function getSamplePreview(sampleId: number): Promise<SamplePreview>
   return data;
 }
 
-export async function getDatasetStats(datasetId: number): Promise<DatasetStats> {
-  const { data } = await client.get<DatasetStats>(`/stats/datasets/${datasetId}`);
+export async function getDatasetStats(datasetId: number, signal?: AbortSignal): Promise<DatasetStats> {
+  const { data } = await client.get<DatasetStats>(`/stats/datasets/${datasetId}`, { signal });
   return data;
 }
 

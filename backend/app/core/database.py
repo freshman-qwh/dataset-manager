@@ -4,12 +4,18 @@ from sqlalchemy import inspect, text
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.core.config import get_settings
+from app.core.sqlite_runtime import (
+    configure_sqlite_engine,
+    initialize_sqlite_runtime,
+)
 
 settings = get_settings()
 
-engine = create_engine(
-    settings.database_url,
-    connect_args={"check_same_thread": False},
+engine = configure_sqlite_engine(
+    create_engine(
+        settings.database_url,
+        connect_args={"check_same_thread": False},
+    )
 )
 
 DATASET_COLUMNS = {
@@ -40,6 +46,36 @@ TAG_COLUMNS = {
 
 ANNOTATION_COLUMNS = {
     "class_id": "INTEGER",
+}
+
+SQLITE_INDEXES = {
+    "ix_samples_dataset_filter": (
+        "samples",
+        "dataset_id, file_type, file_status, annotation_progress",
+    ),
+    "ix_samples_dataset_split_review": (
+        "samples",
+        "dataset_id, split, review_status",
+    ),
+    "ix_samples_dataset_hash": ("samples", "dataset_id, file_hash"),
+    "ix_samples_dataset_created": ("samples", "dataset_id, created_at"),
+    "ix_samples_dataset_filename": ("samples", "dataset_id, filename"),
+    "ix_samples_dataset_filename_lower": (
+        "samples",
+        "dataset_id, lower(filename), id",
+    ),
+    "ix_sample_tag_links_tag_sample": (
+        "sample_tag_links",
+        "tag_id, sample_id",
+    ),
+    "ix_annotations_dataset_sample": (
+        "annotations",
+        "dataset_id, sample_id",
+    ),
+    "ix_annotations_dataset_label": (
+        "annotations",
+        "dataset_id, label",
+    ),
 }
 
 
@@ -94,10 +130,26 @@ def _backfill_workflow_semantics() -> None:
         )
 
 
+def _ensure_indexes() -> None:
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    with engine.begin() as connection:
+        for index_name, (table_name, columns) in SQLITE_INDEXES.items():
+            if table_name not in tables:
+                continue
+            connection.execute(
+                text(
+                    f"CREATE INDEX IF NOT EXISTS {index_name} "
+                    f"ON {table_name} ({columns})"
+                )
+            )
+
+
 def init_db() -> None:
     """Create local directories and SQLite tables for the MVP."""
     settings.database_path.parent.mkdir(parents=True, exist_ok=True)
     settings.storage_root.mkdir(parents=True, exist_ok=True)
+    initialize_sqlite_runtime(engine)
 
     # Import models before create_all so SQLModel metadata is complete.
     from app import models  # noqa: F401
@@ -108,6 +160,7 @@ def init_db() -> None:
     _ensure_columns("tags", TAG_COLUMNS)
     _ensure_columns("annotations", ANNOTATION_COLUMNS)
     _backfill_workflow_semantics()
+    _ensure_indexes()
 
 
 def get_session() -> Generator[Session, None, None]:

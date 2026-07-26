@@ -1,9 +1,11 @@
 import json
 
 from fastapi import HTTPException, status
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
+from app.models.annotation import Annotation
 from app.models.tag import Tag
 from app.schemas.tag import TagCreate, TagRead, TagUpdate
 
@@ -89,6 +91,11 @@ def delete_tag(session: Session, tag_id: int) -> None:
     tag = get_tag_or_404(session, tag_id)
     tag.samples.clear()
     session.add(tag)
+    session.exec(
+        update(Annotation)
+        .where(Annotation.tag_id == tag_id)
+        .values(tag_id=None)
+    )
     session.delete(tag)
     session.commit()
 

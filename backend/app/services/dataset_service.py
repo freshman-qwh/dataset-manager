@@ -5,6 +5,7 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.models.dataset import Dataset, utc_now
+from app.models.annotation_class import AnnotationClass
 from app.models.sample import Sample
 from app.models.tag import Tag
 from app.models.training_readiness_state import TrainingReadinessState
@@ -78,6 +79,12 @@ def delete_dataset(session: Session, dataset_id: int) -> None:
     tags = session.exec(select(Tag).where(Tag.dataset_id == dataset_id)).all()
     for tag in tags:
         session.delete(tag)
+
+    annotation_classes = session.exec(
+        select(AnnotationClass).where(AnnotationClass.dataset_id == dataset_id)
+    ).all()
+    for annotation_class in annotation_classes:
+        session.delete(annotation_class)
 
     training_states = session.exec(
         select(TrainingReadinessState).where(

@@ -200,8 +200,15 @@ def repair_dataset_missing_samples(
 
 
 @router.get("/datasets/{dataset_id}/duplicates", response_model=DuplicateReport)
-def dataset_duplicates(dataset_id: int, session: Session = Depends(get_session)) -> DuplicateReport:
-    return duplicate_service.get_duplicate_report(session, dataset_id)
+def dataset_duplicates(
+    dataset_id: int,
+    session: Session = Depends(get_session),
+) -> Response:
+    report = duplicate_service.get_duplicate_report(session, dataset_id)
+    return Response(
+        content=report.model_dump_json(),
+        media_type="application/json",
+    )
 
 
 @router.get("/datasets/{dataset_id}/tags", response_model=list[TagRead])

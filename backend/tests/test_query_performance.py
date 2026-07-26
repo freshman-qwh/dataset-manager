@@ -1,0 +1,164 @@
+from sqlalchemy import event
+from sqlalchemy.pool import StaticPool
+from sqlmodel import Session, SQLModel, create_engine, select
+
+from app.models.dataset import Dataset
+from app.models.sample import Sample
+from app.services import duplicate_service, sample_service, stats_service
+
+
+def _make_engine():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    return engine
+
+
+def _seed_samples(session: Session, count: int) -> int:
+    dataset = Dataset(name=f"query-scale-{count}")
+    session.add(dataset)
+    session.flush()
+    assert dataset.id is not None
+    session.add_all(
+        [
+            Sample(
+                dataset_id=dataset.id,
+                filename=f"image-{index:05d}.png",
+                absolute_path=f"/benchmark/image-{index:05d}.png",
+                relative_path=f"images/image-{index:05d}.png",
+                file_size=1024 + index,
+                extension=".png",
+                file_type="image",
+                mime_type="image/png",
+                file_hash=f"hash-{index // 2}" if index < 20 else f"hash-{index}",
+                split=("train", "val", None)[index % 3],
+                annotation_progress=(
+                    "not_started",
+                    "in_progress",
+                    "completed_empty",
+                    "completed_with_objects",
+                )[index % 4],
+                review_status=("not_reviewed", "in_review", "approved")[index % 3],
+            )
+            for index in range(count)
+        ]
+    )
+    session.commit()
+    return dataset.id
+
+
+def _count_selects(engine, action) -> int:
+    statements = 0
+
+    def before_cursor_execute(_connection, _cursor, statement, _parameters, _context, _executemany):
+        nonlocal statements
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements += 1
+
+    event.listen(engine, "before_cursor_execute", before_cursor_execute)
+    try:
+        action()
+    finally:
+        event.remove(engine, "before_cursor_execute", before_cursor_execute)
+    return statements
+
+
+def test_sample_list_and_navigation_query_counts_do_not_scale_with_dataset_size():
+    engine = _make_engine()
+    with Session(engine) as session:
+        dataset_id = _seed_samples(session, 1_000)
+
+        def list_action():
+            result = sample_service.list_samples(
+                session,
+                dataset_id,
+                search="image-000",
+                file_type="image",
+                page=2,
+                page_size=25,
+                sort_by="filename",
+                sort_order="asc",
+            )
+            assert result.total == 100
+            assert len(result.items) == 25
+
+        list_selects = _count_selects(engine, list_action)
+        assert list_selects <= 3
+
+        target = session.exec(
+            sample_service._apply_sample_filters(  # noqa: SLF001 - focused query regression
+                select(Sample.id),
+                session,
+                dataset_id,
+                search="image-000",
+                file_type="image",
+            ).order_by(Sample.filename)
+        ).all()[50]
+
+        def navigation_action():
+            result = sample_service.get_sample_navigation(
+                session,
+                dataset_id,
+                sample_id=int(target),
+                search="image-000",
+                queue_scope="current_filter",
+                sort_by="filename",
+                sort_order="asc",
+            )
+            assert result.total == 100
+            assert result.current_index == 50
+            assert result.previous_sample is not None
+            assert result.next_sample is not None
+
+        navigation_selects = _count_selects(engine, navigation_action)
+        assert navigation_selects <= 7
+
+        null_split_id = session.exec(
+            select(Sample.id)
+            .where(
+                Sample.dataset_id == dataset_id,
+                Sample.split.is_(None),
+            )
+            .order_by(Sample.id)
+            .limit(1)
+        ).one()
+        null_split_navigation = sample_service.get_sample_navigation(
+            session,
+            dataset_id,
+            sample_id=int(null_split_id),
+            queue_scope="current_filter",
+            sort_by="split",
+            sort_order="asc",
+        )
+        assert null_split_navigation.current_sample is not None
+        assert null_split_navigation.current_sample.split is None
+        assert null_split_navigation.current_index == 0
+        assert null_split_navigation.previous_sample is None
+        assert null_split_navigation.next_sample is not None
+
+
+def test_stats_and_duplicate_report_only_materialize_aggregate_or_duplicate_rows():
+    engine = _make_engine()
+    with Session(engine) as session:
+        dataset_id = _seed_samples(session, 1_000)
+
+        stats_selects = _count_selects(
+            engine,
+            lambda: stats_service.get_dataset_stats(session, dataset_id),
+        )
+        duplicate_result = None
+
+        def duplicate_action():
+            nonlocal duplicate_result
+            duplicate_result = duplicate_service.get_duplicate_report(session, dataset_id)
+
+        duplicate_selects = _count_selects(engine, duplicate_action)
+
+        assert stats_selects <= 13
+        assert duplicate_selects <= 3
+        assert duplicate_result is not None
+        assert duplicate_result.group_count == 10
+        assert duplicate_result.duplicate_sample_count == 20

@@ -1,50 +1,75 @@
-from sqlalchemy import distinct, func
+from sqlalchemy import distinct, exists, func
 from sqlmodel import Session, select
 
 from app.models.annotation import Annotation
-from app.models.sample import Sample
+from app.models.sample import Sample, SampleTagLink
+from app.models.tag import Tag
 from app.schemas.stats import DatasetStats
 from app.services.dataset_service import get_dataset_or_404
 
 
 def get_dataset_stats(session: Session, dataset_id: int) -> DatasetStats:
     get_dataset_or_404(session, dataset_id)
-    samples = session.exec(select(Sample).where(Sample.dataset_id == dataset_id)).all()
-
-    by_file_type: dict[str, int] = {}
-    by_extension: dict[str, int] = {}
-    by_status: dict[str, int] = {}
-    by_split: dict[str, int] = {}
-    by_annotation_progress: dict[str, int] = {}
-    by_review_status: dict[str, int] = {}
-    hash_counts: dict[str, int] = {}
-    tag_counts: dict[str, int] = {}
-    total_size = 0
-    untagged_samples = 0
-
-    for sample in samples:
-        total_size += sample.file_size
-        by_file_type[sample.file_type] = by_file_type.get(sample.file_type, 0) + 1
-        by_extension[sample.extension] = by_extension.get(sample.extension, 0) + 1
-        by_status[sample.file_status] = by_status.get(sample.file_status, 0) + 1
-        split = sample.split or "unassigned"
-        by_split[split] = by_split.get(split, 0) + 1
-        annotation_progress = sample.annotation_progress or "not_started"
-        by_annotation_progress[annotation_progress] = by_annotation_progress.get(annotation_progress, 0) + 1
-        review_status = sample.review_status or "not_reviewed"
-        by_review_status[review_status] = by_review_status.get(review_status, 0) + 1
-        hash_counts[sample.file_hash] = hash_counts.get(sample.file_hash, 0) + 1
-        if not sample.tags:
-            untagged_samples += 1
-        for tag in sample.tags:
-            tag_counts[tag.name] = tag_counts.get(tag.name, 0) + 1
-
-    duplicate_counts = [count for count in hash_counts.values() if count > 1]
-    annotation_count = session.exec(
-        select(func.count(Annotation.id)).where(Annotation.dataset_id == dataset_id)
+    sample_count, total_size = session.exec(
+        select(
+            func.count(Sample.id),
+            func.coalesce(func.sum(Sample.file_size), 0),
+        ).where(Sample.dataset_id == dataset_id)
     ).one()
-    samples_with_objects = session.exec(
-        select(func.count(distinct(Annotation.sample_id))).where(Annotation.dataset_id == dataset_id)
+    by_file_type = _group_counts(session, dataset_id, Sample.file_type)
+    by_extension = _group_counts(session, dataset_id, Sample.extension)
+    by_status = _group_counts(session, dataset_id, Sample.file_status)
+    by_split = _group_counts(
+        session,
+        dataset_id,
+        func.coalesce(Sample.split, "unassigned"),
+    )
+    by_annotation_progress = _group_counts(
+        session,
+        dataset_id,
+        func.coalesce(Sample.annotation_progress, "not_started"),
+    )
+    by_review_status = _group_counts(
+        session,
+        dataset_id,
+        func.coalesce(Sample.review_status, "not_reviewed"),
+    )
+    duplicate_counts = [
+        int(count)
+        for count in session.exec(
+            select(func.count(Sample.id))
+            .where(
+                Sample.dataset_id == dataset_id,
+                Sample.file_hash != "",
+            )
+            .group_by(Sample.file_hash)
+            .having(func.count(Sample.id) > 1)
+        ).all()
+    ]
+    tag_counts = {
+        name: int(count)
+        for name, count in session.exec(
+            select(Tag.name, func.count(SampleTagLink.sample_id))
+            .join(SampleTagLink, SampleTagLink.tag_id == Tag.id)
+            .where(Tag.dataset_id == dataset_id)
+            .group_by(Tag.id, Tag.name)
+        ).all()
+    }
+    untagged_samples = session.exec(
+        select(func.count(Sample.id)).where(
+            Sample.dataset_id == dataset_id,
+            ~exists(
+                select(SampleTagLink.sample_id).where(
+                    SampleTagLink.sample_id == Sample.id
+                )
+            ),
+        )
+    ).one()
+    annotation_count, samples_with_objects = session.exec(
+        select(
+            func.count(Annotation.id),
+            func.count(distinct(Annotation.sample_id)),
+        ).where(Annotation.dataset_id == dataset_id)
     ).one()
     annotation_label_rows = session.exec(
         select(Annotation.label, func.count(Annotation.id))
@@ -55,8 +80,8 @@ def get_dataset_stats(session: Session, dataset_id: int) -> DatasetStats:
 
     return DatasetStats(
         dataset_id=dataset_id,
-        sample_count=len(samples),
-        total_size=total_size,
+        sample_count=int(sample_count),
+        total_size=int(total_size),
         by_file_type=by_file_type,
         by_extension=by_extension,
         by_status=by_status,
@@ -71,3 +96,16 @@ def get_dataset_stats(session: Session, dataset_id: int) -> DatasetStats:
         annotation_count=int(annotation_count),
         by_annotation_label=by_annotation_label,
     )
+
+
+def _group_counts(session: Session, dataset_id: int, group_expression) -> dict[str, int]:
+    rows = session.exec(
+        select(group_expression, func.count(Sample.id))
+        .where(Sample.dataset_id == dataset_id)
+        .group_by(group_expression)
+    ).all()
+    return {
+        str(value): int(count)
+        for value, count in rows
+        if value is not None
+    }

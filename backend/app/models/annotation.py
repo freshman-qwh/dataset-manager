@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from sqlalchemy import Index
 from sqlmodel import Field, SQLModel
 
 from app.models.dataset import utc_now
@@ -7,6 +8,10 @@ from app.models.dataset import utc_now
 
 class Annotation(SQLModel, table=True):
     __tablename__ = "annotations"
+    __table_args__ = (
+        Index("ix_annotations_dataset_sample", "dataset_id", "sample_id"),
+        Index("ix_annotations_dataset_label", "dataset_id", "label"),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     sample_id: int = Field(foreign_key="samples.id", index=True)

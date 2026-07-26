@@ -82,6 +82,11 @@ import type {
 } from "../types/dataset";
 import type { AnnotationExportFormat } from "../types/annotationExport";
 import { buildDefaultPendingQueue, buildReviewQueue, readAnnotationQueue } from "../utils/annotationQueue";
+import {
+  invalidateDatasetDetailCache,
+  readDatasetDetailCache,
+  writeDatasetDetailCache
+} from "../utils/datasetDetailCache";
 import { reviewStatusCopy, uiCopy } from "../utils/uiCopy";
 
 function formatBytes(value: number): string {
@@ -131,27 +136,28 @@ export default function DatasetDetailPage() {
   const params = useParams();
   const navigate = useNavigate();
   const datasetId = Number(params.datasetId);
-  const [dataset, setDataset] = useState<Dataset | null>(null);
-  const [stats, setStats] = useState<DatasetStats | null>(null);
-  const [samples, setSamples] = useState<Sample[]>([]);
-  const [sampleTotal, setSampleTotal] = useState(0);
-  const [duplicateReport, setDuplicateReport] = useState<DuplicateReport | null>(null);
+  const [initialCache] = useState(() => readDatasetDetailCache(datasetId));
+  const [dataset, setDataset] = useState<Dataset | null>(initialCache?.dataset ?? null);
+  const [stats, setStats] = useState<DatasetStats | null>(initialCache?.stats ?? null);
+  const [samples, setSamples] = useState<Sample[]>(initialCache?.samples ?? []);
+  const [sampleTotal, setSampleTotal] = useState(initialCache?.sampleTotal ?? 0);
+  const [duplicateReport, setDuplicateReport] = useState<DuplicateReport | null>(initialCache?.duplicateReport ?? null);
   const [qualityReport, setQualityReport] = useState<DatasetQualityReport | null>(null);
-  const [availableTags, setAvailableTags] = useState<Tag[]>([]);
+  const [availableTags, setAvailableTags] = useState<Tag[]>(initialCache?.availableTags ?? []);
   const [selected, setSelected] = useState<Sample | null>(null);
   const [selectedSampleIds, setSelectedSampleIds] = useState<Set<number>>(new Set());
   const [lastScanResult, setLastScanResult] = useState<ScanResult | null>(null);
-  const [search, setSearch] = useState("");
-  const [fileType, setFileType] = useState("");
-  const [fileStatus, setFileStatus] = useState("");
-  const [tag, setTag] = useState("");
-  const [split, setSplit] = useState("");
-  const [reviewStatus, setReviewStatus] = useState("");
-  const [annotationProgress, setAnnotationProgress] = useState("");
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(60);
-  const [sortBy, setSortBy] = useState("created_at");
-  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const [search, setSearch] = useState(initialCache?.filters.search ?? "");
+  const [fileType, setFileType] = useState(initialCache?.filters.fileType ?? "");
+  const [fileStatus, setFileStatus] = useState(initialCache?.filters.fileStatus ?? "");
+  const [tag, setTag] = useState(initialCache?.filters.tag ?? "");
+  const [split, setSplit] = useState(initialCache?.filters.split ?? "");
+  const [reviewStatus, setReviewStatus] = useState(initialCache?.filters.reviewStatus ?? "");
+  const [annotationProgress, setAnnotationProgress] = useState(initialCache?.filters.annotationProgress ?? "");
+  const [page, setPage] = useState(initialCache?.filters.page ?? 1);
+  const [pageSize, setPageSize] = useState(initialCache?.filters.pageSize ?? 60);
+  const [sortBy, setSortBy] = useState(initialCache?.filters.sortBy ?? "created_at");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">(initialCache?.filters.sortOrder ?? "desc");
   const [exportFormat, setExportFormat] = useState("manifest");
   const [scanOpen, setScanOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -184,23 +190,31 @@ export default function DatasetDetailPage() {
   const [trainingReadinessError, setTrainingReadinessError] = useState<string | null>(null);
   const autoScannedDatasetIds = useRef<Set<number>>(new Set());
   const samplesSectionRef = useRef<HTMLElement | null>(null);
+  const overviewRequestIdRef = useRef(0);
+  const samplesRequestIdRef = useRef(0);
+  const detailCacheStateRef = useRef<Parameters<typeof writeDatasetDetailCache>[0] | null>(null);
   const debouncedSearch = useDebouncedValue(search);
   const debouncedTag = useDebouncedValue(tag);
 
-  const loadOverview = useCallback(async () => {
+  const loadOverview = useCallback(async (signal?: AbortSignal) => {
+    const requestId = ++overviewRequestIdRef.current;
     const [nextDataset, nextStats, nextDuplicateReport, nextTags] = await Promise.all([
-      getDataset(datasetId),
-      getDatasetStats(datasetId),
-      getDuplicateReport(datasetId),
-      listTags(datasetId)
+      getDataset(datasetId, signal),
+      getDatasetStats(datasetId, signal),
+      getDuplicateReport(datasetId, signal),
+      listTags(datasetId, signal)
     ]);
+    if (signal?.aborted || requestId !== overviewRequestIdRef.current) {
+      return;
+    }
     setDataset(nextDataset);
     setStats(nextStats);
     setDuplicateReport(nextDuplicateReport);
     setAvailableTags(nextTags);
   }, [datasetId]);
 
-  const loadSamples = useCallback(async () => {
+  const loadSamples = useCallback(async (signal?: AbortSignal) => {
+    const requestId = ++samplesRequestIdRef.current;
     const nextSamples = await listSamples({
       datasetId,
       search: debouncedSearch,
@@ -214,7 +228,10 @@ export default function DatasetDetailPage() {
       pageSize,
       sortBy,
       sortOrder
-    });
+    }, signal);
+    if (signal?.aborted || requestId !== samplesRequestIdRef.current) {
+      return;
+    }
     setSamples(nextSamples.items);
     setSampleTotal(nextSamples.total);
     if (nextSamples.page !== page) {
@@ -250,16 +267,58 @@ export default function DatasetDetailPage() {
     if (!Number.isFinite(datasetId)) {
       return;
     }
+    const controller = new AbortController();
     setError(null);
-    void loadOverview().catch(() => setError("数据集加载失败"));
+    void loadOverview(controller.signal).catch(() => {
+      if (!controller.signal.aborted) {
+        setError("数据集加载失败");
+      }
+    });
+    return () => controller.abort();
   }, [datasetId, loadOverview]);
 
   useEffect(() => {
     if (!Number.isFinite(datasetId)) {
       return;
     }
-    void loadSamples().catch(() => setError("样本加载失败"));
+    const controller = new AbortController();
+    void loadSamples(controller.signal).catch(() => {
+      if (!controller.signal.aborted) {
+        setError("样本加载失败");
+      }
+    });
+    return () => controller.abort();
   }, [datasetId, loadSamples]);
+
+  detailCacheStateRef.current = {
+    datasetId,
+    dataset,
+    stats,
+    samples,
+    sampleTotal,
+    duplicateReport,
+    availableTags,
+    filters: {
+      search,
+      fileType,
+      fileStatus,
+      tag,
+      split,
+      reviewStatus,
+      annotationProgress,
+      page,
+      pageSize,
+      sortBy,
+      sortOrder
+    },
+    savedAt: Date.now()
+  };
+
+  useEffect(() => () => {
+    if (detailCacheStateRef.current?.datasetId === datasetId) {
+      writeDatasetDetailCache(detailCacheStateRef.current);
+    }
+  }, [datasetId]);
 
   const imageCount = stats?.by_file_type.image ?? 0;
   const videoCount = stats?.by_file_type.video ?? 0;
@@ -540,6 +599,8 @@ export default function DatasetDetailPage() {
     setDeletingDataset(true);
     try {
       await deleteDataset(datasetId);
+      detailCacheStateRef.current = null;
+      invalidateDatasetDetailCache(datasetId);
       navigate("/");
     } finally {
       setDeletingDataset(false);

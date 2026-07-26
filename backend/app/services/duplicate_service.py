@@ -1,5 +1,7 @@
 from collections import defaultdict
 
+from sqlalchemy import func
+from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.models.sample import Sample
@@ -10,7 +12,24 @@ from app.services.sample_service import to_sample_read
 
 def get_duplicate_report(session: Session, dataset_id: int) -> DuplicateReport:
     get_dataset_or_404(session, dataset_id)
-    samples = session.exec(select(Sample).where(Sample.dataset_id == dataset_id)).all()
+    duplicate_hashes = (
+        select(Sample.file_hash)
+        .where(
+            Sample.dataset_id == dataset_id,
+            Sample.file_hash != "",
+        )
+        .group_by(Sample.file_hash)
+        .having(func.count(Sample.id) > 1)
+    )
+    samples = session.exec(
+        select(Sample)
+        .where(
+            Sample.dataset_id == dataset_id,
+            Sample.file_hash.in_(duplicate_hashes),
+        )
+        .order_by(Sample.file_hash, Sample.relative_path)
+        .options(selectinload(Sample.tags))
+    ).all()
     groups: dict[str, list[Sample]] = defaultdict(list)
     for sample in samples:
         if sample.file_hash:

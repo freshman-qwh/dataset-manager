@@ -4,11 +4,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import HTTPException, status
-from sqlalchemy import or_
+from sqlalchemy import and_, asc, desc, exists, false, func, or_
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
-from app.models.sample import Sample
+from app.models.sample import Sample, SampleTagLink
 from app.models.tag import Tag
 from app.core.workflow import ANNOTATION_PROGRESS_VALUES, REVIEW_STATUS_VALUES
 from app.schemas.sample import (
@@ -25,7 +26,7 @@ from app.schemas.sample import (
     SampleUpdate,
 )
 from app.services.dataset_service import get_dataset_or_404
-from app.services.tag_service import find_tag_by_name_or_alias, tag_matches_value, tag_to_read
+from app.services.tag_service import find_tag_by_name_or_alias, tag_to_read
 from app.models.dataset import utc_now
 from app.utils.file_types import detect_file_type, detect_mime_type
 from app.utils.hashing import sha256_file
@@ -42,6 +43,17 @@ SORTABLE_SAMPLE_FIELDS = {
     "filename",
     "relative_path",
     "file_size",
+    "extension",
+    "file_type",
+    "file_status",
+    "split",
+    "review_status",
+    "annotation_progress",
+}
+
+TEXT_SORT_FIELDS = {
+    "filename",
+    "relative_path",
     "extension",
     "file_type",
     "file_status",
@@ -92,66 +104,29 @@ def get_filtered_samples(
     sort_by: str = "created_at",
     sort_order: str = "desc",
 ) -> list[Sample]:
-    statement = select(Sample).where(Sample.dataset_id == dataset_id)
-    duplicate_only = file_status == "duplicate"
-    if file_type:
-        statement = statement.where(Sample.file_type == file_type)
-    if file_status and not duplicate_only:
-        statement = statement.where(Sample.file_status == file_status)
-    if split:
-        if split == "unassigned":
-            statement = statement.where(Sample.split.is_(None))
-        else:
-            statement = statement.where(Sample.split == split)
-    if review_status:
-        statement = statement.where(Sample.review_status == review_status)
-    if annotation_progress:
-        statement = statement.where(Sample.annotation_progress == annotation_progress)
-    if sample_ids:
-        statement = statement.where(Sample.id.in_(sample_ids))
-
-    samples = session.exec(statement).all()
-
-    if duplicate_only:
-        duplicate_hashes = _duplicate_hashes(session, dataset_id)
-        samples = [sample for sample in samples if sample.file_hash in duplicate_hashes]
-
-    if search:
-        needle = search.casefold()
-        samples = [
-            sample
-            for sample in samples
-            if needle in sample.filename.casefold()
-            or needle in sample.relative_path.casefold()
-            or needle in sample.file_hash.casefold()
-        ]
-
-    if tag:
-        normalized_tag = tag.strip()
-        if not normalized_tag:
-            tag = None
-        elif normalized_tag == UNTAGGED_FILTER:
-            samples = [sample for sample in samples if not sample.tags]
-            tag = None
-        elif normalized_tag == TAGGED_FILTER:
-            samples = [sample for sample in samples if sample.tags]
-            tag = None
-        else:
-            tag = normalized_tag
-
-    if tag:
-        samples = [
-            sample
-            for sample in samples
-            if any(tag_matches_value(existing, tag) for existing in sample.tags)
-        ]
-
-    sort_field = sort_by if sort_by in SORTABLE_SAMPLE_FIELDS else "created_at"
-    reverse = sort_order.lower() != "asc"
-    sorted_samples = sorted(samples, key=lambda sample: _sample_sort_value(sample, sort_field), reverse=reverse)
-    if duplicate_only:
-        return _group_duplicate_samples(sorted_samples)
-    return sorted_samples
+    safe_sort_by = sort_by if sort_by in SORTABLE_SAMPLE_FIELDS else "created_at"
+    safe_sort_order = "asc" if sort_order.lower() == "asc" else "desc"
+    statement = _apply_sample_filters(
+        select(Sample),
+        session,
+        dataset_id,
+        search=search,
+        file_type=file_type,
+        file_status=file_status,
+        tag=tag,
+        split=split,
+        review_status=review_status,
+        annotation_progress=annotation_progress,
+        sample_ids=sample_ids,
+    )
+    statement = statement.order_by(
+        *_sample_order_clauses(
+            safe_sort_by,
+            safe_sort_order,
+            duplicate_only=file_status == "duplicate",
+        )
+    ).options(selectinload(Sample.tags))
+    return list(session.exec(statement).all())
 
 
 def list_samples(
@@ -172,7 +147,8 @@ def list_samples(
     safe_page_size = min(max(page_size, 1), 200)
     safe_sort_by = sort_by if sort_by in SORTABLE_SAMPLE_FIELDS else "created_at"
     safe_sort_order = "asc" if sort_order.lower() == "asc" else "desc"
-    samples = get_filtered_samples(
+    filtered_ids = _apply_sample_filters(
+        select(Sample.id),
         session,
         dataset_id,
         search=search,
@@ -182,16 +158,38 @@ def list_samples(
         split=split,
         review_status=review_status,
         annotation_progress=annotation_progress,
-        sort_by=safe_sort_by,
-        sort_order=safe_sort_order,
     )
-    page_count = max((len(samples) + safe_page_size - 1) // safe_page_size, 1)
+    total = int(session.exec(select(func.count()).select_from(filtered_ids.subquery())).one())
+    page_count = max((total + safe_page_size - 1) // safe_page_size, 1)
     safe_page = min(max(page, 1), page_count)
-    start = (safe_page - 1) * safe_page_size
-    end = start + safe_page_size
+    statement = _apply_sample_filters(
+        select(Sample),
+        session,
+        dataset_id,
+        search=search,
+        file_type=file_type,
+        file_status=file_status,
+        tag=tag,
+        split=split,
+        review_status=review_status,
+        annotation_progress=annotation_progress,
+    )
+    statement = (
+        statement.order_by(
+            *_sample_order_clauses(
+                safe_sort_by,
+                safe_sort_order,
+                duplicate_only=file_status == "duplicate",
+            )
+        )
+        .offset((safe_page - 1) * safe_page_size)
+        .limit(safe_page_size)
+        .options(selectinload(Sample.tags))
+    )
+    samples = list(session.exec(statement).all())
     return SampleListResponse(
-        items=[to_sample_read(sample) for sample in samples[start:end]],
-        total=len(samples),
+        items=[to_sample_read(sample) for sample in samples],
+        total=total,
         page=safe_page,
         page_size=safe_page_size,
         sort_by=safe_sort_by,
@@ -231,109 +229,152 @@ def get_sample_navigation(
         if current_sample and current_sample.dataset_id == dataset_id:
             queue_split = current_sample.split or "unassigned"
 
-    use_index_queue = safe_queue_scope in {"all_pending", "current_split"} or (
-        safe_queue_scope == "current_filter"
-        and context_status == "normal"
-        and not search
-        and not tag
+    queue_file_status = context_status if safe_queue_scope == "current_filter" else "normal"
+    queue_split_filter = (
+        queue_split
+        if safe_queue_scope == "current_split"
+        else split if safe_queue_scope == "current_filter" else None
     )
-    if use_index_queue:
-        sample_ids = _get_queue_ids(
+    order_clauses = _sample_order_clauses(
+        safe_sort_by,
+        safe_sort_order,
+        duplicate_only=queue_file_status == "duplicate",
+    )
+    filter_options = {
+        "search": search if safe_queue_scope == "current_filter" else None,
+        "file_type": "image",
+        "file_status": queue_file_status,
+        "tag": tag if safe_queue_scope == "current_filter" else None,
+        "split": queue_split_filter,
+        "review_status": review_status if safe_queue_scope == "current_filter" else None,
+        "annotation_progress": annotation_progress if safe_queue_scope == "current_filter" else None,
+        "pending_only": safe_queue_scope in {"all_pending", "current_split"},
+    }
+    if queue_file_status != "duplicate":
+        current_index, total, current_id, previous_id, next_id = _get_indexed_navigation_ids(
             session,
             dataset_id,
-            split=(
-                queue_split
-                if safe_queue_scope == "current_split"
-                else split if safe_queue_scope == "current_filter" else None
+            sample_id,
+            safe_sort_by,
+            safe_sort_order,
+            filter_options,
+        )
+    else:
+        ranked_statement = _apply_sample_filters(
+            select(
+                Sample.id.label("sample_id"),
+                func.row_number().over(order_by=order_clauses).label("position"),
+                func.lag(Sample.id).over(order_by=order_clauses).label("previous_id"),
+                func.lead(Sample.id).over(order_by=order_clauses).label("next_id"),
+                func.count().over().label("total"),
             ),
-            review_status=review_status if safe_queue_scope == "current_filter" else None,
-            annotation_progress=annotation_progress if safe_queue_scope == "current_filter" else None,
-            pending_only=safe_queue_scope in {"all_pending", "current_split"},
-            sort_by=safe_sort_by,
-            sort_order=safe_sort_order,
+            session,
+            dataset_id,
+            **filter_options,
         )
+        # Duplicate is a virtual filter; annotation navigation still excludes
+        # missing and unreadable image records from the resulting queue.
+        ranked_statement = ranked_statement.where(Sample.file_status == "normal")
+        ranked = ranked_statement.subquery()
+        row_statement = select(
+            ranked.c.sample_id,
+            ranked.c.position,
+            ranked.c.previous_id,
+            ranked.c.next_id,
+            ranked.c.total,
+        )
+        if sample_id is None:
+            row_statement = row_statement.order_by(ranked.c.position).limit(1)
+        else:
+            row_statement = row_statement.where(ranked.c.sample_id == sample_id)
+        row = session.exec(row_statement).first()
         current_index = None
-        if sample_id is not None:
-            current_index = next((index for index, item_id in enumerate(sample_ids) if item_id == sample_id), None)
-        elif sample_ids:
-            current_index = 0
-        current_id = sample_ids[current_index] if current_index is not None else None
-        previous_id = sample_ids[current_index - 1] if current_index is not None and current_index > 0 else None
-        next_id = (
-            sample_ids[current_index + 1]
-            if current_index is not None and current_index < len(sample_ids) - 1
-            else None
-        )
-        current_sample = session.get(Sample, current_id) if current_id is not None else None
-        previous_sample = session.get(Sample, previous_id) if previous_id is not None else None
-        next_sample = session.get(Sample, next_id) if next_id is not None else None
-        return SampleNavigationResponse(
-            current_sample=to_sample_read(current_sample) if current_sample else None,
-            previous_sample=to_sample_read(previous_sample) if previous_sample else None,
-            next_sample=to_sample_read(next_sample) if next_sample else None,
-            current_index=current_index,
-            total=len(sample_ids),
-            remaining=max(len(sample_ids) - (1 if current_index is not None else 0), 0),
-            queue_scope=safe_queue_scope,
-            sort_by=safe_sort_by,
-            sort_order=safe_sort_order,
-        )
+        total = 0
+        current_id = None
+        previous_id = None
+        next_id = None
+        if row is not None:
+            current_id = int(row[0])
+            current_index = int(row[1]) - 1
+            previous_id = int(row[2]) if row[2] is not None else None
+            next_id = int(row[3]) if row[3] is not None else None
+            total = int(row[4])
+        else:
+            total_statement = _apply_sample_filters(
+                select(func.count(Sample.id)),
+                session,
+                dataset_id,
+                **filter_options,
+            ).where(Sample.file_status == "normal")
+            total = int(session.exec(total_statement).one())
 
-    samples = get_filtered_samples(
-        session,
-        dataset_id,
-        search=search if safe_queue_scope == "current_filter" else None,
-        file_type="image",
-        file_status=context_status,
-        tag=tag if safe_queue_scope == "current_filter" else None,
-        split=queue_split if safe_queue_scope != "all_pending" else None,
-        review_status=review_status if safe_queue_scope == "current_filter" else None,
-        annotation_progress=annotation_progress if safe_queue_scope == "current_filter" else None,
-        sort_by=safe_sort_by,
-        sort_order=safe_sort_order,
-    )
-    # The duplicate status is a virtual filter. Keep the annotation workspace
-    # constrained to normal image files after duplicate hash filtering.
-    samples = [sample for sample in samples if sample.file_type == "image" and sample.file_status == "normal"]
-    current_index: int | None = None
-    if sample_id is not None:
-        current_index = next((index for index, sample in enumerate(samples) if sample.id == sample_id), None)
-    elif samples:
-        current_index = 0
-
-    current_sample = samples[current_index] if current_index is not None else None
-    previous_sample = samples[current_index - 1] if current_index is not None and current_index > 0 else None
-    next_sample = samples[current_index + 1] if current_index is not None and current_index < len(samples) - 1 else None
+    samples_by_id: dict[int, Sample] = {}
+    neighbor_ids = [item_id for item_id in (current_id, previous_id, next_id) if item_id is not None]
+    if neighbor_ids:
+        neighbor_statement = (
+            select(Sample)
+            .where(Sample.id.in_(neighbor_ids))
+            .options(selectinload(Sample.tags))
+        )
+        samples_by_id = {
+            sample.id: sample
+            for sample in session.exec(neighbor_statement).all()
+            if sample.id is not None
+        }
+    current_sample = samples_by_id.get(current_id) if current_id is not None else None
+    previous_sample = samples_by_id.get(previous_id) if previous_id is not None else None
+    next_sample = samples_by_id.get(next_id) if next_id is not None else None
 
     return SampleNavigationResponse(
         current_sample=to_sample_read(current_sample) if current_sample else None,
         previous_sample=to_sample_read(previous_sample) if previous_sample else None,
         next_sample=to_sample_read(next_sample) if next_sample else None,
         current_index=current_index,
-        total=len(samples),
-        remaining=max(len(samples) - (1 if current_index is not None else 0), 0),
+        total=total,
+        remaining=max(total - (1 if current_index is not None else 0), 0),
         queue_scope=safe_queue_scope,
         sort_by=safe_sort_by,
         sort_order=safe_sort_order,
     )
 
 
-def _get_queue_ids(
+def _apply_sample_filters(
+    statement,
     session: Session,
     dataset_id: int,
-    split: str | None,
-    review_status: str | None,
-    annotation_progress: str | None,
-    pending_only: bool,
-    sort_by: str,
-    sort_order: str,
-) -> list[int]:
-    sort_column = getattr(Sample, sort_by)
-    statement = select(Sample.id, sort_column).where(
-        Sample.dataset_id == dataset_id,
-        Sample.file_type == "image",
-        Sample.file_status == "normal",
-    )
+    *,
+    search: str | None = None,
+    file_type: str | None = None,
+    file_status: str | None = None,
+    tag: str | None = None,
+    split: str | None = None,
+    review_status: str | None = None,
+    annotation_progress: str | None = None,
+    sample_ids: list[int] | None = None,
+    pending_only: bool = False,
+):
+    statement = statement.where(Sample.dataset_id == dataset_id)
+    if file_type:
+        statement = statement.where(Sample.file_type == file_type)
+    if file_status == "duplicate":
+        duplicate_hashes = (
+            select(Sample.file_hash)
+            .where(
+                Sample.dataset_id == dataset_id,
+                Sample.file_hash != "",
+            )
+            .group_by(Sample.file_hash)
+            .having(func.count(Sample.id) > 1)
+        )
+        statement = statement.where(Sample.file_hash.in_(duplicate_hashes))
+    elif file_status:
+        statement = statement.where(Sample.file_status == file_status)
+    if split == "unassigned":
+        statement = statement.where(Sample.split.is_(None))
+    elif split:
+        statement = statement.where(Sample.split == split)
+    if review_status:
+        statement = statement.where(Sample.review_status == review_status)
     if pending_only:
         statement = statement.where(
             or_(
@@ -344,20 +385,198 @@ def _get_queue_ids(
         )
     elif annotation_progress:
         statement = statement.where(Sample.annotation_progress == annotation_progress)
-    if review_status:
-        statement = statement.where(Sample.review_status == review_status)
-    if split == "unassigned":
-        statement = statement.where(Sample.split.is_(None))
-    elif split:
-        statement = statement.where(Sample.split == split)
-    rows = session.exec(statement).all()
-    reverse = sort_order != "asc"
-    sorted_rows = sorted(
-        rows,
-        key=lambda row: row[1].casefold() if isinstance(row[1], str) else row[1] if row[1] is not None else "",
-        reverse=reverse,
+    if sample_ids:
+        statement = statement.where(Sample.id.in_(sample_ids))
+
+    normalized_search = (search or "").strip().casefold()
+    if normalized_search:
+        escaped = (
+            normalized_search
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        pattern = f"%{escaped}%"
+        statement = statement.where(
+            or_(
+                func.lower(Sample.filename).like(pattern, escape="\\"),
+                func.lower(Sample.relative_path).like(pattern, escape="\\"),
+                func.lower(Sample.file_hash).like(pattern, escape="\\"),
+            )
+        )
+
+    normalized_tag = (tag or "").strip()
+    tag_link_exists = exists(
+        select(SampleTagLink.sample_id).where(SampleTagLink.sample_id == Sample.id)
     )
-    return [int(row[0]) for row in sorted_rows if row[0] is not None]
+    if normalized_tag == UNTAGGED_FILTER:
+        statement = statement.where(~tag_link_exists)
+    elif normalized_tag == TAGGED_FILTER:
+        statement = statement.where(tag_link_exists)
+    elif normalized_tag:
+        matched_tag = find_tag_by_name_or_alias(session, dataset_id, normalized_tag)
+        if matched_tag is None or matched_tag.id is None:
+            statement = statement.where(false())
+        else:
+            statement = statement.where(
+                exists(
+                    select(SampleTagLink.sample_id).where(
+                        SampleTagLink.sample_id == Sample.id,
+                        SampleTagLink.tag_id == matched_tag.id,
+                    )
+                )
+            )
+    return statement
+
+
+def _get_indexed_navigation_ids(
+    session: Session,
+    dataset_id: int,
+    sample_id: int | None,
+    sort_by: str,
+    sort_order: str,
+    filter_options: dict[str, object],
+) -> tuple[int | None, int, int | None, int | None, int | None]:
+    def filtered(statement):
+        return _apply_sample_filters(
+            statement,
+            session,
+            dataset_id,
+            **filter_options,
+        )
+
+    total = int(session.exec(filtered(select(func.count(Sample.id)))).one())
+    order_clauses = _sample_order_clauses(sort_by, sort_order)
+    if sample_id is None:
+        current_id = session.exec(
+            filtered(select(Sample.id)).order_by(*order_clauses).limit(1)
+        ).first()
+        if current_id is None:
+            return None, total, None, None, None
+        next_id = session.exec(
+            filtered(select(Sample.id))
+            .where(
+                _sample_relative_condition(
+                    sort_by,
+                    sort_order,
+                    _sample_sort_value_for_id(session, int(current_id), sort_by),
+                    int(current_id),
+                    before=False,
+                )
+            )
+            .order_by(*order_clauses)
+            .limit(1)
+        ).first()
+        return 0, total, int(current_id), None, int(next_id) if next_id is not None else None
+
+    current_value = session.exec(
+        filtered(select(getattr(Sample, sort_by))).where(Sample.id == sample_id)
+    ).first()
+    if current_value is None and not session.exec(
+        filtered(select(Sample.id)).where(Sample.id == sample_id)
+    ).first():
+        return None, total, None, None, None
+    before_condition = _sample_relative_condition(
+        sort_by,
+        sort_order,
+        current_value,
+        sample_id,
+        before=True,
+    )
+    after_condition = _sample_relative_condition(
+        sort_by,
+        sort_order,
+        current_value,
+        sample_id,
+        before=False,
+    )
+    current_index = int(
+        session.exec(
+            filtered(select(func.count(Sample.id))).where(before_condition)
+        ).one()
+    )
+    reverse_order = "desc" if sort_order == "asc" else "asc"
+    previous_id = session.exec(
+        filtered(select(Sample.id))
+        .where(before_condition)
+        .order_by(*_sample_order_clauses(sort_by, reverse_order))
+        .limit(1)
+    ).first()
+    next_id = session.exec(
+        filtered(select(Sample.id))
+        .where(after_condition)
+        .order_by(*order_clauses)
+        .limit(1)
+    ).first()
+    return (
+        current_index,
+        total,
+        sample_id,
+        int(previous_id) if previous_id is not None else None,
+        int(next_id) if next_id is not None else None,
+    )
+
+
+def _sample_sort_value_for_id(
+    session: Session,
+    sample_id: int,
+    sort_by: str,
+):
+    return session.exec(
+        select(getattr(Sample, sort_by)).where(Sample.id == sample_id)
+    ).one()
+
+
+def _sample_relative_condition(
+    sort_by: str,
+    sort_order: str,
+    current_value,
+    current_id: int,
+    *,
+    before: bool,
+):
+    column = getattr(Sample, sort_by)
+    expression = func.lower(column) if sort_by in TEXT_SORT_FIELDS else column
+    normalized_value = (
+        current_value.casefold()
+        if isinstance(current_value, str) and sort_by in TEXT_SORT_FIELDS
+        else current_value
+    )
+    id_before = Sample.id < current_id if sort_order == "asc" else Sample.id > current_id
+    id_after = Sample.id > current_id if sort_order == "asc" else Sample.id < current_id
+
+    if normalized_value is None:
+        same_value_before = and_(column.is_(None), id_before)
+        same_value_after = and_(column.is_(None), id_after)
+        if sort_order == "asc":
+            return same_value_before if before else or_(column.is_not(None), same_value_after)
+        return or_(column.is_not(None), same_value_before) if before else same_value_after
+
+    same_value_before = and_(expression == normalized_value, id_before)
+    same_value_after = and_(expression == normalized_value, id_after)
+    if sort_order == "asc":
+        if before:
+            return or_(column.is_(None), expression < normalized_value, same_value_before)
+        return or_(expression > normalized_value, same_value_after)
+    if before:
+        return or_(expression > normalized_value, same_value_before)
+    return or_(column.is_(None), expression < normalized_value, same_value_after)
+
+
+def _sample_order_clauses(
+    sort_by: str,
+    sort_order: str,
+    *,
+    duplicate_only: bool = False,
+):
+    sort_column = getattr(Sample, sort_by)
+    sort_expression = func.lower(sort_column) if sort_by in TEXT_SORT_FIELDS else sort_column
+    direction = asc if sort_order == "asc" else desc
+    clauses = []
+    if duplicate_only:
+        clauses.append(asc(Sample.file_hash))
+    clauses.extend((direction(sort_expression), direction(Sample.id)))
+    return clauses
 
 
 def get_sample_or_404(session: Session, sample_id: int) -> Sample:
@@ -682,35 +901,6 @@ def _clean_tag_names(raw_names: list[str]) -> list[str]:
             seen.add(key)
             unique_names.append(name)
     return unique_names
-
-
-def _duplicate_hashes(session: Session, dataset_id: int) -> set[str]:
-    samples = session.exec(select(Sample).where(Sample.dataset_id == dataset_id)).all()
-    counts: dict[str, int] = {}
-    for sample in samples:
-        if sample.file_hash:
-            counts[sample.file_hash] = counts.get(sample.file_hash, 0) + 1
-    return {file_hash for file_hash, count in counts.items() if count > 1}
-
-
-def _sample_sort_value(sample: Sample, sort_by: str):
-    value = getattr(sample, sort_by)
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value.casefold()
-    return value
-
-
-def _group_duplicate_samples(samples: list[Sample]) -> list[Sample]:
-    grouped: dict[str, list[Sample]] = {}
-    group_order: list[str] = []
-    for sample in samples:
-        if sample.file_hash not in grouped:
-            grouped[sample.file_hash] = []
-            group_order.append(sample.file_hash)
-        grouped[sample.file_hash].append(sample)
-    return [sample for file_hash in group_order for sample in grouped[file_hash]]
 
 
 def _metadata_from_json(value: str | None) -> dict[str, object]:
