@@ -18,4 +18,8 @@ class ScanResult(BaseModel):
     missing: int
     skipped_existing: int
     skipped_unsupported: int
+    hashed: int
+    hash_skipped_unchanged: int
+    batches_committed: int
+    error_count: int
     errors: list[str] = Field(default_factory=list)
