@@ -1,6 +1,6 @@
 from collections.abc import Generator
 
-from sqlalchemy import inspect, text
+from sqlalchemy import Engine, inspect, text
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.core.config import get_settings
@@ -78,6 +78,16 @@ SQLITE_INDEXES = {
     ),
 }
 
+LEGACY_BASELINE_TABLES = (
+    "datasets",
+    "samples",
+    "tags",
+    "sample_tag_links",
+    "annotation_classes",
+    "annotations",
+    "training_readiness_states",
+)
+
 
 def _ensure_columns(table_name: str, columns: dict[str, str]) -> None:
     inspector = inspect(engine)
@@ -145,6 +155,15 @@ def _ensure_indexes() -> None:
             )
 
 
+def create_legacy_baseline_tables(target_engine: Engine = engine) -> None:
+    baseline_tables = [
+        SQLModel.metadata.tables[table_name]
+        for table_name in LEGACY_BASELINE_TABLES
+        if table_name in SQLModel.metadata.tables
+    ]
+    SQLModel.metadata.create_all(target_engine, tables=baseline_tables)
+
+
 def init_db() -> None:
     """Create local directories and SQLite tables for the MVP."""
     settings.database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -154,7 +173,9 @@ def init_db() -> None:
     # Import models before create_all so SQLModel metadata is complete.
     from app import models  # noqa: F401
 
-    SQLModel.metadata.create_all(engine)
+    # Keep startup compatibility limited to the frozen F2-0 baseline. New
+    # persistence models must be created by Alembic, never silently at startup.
+    create_legacy_baseline_tables()
     _ensure_columns("datasets", DATASET_COLUMNS)
     _ensure_columns("samples", SAMPLE_COLUMNS)
     _ensure_columns("tags", TAG_COLUMNS)

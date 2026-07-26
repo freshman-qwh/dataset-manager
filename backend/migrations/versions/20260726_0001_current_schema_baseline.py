@@ -84,6 +84,16 @@ SQLITE_INDEXES = {
     ),
 }
 
+BASELINE_TABLE_NAMES = (
+    "datasets",
+    "samples",
+    "tags",
+    "sample_tag_links",
+    "annotation_classes",
+    "annotations",
+    "training_readiness_states",
+)
+
 
 def _add_known_legacy_columns() -> None:
     bind = op.get_bind()
@@ -164,7 +174,12 @@ def _ensure_indexes() -> None:
 
 def upgrade() -> None:
     bind = op.get_bind()
-    SQLModel.metadata.create_all(bind)
+    baseline_tables = [
+        SQLModel.metadata.tables[table_name]
+        for table_name in BASELINE_TABLE_NAMES
+        if table_name in SQLModel.metadata.tables
+    ]
+    SQLModel.metadata.create_all(bind, tables=baseline_tables)
     _add_known_legacy_columns()
     _backfill_workflow_semantics()
     _ensure_indexes()

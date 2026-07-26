@@ -9,6 +9,7 @@ from app.api import (
     annotations,
     datasets,
     filesystem,
+    jobs,
     samples,
     system,
 )
@@ -42,6 +43,7 @@ app.include_router(annotations.router)
 app.include_router(annotation_classes.router)
 app.include_router(annotation_exports.router)
 app.include_router(system.router)
+app.include_router(jobs.router)
 
 
 @app.get("/health")

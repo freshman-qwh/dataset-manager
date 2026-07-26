@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine
-from sqlmodel import SQLModel
 
 from app import models  # noqa: F401
 from app.core import migrations
+from app.core.database import create_legacy_baseline_tables
 
 
 EXPECTED_TABLES = {
@@ -17,6 +17,7 @@ EXPECTED_TABLES = {
     "annotation_classes",
     "annotations",
     "datasets",
+    "jobs",
     "sample_tag_links",
     "samples",
     "tags",
@@ -34,7 +35,7 @@ def _table_names(database_path: Path) -> set[str]:
 
 def _create_unversioned_current_database(database_path: Path) -> None:
     engine = create_engine(f"sqlite:///{database_path.as_posix()}")
-    SQLModel.metadata.create_all(engine)
+    create_legacy_baseline_tables(engine)
     with engine.begin() as connection:
         connection.exec_driver_sql(
             "INSERT INTO datasets "

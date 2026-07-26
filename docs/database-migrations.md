@@ -38,11 +38,12 @@ python -m app.cli.database upgrade --database ../database/app.db --backup-dir ..
 
 ## 基线 revision
 
-当前唯一 head 为 `20260726_0001`：
+F2-0 基线 revision 为 `20260726_0001`；F2-1A 新增 jobs 后，当前唯一 head 为 `20260726_0002`：
 
 - 空数据库会创建当前 SQLModel 表和索引。
 - 已对齐但没有 `alembic_version` 的数据库会采用当前基线。
 - 已知历史数据库会补齐 datasets、samples、tags 和 annotations 的兼容列，并执行已有工作流语义回填。
+- `20260726_0002` 只创建 jobs 表与索引；应用启动兼容逻辑不会代替该 migration 创建 jobs。
 - 基线不提供破坏性 downgrade。需要回退时恢复升级命令生成的已验证备份。
 
 ## 恢复

@@ -163,6 +163,8 @@ GET    /api/directories
 GET    /api/system/database-integrity
 POST   /api/system/database-integrity/repair-preview
 POST   /api/system/database-integrity/repair
+GET    /api/jobs
+GET    /api/jobs/{id}
 ```
 
 ## 元数据导入格式
