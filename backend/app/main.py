@@ -3,7 +3,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import annotation_classes, annotation_exports, annotations, datasets, filesystem, samples
+from app.api import (
+    annotation_classes,
+    annotation_exports,
+    annotations,
+    datasets,
+    filesystem,
+    samples,
+    system,
+)
 from app.core.config import get_settings
 from app.core.database import init_db
 
@@ -33,6 +41,7 @@ app.include_router(samples.router)
 app.include_router(annotations.router)
 app.include_router(annotation_classes.router)
 app.include_router(annotation_exports.router)
+app.include_router(system.router)
 
 
 @app.get("/health")

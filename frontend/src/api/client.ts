@@ -43,6 +43,11 @@ import type {
   TrainingReadinessConfigInput,
   TrainingReadinessReport
 } from "../types/dataset";
+import type {
+  DatabaseIntegrityReport,
+  DatabaseRepairPreview,
+  DatabaseRepairResult
+} from "../types/system";
 
 export const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8000/api";
@@ -54,6 +59,33 @@ const client = axios.create({
 
 export async function listDatasets(): Promise<Dataset[]> {
   const { data } = await client.get<Dataset[]>("/datasets");
+  return data;
+}
+
+export async function getDatabaseIntegrityReport(): Promise<DatabaseIntegrityReport> {
+  const { data } = await client.get<DatabaseIntegrityReport>("/system/database-integrity");
+  return data;
+}
+
+export async function previewDatabaseIntegrityRepair(
+  actionIds: string[]
+): Promise<DatabaseRepairPreview> {
+  const { data } = await client.post<DatabaseRepairPreview>(
+    "/system/database-integrity/repair-preview",
+    { action_ids: actionIds }
+  );
+  return data;
+}
+
+export async function repairDatabaseIntegrity(payload: {
+  report_token: string;
+  action_ids: string[];
+  confirmation: string;
+}): Promise<DatabaseRepairResult> {
+  const { data } = await client.post<DatabaseRepairResult>(
+    "/system/database-integrity/repair",
+    payload
+  );
   return data;
 }
 

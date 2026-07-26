@@ -72,3 +72,28 @@ python -m app.cli.database upgrade --database ../database/app.db --backup-dir ..
 - 升级前后 `quick_check`：`ok`
 
 实际源数据库没有执行 migration，历史孤立元数据也没有被删除；其报告、修复预览和显式确认属于 F2-0B。
+
+## 完整性报告与显式修复
+
+数据集列表的“数据库维护”入口和以下 API 提供 F2-0B 能力：
+
+```text
+GET  /api/system/database-integrity
+POST /api/system/database-integrity/repair-preview
+POST /api/system/database-integrity/repair
+```
+
+只读报告覆盖：
+
+- `PRAGMA quick_check` 与 `PRAGMA foreign_key_check`
+- 当前 Alembic revision 和唯一 head
+- 当前 SQLModel schema 缺失的表或列
+- 无所属数据集的 sample、annotation class、tag 和训练准备记录
+- 无所属样本或数据集的 annotation
+- 缺失 sample/tag 的关联表记录
+- annotation 的失效 class/tag 引用
+- tag 的缺失或跨数据集父级引用
+
+修复默认不选择。只有数据库已经到达 migration head 时，用户才能选择动作并生成预览。预览返回基于当前问题 ID 和数量生成的 report token 与动态确认文本；执行时会再次检查 token，先创建在线 SQLite 备份，再复核 token，最后在一个事务中按依赖顺序修复。任何变化、确认不一致、备份或事务失败都会拒绝返回成功。
+
+2026-07-26 对实际数据库只运行报告：`quick_check=ok`，发现 1 条 `annotation_classes.id=10` 缺少所属数据集，并产生 1 条外键违规。实际库尚未登记 `20260726_0001`，因此状态为“需要维护”，未生成修复预览、未创建修复备份、未删除该记录。
