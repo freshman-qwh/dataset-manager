@@ -30,7 +30,7 @@
 - 基线日期：`2026-07-26`
 - 当前能力：数据集创建、增量扫描、样本登记、标签体系、批量 split、搜索筛选、预览增强、重复样本识别、元数据导入、统计、manifest、图片几何标注、数据质量工作台，以及 LabelMe、COCO detection/segmentation、YOLO detection/segmentation、Pascal VOC 标注导出。
 - 标注基线：已具备 annotation 表、读取/全量替换保存 API、保存前几何校验、统一质量报告、统一导出预检与真实训练格式导出、manifest annotations、SVG 标注页、矩形/polygon/点、对象列表、类别与常用对象属性编辑、隐藏/锁定、删除、撤销/重做、快捷键、适配画布，以及可恢复的连续标注队列、明确的草稿/完成/无目标动作和有界相邻预取。
-- 当前目标：`F2-1A` jobs 持久化模型、状态契约与只读 API 已落地；继续实现 `F2-1B` 单写者 runner、协作取消、重试和重启 interrupted 恢复，再进入轻量全局 UI，不提前迁移扫描或导出业务。
+- 当前目标：`F2-1A/F2-1B` jobs 持久化契约、单写者 runner、协作取消、显式重试和重启 interrupted 恢复已落地；继续实现 `F2-1C` 轻量全局 UI，不提前迁移扫描或导出业务。
 
 ## 评审后的实施顺序
 
@@ -214,7 +214,7 @@ UX-D 完成门槛：
   - [x] `F2-0B` 增加只读完整性报告、孤立 annotation class/tag/link 等修复预览、过期报告保护、确认文本、修复前备份与结果报告；数据库未到 migration head 时拒绝清理，不在启动时静默修复。
 - [~] `P1` `工程` F2-1 本地任务中心基础：按持久化契约、runner/API、轻量 UI 三个切片逐项验收。
   - [x] `F2-1A` jobs 表与 `20260726_0002` migration、queued/running/succeeded/failed/cancelled/interrupted 状态契约、64 KiB 有界 JSON 快照、进度/取消请求/重试服务、列表与详情 API；未迁移数据库返回 409，启动不静默建表。
-  - [ ] `F2-1B` 单写者 runner、任务处理器注册、协作取消检查点、失败结果、显式重试和启动时 running → interrupted 恢复。
+  - [x] `F2-1B` 单写者 runner、任务处理器注册、协作取消检查点、失败结果、创建/取消/显式重试 API 和启动时 running → interrupted 恢复；服务停止通过检查点中断，不强杀线程。
   - [ ] `F2-1C` 顶栏运行数/失败提示与轻量抽屉；不新增企业级任务首页。
 - [ ] `P1` `工程/优化` F2-2 扫描任务：按枚举/stat/hash/写入/缺失检测分阶段；size + mtime 未变化时跳过 SHA-256，受限并行 hash、单写者分批提交。
 - [ ] `P1` `工程` F2-3 训练导出任务：固化格式/范围/class map，使用临时文件或流式写入控制内存，覆盖取消、失败清理和结果 hash。

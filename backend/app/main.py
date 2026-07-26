@@ -15,13 +15,18 @@ from app.api import (
 )
 from app.core.config import get_settings
 from app.core.database import init_db
+from app.core.job_runtime import job_runner
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize local storage and SQLite tables before serving requests."""
     init_db()
-    yield
+    job_runner.start()
+    try:
+        yield
+    finally:
+        job_runner.stop()
 
 
 settings = get_settings()

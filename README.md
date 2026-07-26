@@ -164,7 +164,10 @@ GET    /api/system/database-integrity
 POST   /api/system/database-integrity/repair-preview
 POST   /api/system/database-integrity/repair
 GET    /api/jobs
+POST   /api/jobs
 GET    /api/jobs/{id}
+POST   /api/jobs/{id}/cancel
+POST   /api/jobs/{id}/retry
 ```
 
 ## 元数据导入格式

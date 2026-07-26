@@ -268,3 +268,30 @@ def retry_job(session: Session, job_id: int) -> JobRead:
     session.commit()
     session.refresh(retry)
     return to_job_read(retry)
+
+
+def interrupt_running_jobs(session: Session) -> int:
+    """Mark jobs abandoned by a previous process as explicitly interrupted."""
+    ensure_jobs_schema(session)
+    running_jobs = list(
+        session.exec(select(Job).where(Job.status == "running")).all()
+    )
+    if not running_jobs:
+        return 0
+
+    now = utc_now()
+    error_json = _encode_json(
+        {
+            "code": "process_restart",
+            "message": "The backend stopped before this job reached a terminal state.",
+        }
+    )
+    for job in running_jobs:
+        job.status = "interrupted"
+        job.stage = "process_stopped"
+        job.error_json = error_json
+        job.finished_at = now
+        job.updated_at = now
+        session.add(job)
+    session.commit()
+    return len(running_jobs)

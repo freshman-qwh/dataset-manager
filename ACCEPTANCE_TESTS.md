@@ -2,6 +2,28 @@
 
 本文件记录人工验收重点。最新一轮放在最前，历史步骤合并为核心回归清单，避免验收文档过长。
 
+## [v0.4.0 F2-1 本地任务中心基础 · 第二阶段] - 2026-07-26
+
+验收范围：单写者 runner、处理器注册、隔离失败、协作取消、主动停止、重启恢复，以及创建/取消/重试 API。
+
+步骤：
+
+1. 注册一个会更新阶段和进度的测试处理器，创建 queued 任务并启动 runner；确认任务依次成为 running、succeeded，结果摘要和进度正确。
+2. 创建未注册类型和主动抛错的任务；确认各自成为 failed、错误 code/type/message 有界，runner 继续处理后续任务。
+3. 让处理器停在明确检查点，对 running 任务请求取消；确认 API 先记录 `cancel_requested_at`，检查点随后将任务置为 cancelled，不强杀线程。
+4. 在处理器运行时停止 runner；确认 stop event 在检查点变成 interrupted，runner 可在时限内退出。
+5. 预置上一进程遗留的 running 任务并执行启动恢复；确认其成为 interrupted、错误 code 为 `process_restart`，queued 和终态记录不被改写。
+6. 调用 `POST /api/jobs`、`POST /api/jobs/{id}/cancel` 和 `POST /api/jobs/{id}/retry`；确认创建返回 201，queued 可直接取消，重试生成 attempt+1 且保留 retry_of_id 的新记录。
+7. 在未迁移真实库上重启服务；确认 runner 不建表、不启动，任务 API 返回 409，健康检查和已有业务继续可用。
+8. 在迁移副本启动服务并创建未注册类型；确认任务快速成为 failed，再重试生成新记录；原有 1 条完整性问题和核心表计数保持。
+9. 运行后端全量测试、前端生产构建和 `git diff --check`；确认实际数据库、原始文件和原始目录无修改。
+
+通过标准：
+
+- 任一时刻仅一个本地 worker 认领写任务；处理器不共享请求 Session。
+- 取消、停止和进程重启都有可解释终态，runner 异常不让任务永久悬挂为 running。
+- F2-1B 只交付任务基础设施，不迁移扫描/导出，不向原始数据目录写入 sidecar。
+
 ## [v0.4.0 F2-1 本地任务中心基础 · 第一阶段] - 2026-07-26
 
 验收范围：jobs migration、启动不静默建表、状态转换、进度约束、取消请求、重试来源、JSON 快照和只读 API。
