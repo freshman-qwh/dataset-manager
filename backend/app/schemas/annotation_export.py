@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.job import JobRead
+
 
 AnnotationExportFormat = Literal[
     "labelme",
@@ -63,3 +65,20 @@ class AnnotationExportPrecheckResponse(BaseModel):
     info_count: int = 0
     truncated_issue_count: int = 0
     blocked: bool
+
+
+class AnnotationExportJobCreateRequest(BaseModel):
+    format: Literal["labelme"] = "labelme"
+    sample_query: AnnotationExportSampleQuery = Field(default_factory=AnnotationExportSampleQuery)
+    include_empty: bool = False
+
+
+class AnnotationExportJobParameters(AnnotationExportJobCreateRequest):
+    class_map: list[AnnotationClassMapItem] = Field(default_factory=list)
+    precheck_summary: dict[str, int] = Field(default_factory=dict)
+    request_fingerprint: str
+
+
+class AnnotationExportJobCreateResponse(BaseModel):
+    job: JobRead
+    created: bool

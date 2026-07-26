@@ -193,7 +193,6 @@ class JobRunner:
             result = handler(context, job.parameters)
             if result is not None and not isinstance(result, dict):
                 raise TypeError("A job handler result must be a JSON object or None.")
-            context.checkpoint()
         except JobCancelled as exc:
             self._finish_terminal(
                 job.id,

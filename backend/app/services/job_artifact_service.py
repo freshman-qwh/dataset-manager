@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from hashlib import sha256
 import os
 from pathlib import Path
 from types import TracebackType
 from uuid import uuid4
+
+from app.core.config import get_settings
 
 
 HASH_CHUNK_SIZE = 1024 * 1024
@@ -66,7 +69,11 @@ class JobArtifactWorkspace:
         self._active = True
         return self
 
-    def finalize(self) -> JobArtifactMetadata:
+    def finalize(
+        self,
+        *,
+        checkpoint: Callable[[], None] | None = None,
+    ) -> JobArtifactMetadata:
         temporary_path = self.path
         if self._finalized:
             raise RuntimeError("The artifact workspace is already finalized.")
@@ -78,7 +85,7 @@ class JobArtifactWorkspace:
         os.replace(temporary_path, self.final_path)
         self._published = True
         size_bytes = self.final_path.stat().st_size
-        digest = _hash_file(self.final_path)
+        digest = _hash_file(self.final_path, checkpoint=checkpoint)
         self._finalized = True
         return JobArtifactMetadata(
             path=self.final_path,
@@ -126,6 +133,10 @@ def resolve_job_artifact(
     return path
 
 
+def job_artifact_root() -> Path:
+    return get_settings().storage_root / "job-artifacts"
+
+
 def _resolve_job_directory(root: Path, job_id: int) -> Path:
     job_directory = (root / f"job-{job_id}").resolve()
     if job_directory.parent != root:
@@ -145,9 +156,15 @@ def _validate_filename(filename: str) -> None:
         raise ValueError("Artifact filename must be a plain filename.")
 
 
-def _hash_file(path: Path) -> str:
+def _hash_file(
+    path: Path,
+    *,
+    checkpoint: Callable[[], None] | None = None,
+) -> str:
     digest = sha256()
     with path.open("rb") as handle:
         while chunk := handle.read(HASH_CHUNK_SIZE):
+            if checkpoint is not None:
+                checkpoint()
             digest.update(chunk)
     return digest.hexdigest()

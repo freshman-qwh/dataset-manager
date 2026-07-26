@@ -1,12 +1,13 @@
 from typing import NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse
 from sqlmodel import Session
 
 from app.core.database import get_session
 from app.core.job_runtime import job_runner
 from app.schemas.job import JobCreate, JobListResponse, JobRead, JobStatus
-from app.services import job_service
+from app.services import job_artifact_service, job_service
 
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -65,6 +66,52 @@ def get_job(
         return job_service.get_job(session, job_id)
     except job_service.JobError as exc:
         _raise_job_http_error(exc)
+
+
+@router.get("/{job_id}/artifact")
+def download_job_artifact(
+    job_id: int,
+    session: Session = Depends(get_session),
+) -> FileResponse:
+    try:
+        job = job_service.get_job(session, job_id)
+    except job_service.JobError as exc:
+        _raise_job_http_error(exc)
+    if job.status != "succeeded":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The job artifact is available only after successful completion.",
+        )
+    artifact = job.result.get("artifact") if job.result else None
+    if not isinstance(artifact, dict):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The job does not have a downloadable artifact.",
+        )
+    filename = artifact.get("filename")
+    media_type = artifact.get("media_type")
+    if not isinstance(filename, str) or not isinstance(media_type, str):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The job artifact metadata is incomplete.",
+        )
+    try:
+        path = job_artifact_service.resolve_job_artifact(
+            job_artifact_service.job_artifact_root(),
+            job_id=job_id,
+            filename=filename,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The job artifact metadata is invalid.",
+        ) from exc
+    if not path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="The job artifact is no longer available.",
+        )
+    return FileResponse(path, media_type=media_type, filename=filename)
 
 
 @router.post("/{job_id}/cancel", response_model=JobRead)

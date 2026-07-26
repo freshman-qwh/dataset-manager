@@ -22,6 +22,9 @@ const stageCopy: Record<string, string> = {
   hashing: "校验变化文件",
   writing: "写入元数据",
   missing_detection: "检查缺失文件",
+  prechecking: "导出预检",
+  writing_archive: "写入导出包",
+  finalizing: "校验导出包",
   completed: "已完成",
   failed: "失败",
   cancelled: "已取消",
@@ -63,6 +66,23 @@ function scanResultSummary(job: Job): string | null {
     return null;
   }
   return `新增 ${imported} · 变更 ${updated} · 未变 ${unchanged}`;
+}
+
+function annotationExportSummary(job: Job): string | null {
+  if (job.job_type !== "annotation.export" || !job.result) return null;
+  const format = job.result.format;
+  const sampleCount = job.result.exported_sample_count;
+  const artifact = job.result.artifact;
+  if (
+    typeof format !== "string"
+    || typeof sampleCount !== "number"
+    || !artifact
+    || typeof artifact !== "object"
+  ) {
+    return null;
+  }
+  const size = (artifact as Record<string, unknown>).size_bytes;
+  return `LabelMe · ${sampleCount} 个样本${typeof size === "number" ? ` · ${Math.ceil(size / 1024)} KiB` : ""}`;
 }
 
 export default function JobCenter() {
@@ -233,6 +253,7 @@ export default function JobCenter() {
                         ) : null}
                         {errorMessage(job) ? <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">{errorMessage(job)}</p> : null}
                         {scanResultSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{scanResultSummary(job)}</p> : null}
+                        {annotationExportSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{annotationExportSummary(job)}</p> : null}
                         {canCancel || canRetry ? (
                           <div className="mt-3 flex justify-end gap-2">
                             {canCancel ? (

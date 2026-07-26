@@ -156,9 +156,10 @@ def find_active_job(
     *,
     job_type: str,
     dataset_id: int,
+    parameter_match: tuple[str, object] | None = None,
 ) -> JobRead | None:
     ensure_jobs_schema(session)
-    job = session.exec(
+    jobs = session.exec(
         select(Job)
         .where(
             Job.job_type == job_type,
@@ -166,9 +167,15 @@ def find_active_job(
             Job.status.in_(["queued", "running"]),
         )
         .order_by(Job.created_at.asc(), Job.id.asc())
-        .limit(1)
-    ).first()
-    return to_job_read(job) if job is not None else None
+    ).all()
+    for job in jobs:
+        job_read = to_job_read(job)
+        if parameter_match is None:
+            return job_read
+        key, expected = parameter_match
+        if job_read.parameters.get(key) == expected:
+            return job_read
+    return None
 
 
 def transition_job(

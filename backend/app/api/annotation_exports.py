@@ -2,13 +2,22 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlmodel import Session
 
 from app.core.database import get_session
+from app.core.job_runtime import job_runner
 from app.schemas.annotation_import import LabelmeImportRequest, LabelmeImportResult
 from app.schemas.annotation_export import (
     AnnotationExportFormat,
+    AnnotationExportJobCreateRequest,
+    AnnotationExportJobCreateResponse,
     AnnotationExportPrecheckRequest,
     AnnotationExportPrecheckResponse,
 )
-from app.services import annotation_export_precheck_service, annotation_export_service, annotation_import_service
+from app.services import (
+    annotation_export_job_service,
+    annotation_export_precheck_service,
+    annotation_export_service,
+    annotation_import_service,
+    job_service,
+)
 
 router = APIRouter(prefix="/api", tags=["annotation-exports"])
 
@@ -32,6 +41,42 @@ def import_labelme_annotations(
     session: Session = Depends(get_session),
 ) -> LabelmeImportResult:
     return annotation_import_service.import_labelme_annotations(session, dataset_id, payload)
+
+
+@router.post(
+    "/datasets/{dataset_id}/annotation-export-jobs",
+    response_model=AnnotationExportJobCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_annotation_export_job(
+    dataset_id: int,
+    payload: AnnotationExportJobCreateRequest,
+    response: Response,
+    session: Session = Depends(get_session),
+) -> AnnotationExportJobCreateResponse:
+    try:
+        result = annotation_export_job_service.create_annotation_export_job(
+            session,
+            dataset_id,
+            payload,
+        )
+    except job_service.JobSchemaUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except annotation_export_service.AnnotationExportBlockedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "code": "ANNOTATION_EXPORT_BLOCKED",
+                "precheck": exc.precheck.model_dump(mode="json"),
+            },
+        ) from exc
+    if not result.created:
+        response.status_code = status.HTTP_200_OK
+    job_runner.notify()
+    return result
 
 
 @router.get("/datasets/{dataset_id}/annotation-export")

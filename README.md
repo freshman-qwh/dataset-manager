@@ -8,7 +8,7 @@
 - 产品价值是让个人研究者无需部署团队协作平台，也能安全、直观地获得可训练、可复核、可复现的数据集。
 - 视频和 CSV 当前只作为通用样本资产登记与筛选对象，不扩展为视频逐帧标注或表格标注平台。
 - MVP 不追求复刻 CVAT / Label Studio 的项目、任务、权限和在线协作体系，也不以增加更多图形工具为主要目标。
-- 下一阶段优先把增量扫描安全迁移到已完成的本地任务中心；详细计划见 `TODO.md` 与 `docs/post-ux-d-roadmap.md`。
+- 当前阶段正把训练格式导出逐项迁移到本地任务中心；先完成 LabelMe 有界 ZIP，再迁移 COCO、YOLO 与 VOC。详细计划见 `TODO.md` 与 `docs/post-ux-d-roadmap.md`。
 
 ## 已实现功能
 
@@ -31,6 +31,7 @@
 - CSV/JSON 元数据导入：批量写入标签、split、备注和自定义属性
 - 数据集统计、manifest JSON、CSV 标签表，以及 LabelMe、COCO detection/segmentation、YOLO detection/segmentation、Pascal VOC 标注导出
 - Alembic 安全迁移、数据库完整性预览/显式修复，以及支持进度、取消、重试和重启恢复的本地任务中心
+- LabelMe 训练格式异步导出任务：冻结请求参数、应用内临时 ZIP、原子发布、大小/hash、取消/失败清理与文件流下载
 - React + TypeScript + Vite + Tailwind 前端
 - 数据集列表、创建弹窗、详情页、样本网格、详情侧边栏、标签管理、搜索筛选
 
@@ -141,6 +142,7 @@ PATCH  /api/datasets/{id}
 DELETE /api/datasets/{id}
 POST   /api/datasets/{id}/scan
 POST   /api/datasets/{id}/scan-jobs
+POST   /api/datasets/{id}/annotation-export-jobs
 GET    /api/datasets/{id}/samples
 PATCH  /api/datasets/{id}/samples/batch
 POST   /api/datasets/{id}/samples/delete
@@ -161,6 +163,7 @@ DELETE /api/tags/{id}
 GET    /api/stats/datasets/{id}
 GET    /api/datasets/{id}/export-manifest
 GET    /api/datasets/{id}/export-template
+GET    /api/jobs/{id}/artifact
 GET    /api/directories
 GET    /api/system/database-integrity
 POST   /api/system/database-integrity/repair-preview
