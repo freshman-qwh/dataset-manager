@@ -60,3 +60,9 @@ export interface AnnotationExportDownload {
   blob: Blob;
   filename: string;
 }
+
+export interface AnnotationExportJobCreateRequest {
+  format: "labelme";
+  sample_query: AnnotationExportSampleQuery;
+  include_empty: boolean;
+}

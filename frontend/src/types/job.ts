@@ -37,3 +37,8 @@ export interface ScanJobCreateResponse {
   job: Job;
   created: boolean;
 }
+
+export interface AnnotationExportJobCreateResponse {
+  job: Job;
+  created: boolean;
+}

@@ -1,8 +1,8 @@
 import axios from "axios";
-import { Activity, Ban, RefreshCw, RotateCcw, X } from "lucide-react";
+import { Activity, Ban, Download, RefreshCw, RotateCcw, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { cancelJob, listJobs, retryJob } from "../api/client";
+import { cancelJob, downloadJobArtifact, listJobs, retryJob } from "../api/client";
 import type { Job, JobStatus } from "../types/job";
 
 const statusCopy: Record<JobStatus, string> = {
@@ -83,6 +83,17 @@ function annotationExportSummary(job: Job): string | null {
   }
   const size = (artifact as Record<string, unknown>).size_bytes;
   return `LabelMe · ${sampleCount} 个样本${typeof size === "number" ? ` · ${Math.ceil(size / 1024)} KiB` : ""}`;
+}
+
+function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 export default function JobCenter() {
@@ -167,6 +178,18 @@ export default function JobCenter() {
     }
   }
 
+  async function downloadArtifact(job: Job) {
+    setActingId(job.id);
+    try {
+      const result = await downloadJobArtifact(job.id);
+      triggerDownload(result.blob, result.filename);
+    } catch {
+      setError("导出产物已不可用，请重新提交任务");
+    } finally {
+      setActingId(null);
+    }
+  }
+
   return (
     <>
       <button
@@ -233,6 +256,7 @@ export default function JobCenter() {
                       : null;
                     const canCancel = job.status === "queued" || job.status === "running";
                     const canRetry = terminalRetryStatuses.has(job.status);
+                    const canDownload = job.job_type === "annotation.export" && job.status === "succeeded";
                     return (
                       <article key={job.id} className="rounded-2xl border border-line p-4">
                         <div className="flex items-start justify-between gap-3">
@@ -254,8 +278,13 @@ export default function JobCenter() {
                         {errorMessage(job) ? <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">{errorMessage(job)}</p> : null}
                         {scanResultSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{scanResultSummary(job)}</p> : null}
                         {annotationExportSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{annotationExportSummary(job)}</p> : null}
-                        {canCancel || canRetry ? (
+                        {canCancel || canRetry || canDownload ? (
                           <div className="mt-3 flex justify-end gap-2">
+                            {canDownload ? (
+                              <button type="button" disabled={actingId === job.id} onClick={() => void downloadArtifact(job)} className="inline-flex items-center gap-1.5 rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-50">
+                                <Download size={14} /> 下载
+                              </button>
+                            ) : null}
                             {canCancel ? (
                               <button type="button" disabled={actingId === job.id} onClick={() => void act(job, "cancel")} className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs font-medium text-ink hover:bg-gray-50 disabled:opacity-50">
                                 <Ban size={14} /> 取消

@@ -1,8 +1,13 @@
+import axios from "axios";
 import { AlertTriangle, CheckCircle2, Download, Info, LoaderCircle, SearchCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  createAnnotationExportJob,
   downloadAnnotationExport,
+  downloadJobArtifact,
+  getJob,
+  listJobs,
   precheckAnnotationExport,
   recordTrainingExport,
   saveTrainingReadinessConfig
@@ -13,6 +18,7 @@ import type {
   AnnotationExportSampleQuery
 } from "../types/annotationExport";
 import type { TrainingReadinessConfigInput } from "../types/dataset";
+import type { Job } from "../types/job";
 import { uiCopy } from "../utils/uiCopy";
 import Modal from "./Modal";
 
@@ -75,6 +81,31 @@ function triggerDownload(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+function stableSerialize(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableSerialize).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined && item !== null)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableSerialize(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function jobMatchesRequest(
+  job: Job,
+  query: AnnotationExportSampleQuery,
+  includeEmpty: boolean
+): boolean {
+  return job.job_type === "annotation.export"
+    && job.parameters.format === "labelme"
+    && job.parameters.include_empty === includeEmpty
+    && stableSerialize(job.parameters.sample_query) === stableSerialize(query);
+}
+
 export default function AnnotationExportModal({
   datasetId,
   open,
@@ -91,7 +122,11 @@ export default function AnnotationExportModal({
   const [checking, setChecking] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [downloadCompleted, setDownloadCompleted] = useState(false);
+  const [exportJob, setExportJob] = useState<Job | null>(null);
+  const [compatibilityNotice, setCompatibilityNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const exportJobId = exportJob?.id ?? null;
+  const exportJobStatus = exportJob?.status ?? null;
 
   const selectedFormat = useMemo(
     () => FORMAT_OPTIONS.find((item) => item.value === format) ?? FORMAT_OPTIONS[0],
@@ -114,6 +149,8 @@ export default function AnnotationExportModal({
   useEffect(() => {
     setPrecheck(null);
     setDownloadCompleted(false);
+    setExportJob(null);
+    setCompatibilityNotice(null);
     setError(null);
   }, [format, includeEmpty, sampleQuery]);
 
@@ -126,8 +163,49 @@ export default function AnnotationExportModal({
     setFormat(defaultFormat);
     setPrecheck(null);
     setDownloadCompleted(false);
+    setCompatibilityNotice(null);
     setError(null);
   }, [defaultFormat, open]);
+
+  useEffect(() => {
+    if (!open || format !== "labelme") return;
+    let disposed = false;
+    void listJobs(100, { datasetId, jobType: "annotation.export" })
+      .then((response) => {
+        if (disposed) return;
+        const matching = response.items.find((job) => jobMatchesRequest(job, sampleQuery, includeEmpty));
+        if (matching) setExportJob(matching);
+      })
+      .catch(() => {
+        // An unmigrated database will use the synchronous compatibility path.
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [datasetId, format, includeEmpty, open, sampleQuery]);
+
+  useEffect(() => {
+    if (exportJobId === null || !exportJobStatus || !["queued", "running"].includes(exportJobStatus)) return;
+    let disposed = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const job = await getJob(exportJobId);
+        if (disposed) return;
+        setExportJob(job);
+        if (job.status === "queued" || job.status === "running") {
+          timer = window.setTimeout(() => void poll(), 750);
+        }
+      } catch {
+        if (!disposed) setError("导出任务状态读取失败，请在任务中心查看。");
+      }
+    };
+    void poll();
+    return () => {
+      disposed = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [exportJobId, exportJobStatus]);
 
   function trainingConfig(
     classMap: AnnotationExportPrecheckResponse["class_map"] = []
@@ -169,12 +247,39 @@ export default function AnnotationExportModal({
   }
 
   async function handleDownload() {
-    if (!precheck || precheck.blocked) {
+    const completedJobAvailable = format === "labelme" && exportJob?.status === "succeeded";
+    if ((!precheck || precheck.blocked) && !completedJobAvailable) {
       return;
     }
     setDownloading(true);
     setError(null);
+    setCompatibilityNotice(null);
     try {
+      if (format === "labelme") {
+        if (exportJob?.status === "succeeded") {
+          const result = await downloadJobArtifact(exportJob.id);
+          triggerDownload(result.blob, result.filename);
+          setDownloadCompleted(true);
+          if (precheck) {
+            try {
+              await recordTrainingExport(datasetId, trainingConfig(precheck.class_map));
+            } catch {
+              setError("导出包已经下载，但训练就绪记录更新失败。");
+            }
+          }
+          return;
+        }
+        const response = await createAnnotationExportJob(datasetId, {
+          format: "labelme",
+          sample_query: sampleQuery,
+          include_empty: includeEmpty
+        });
+        setExportJob(response.job);
+        setDownloadCompleted(false);
+        window.dispatchEvent(new Event("dataset-manager:jobs-changed"));
+        return;
+      }
+      if (!precheck) return;
       const result = await downloadAnnotationExport(datasetId, format, sampleQuery, includeEmpty);
       try {
         await recordTrainingExport(datasetId, trainingConfig(precheck.class_map));
@@ -186,13 +291,53 @@ export default function AnnotationExportModal({
       }
       triggerDownload(result.blob, result.filename);
       onClose();
-    } catch {
+    } catch (caught) {
+      if (format === "labelme" && exportJob?.status === "succeeded") {
+        setExportJob(null);
+        setPrecheck(null);
+        setError("导出产物已不可用，请重新运行导出检查并提交任务。");
+        return;
+      }
+      if (
+        format === "labelme"
+        && axios.isAxiosError(caught)
+        && caught.response?.status === 409
+      ) {
+        if (!precheck) {
+          setError("兼容导出需要重新运行导出预检。");
+          return;
+        }
+        try {
+          const result = await downloadAnnotationExport(datasetId, format, sampleQuery, includeEmpty);
+          triggerDownload(result.blob, result.filename);
+          setDownloadCompleted(true);
+          setCompatibilityNotice("任务中心尚未启用，本次已使用兼容导出。");
+          try {
+            await recordTrainingExport(datasetId, trainingConfig(precheck.class_map));
+          } catch {
+            setError("文件已经下载，但未能记录最近导出时间；下载内容不受影响。");
+          }
+          return;
+        } catch {
+          setError("兼容导出失败，请重新运行导出预检。");
+          setPrecheck(null);
+          return;
+        }
+      }
       setError(`导出失败。数据可能在${uiCopy.exportCheck}后发生变化，请重新检查。`);
       setPrecheck(null);
     } finally {
       setDownloading(false);
     }
   }
+
+  const exportJobActive = exportJob?.status === "queued" || exportJob?.status === "running";
+  const exportJobFailed = exportJob?.status === "failed"
+    || exportJob?.status === "cancelled"
+    || exportJob?.status === "interrupted";
+  const exportJobProgress = exportJob?.progress_total && exportJob.progress_total > 0
+    ? Math.min(100, Math.round((exportJob.progress_current / exportJob.progress_total) * 100))
+    : null;
 
   return (
     <Modal open={open} title="标注训练格式导出" onClose={onClose}>
@@ -369,6 +514,38 @@ export default function AnnotationExportModal({
               </div>
             )}
           </div>
+          {format === "labelme" && exportJob ? (
+            <div
+              aria-live="polite"
+              className={`rounded-lg border px-3 py-3 text-sm ${
+                exportJob.status === "succeeded"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : exportJobFailed
+                    ? "border-amber-200 bg-amber-50 text-amber-800"
+                    : "border-blue-200 bg-blue-50 text-blue-800"
+              }`}
+            >
+              <div className="font-medium">
+                {exportJob.status === "succeeded"
+                  ? "导出包已生成，可以下载"
+                  : exportJobFailed
+                    ? `任务${exportJob.status === "cancelled" ? "已取消" : exportJob.status === "interrupted" ? "已中断" : "失败"}，可以重新提交`
+                    : "导出任务正在后台生成"}
+              </div>
+              <div className="mt-1 text-xs leading-5">
+                {exportJobActive
+                  ? `阶段：${exportJob.stage}${exportJobProgress !== null ? ` · ${exportJobProgress}%` : ""}。可以关闭弹窗并继续浏览。`
+                  : exportJob.status === "succeeded"
+                    ? "产物保存在应用存储中，不会写入原始数据目录。"
+                    : "可在任务中心查看错误、重试或取消状态。"}
+              </div>
+            </div>
+          ) : null}
+          {compatibilityNotice ? (
+            <div aria-live="polite" className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">
+              {compatibilityNotice}
+            </div>
+          ) : null}
         </section>
 
         <div className="flex justify-end gap-2 border-t border-line pt-4">
@@ -382,11 +559,25 @@ export default function AnnotationExportModal({
           <button
             type="button"
             onClick={() => void handleDownload()}
-            disabled={!precheck || precheck.blocked || downloading || checking || downloadCompleted}
+            disabled={((!precheck || precheck.blocked) && exportJob?.status !== "succeeded")
+              || downloading
+              || checking
+              || downloadCompleted
+              || exportJobActive}
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
           >
             {downloading ? <LoaderCircle size={17} className="animate-spin" /> : <Download size={17} />}
-            {downloadCompleted ? "已下载" : downloading ? "生成中" : "确认并下载"}
+            {downloadCompleted
+              ? "已下载"
+              : downloading
+                ? "处理中"
+                : format !== "labelme"
+                  ? "确认并下载"
+                  : exportJob?.status === "succeeded"
+                    ? "下载导出包"
+                    : exportJobFailed
+                      ? "重新提交任务"
+                      : "提交导出任务"}
           </button>
         </div>
       </div>

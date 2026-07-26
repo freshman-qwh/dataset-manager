@@ -3,6 +3,7 @@ import axios from "axios";
 import type {
   AnnotationExportDownload,
   AnnotationExportFormat,
+  AnnotationExportJobCreateRequest,
   AnnotationExportPrecheckRequest,
   AnnotationExportPrecheckResponse,
   AnnotationExportSampleQuery
@@ -48,7 +49,12 @@ import type {
   DatabaseRepairPreview,
   DatabaseRepairResult
 } from "../types/system";
-import type { Job, JobListResponse, ScanJobCreateResponse } from "../types/job";
+import type {
+  AnnotationExportJobCreateResponse,
+  Job,
+  JobListResponse,
+  ScanJobCreateResponse
+} from "../types/job";
 
 export const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8000/api";
@@ -421,6 +427,29 @@ export async function precheckAnnotationExport(
     payload
   );
   return data;
+}
+
+export async function createAnnotationExportJob(
+  datasetId: number,
+  payload: AnnotationExportJobCreateRequest
+): Promise<AnnotationExportJobCreateResponse> {
+  const { data } = await client.post<AnnotationExportJobCreateResponse>(
+    `/datasets/${datasetId}/annotation-export-jobs`,
+    payload
+  );
+  return data;
+}
+
+export async function downloadJobArtifact(jobId: number): Promise<AnnotationExportDownload> {
+  const response = await client.get<Blob>(`/jobs/${jobId}/artifact`, {
+    responseType: "blob"
+  });
+  const disposition = String(response.headers["content-disposition"] ?? "");
+  const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+  return {
+    blob: response.data,
+    filename: filenameMatch?.[1] ?? `job-${jobId}-artifact`
+  };
 }
 
 export async function downloadAnnotationExport(
