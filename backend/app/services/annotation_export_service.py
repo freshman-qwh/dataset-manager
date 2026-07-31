@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from io import BytesIO
 import json
@@ -226,13 +226,23 @@ def export_annotations_to_path(
             progress=progress,
         )
         _write_json_file(payload, destination, checkpoint=checkpoint)
-    else:
+    elif export_format in {"yolo_detection", "yolo_segmentation"}:
         _write_yolo_zip(
             export_format,
             prepared.export_samples,
             prepared.precheck.class_map,
             prepared.report,
             destination,
+            checkpoint=checkpoint,
+            progress=progress,
+        )
+    else:
+        _write_voc_zip(
+            prepared.dataset_name,
+            prepared.export_samples,
+            prepared.report,
+            destination,
+            total=len(prepared.export_samples),
             checkpoint=checkpoint,
             progress=progress,
         )
@@ -272,6 +282,11 @@ def annotation_export_artifact_spec(
     if export_format == "yolo_segmentation":
         return AnnotationExportArtifactSpec(
             filename=f"dataset-{dataset_id}-yolo-segmentation.zip",
+            media_type="application/zip",
+        )
+    if export_format == "voc":
+        return AnnotationExportArtifactSpec(
+            filename=f"dataset-{dataset_id}-pascal-voc.zip",
             media_type="application/zip",
         )
     raise ValueError(f"Annotation export jobs do not support format: {export_format}")
@@ -636,8 +651,30 @@ def _export_voc_zip(
     report: dict[str, object],
 ) -> bytes:
     buffer = BytesIO()
-    with ZipFile(buffer, mode="w", compression=ZIP_DEFLATED) as archive:
-        for item in export_samples:
+    _write_voc_zip(
+        dataset_name,
+        export_samples,
+        report,
+        buffer,
+        total=len(export_samples),
+    )
+    return buffer.getvalue()
+
+
+def _write_voc_zip(
+    dataset_name: str,
+    export_samples: Iterable[_ExportSample],
+    report: dict[str, object],
+    destination: Path | BinaryIO,
+    *,
+    total: int,
+    checkpoint: Callable[[], None] | None = None,
+    progress: Callable[[int, int], None] | None = None,
+) -> None:
+    with ZipFile(destination, mode="w", compression=ZIP_DEFLATED) as archive:
+        for index, item in enumerate(export_samples, start=1):
+            if checkpoint is not None and (index == 1 or index % 25 == 0):
+                checkpoint()
             relative_path = _safe_relative_path(item.sample.relative_path)
             root = ElementTree.Element("annotation")
             ElementTree.SubElement(root, "folder").text = dataset_name
@@ -663,8 +700,11 @@ def _export_voc_zip(
                 ElementTree.SubElement(box, "ymax").text = str(math.ceil(bbox.y_max))
             xml = ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
             archive.writestr(str(PurePosixPath("annotations") / relative_path.with_suffix(".xml")), xml)
+            if progress is not None and (index == total or index % 25 == 0):
+                progress(index, total)
+        if checkpoint is not None:
+            checkpoint()
         archive.writestr("export_report.json", _json_bytes(report))
-    return buffer.getvalue()
 
 
 def _annotation_bbox(annotation: AnnotationRead) -> BBox:

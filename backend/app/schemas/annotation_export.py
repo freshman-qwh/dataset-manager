@@ -74,6 +74,7 @@ class AnnotationExportJobCreateRequest(BaseModel):
         "coco_segmentation",
         "yolo_detection",
         "yolo_segmentation",
+        "voc",
     ] = "labelme"
     sample_query: AnnotationExportSampleQuery = Field(default_factory=AnnotationExportSampleQuery)
     include_empty: bool = False

@@ -152,6 +152,7 @@ def test_coco_json_file_writer_preserves_bytes_and_checks_large_output(
         ("coco_segmentation", "application/json"),
         ("yolo_detection", "application/zip"),
         ("yolo_segmentation", "application/zip"),
+        ("voc", "application/zip"),
     ],
 )
 def test_annotation_export_job_freezes_request_and_matches_sync_artifact(
@@ -241,6 +242,18 @@ def test_annotation_export_job_freezes_request_and_matches_sync_artifact(
             assert f"task: {'detect' if export_format == 'yolo_detection' else 'segment'}" in archive[
                 "data.yaml"
             ].decode("utf-8")
+        if export_format == "voc":
+            archive = _archive_contents(downloaded.content)
+            assert "annotations/sample-00.xml" in archive
+            assert "annotations/sample-01.xml" in archive
+            assert "export_report.json" in archive
+            artifact_path = job_artifact_service.resolve_job_artifact(
+                artifact_root,
+                job_id=job["id"],
+                filename=artifact["filename"],
+            )
+            artifact_path.unlink()
+            assert client.get(f"/api/jobs/{job['id']}/artifact").status_code == 410
         assert {path.name: path.read_bytes() for path in raw_root.iterdir()} == before
         assert not list(artifact_root.rglob("*.part"))
 
@@ -255,6 +268,7 @@ def test_annotation_export_job_freezes_request_and_matches_sync_artifact(
         "coco_segmentation",
         "yolo_detection",
         "yolo_segmentation",
+        "voc",
     ],
 )
 def test_cancelled_annotation_export_removes_partial_artifact(
@@ -334,6 +348,7 @@ def test_cancelled_annotation_export_removes_partial_artifact(
         "coco_segmentation",
         "yolo_detection",
         "yolo_segmentation",
+        "voc",
     ],
 )
 def test_annotation_export_job_failure_cleans_partial_artifact(
@@ -393,9 +408,11 @@ def test_annotation_export_job_failure_cleans_partial_artifact(
     engine.dispose()
 
 
-def test_yolo_export_job_retry_reuses_snapshot_and_publishes_artifact(
+@pytest.mark.parametrize("export_format", ["yolo_detection", "voc"])
+def test_export_job_retry_reuses_snapshot_and_publishes_artifact(
     tmp_path: Path,
     monkeypatch,
+    export_format: str,
 ) -> None:
     engine = create_engine(
         f"sqlite:///{(tmp_path / 'retry-yolo.db').as_posix()}",
@@ -416,7 +433,7 @@ def test_yolo_export_job_retry_reuses_snapshot_and_publishes_artifact(
         created = client.post(
             f"/api/datasets/{dataset_id}/annotation-export-jobs",
             json={
-                "format": "yolo_detection",
+                "format": export_format,
                 "sample_query": {
                     "split": "train",
                     "sort_by": "relative_path",
@@ -464,7 +481,7 @@ def test_yolo_export_job_retry_reuses_snapshot_and_publishes_artifact(
         synchronous = client.get(
             f"/api/datasets/{dataset_id}/annotation-export",
             params={
-                "format": "yolo_detection",
+                "format": export_format,
                 "split": "train",
                 "sort_by": "relative_path",
                 "sort_order": "asc",
@@ -486,6 +503,7 @@ def test_yolo_export_job_retry_reuses_snapshot_and_publishes_artifact(
         "coco_segmentation",
         "yolo_detection",
         "yolo_segmentation",
+        "voc",
     ],
 )
 def test_annotation_export_job_rejects_unmigrated_database(

@@ -87,7 +87,8 @@ function usesExportJob(format: AnnotationExportFormat): format is TaskExportForm
     || format === "coco_detection"
     || format === "coco_segmentation"
     || format === "yolo_detection"
-    || format === "yolo_segmentation";
+    || format === "yolo_segmentation"
+    || format === "voc";
 }
 
 function triggerDownload(blob: Blob, filename: string) {

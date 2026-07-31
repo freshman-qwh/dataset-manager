@@ -88,7 +88,8 @@ function annotationExportSummary(job: Job): string | null {
     coco_detection: "COCO detection",
     coco_segmentation: "COCO segmentation",
     yolo_detection: "YOLO detection",
-    yolo_segmentation: "YOLO segmentation"
+    yolo_segmentation: "YOLO segmentation",
+    voc: "Pascal VOC"
   };
   return `${formatCopy[format] ?? format} · ${sampleCount} 个样本${typeof size === "number" ? ` · ${Math.ceil(size / 1024)} KiB` : ""}`;
 }

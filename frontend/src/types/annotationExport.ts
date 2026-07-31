@@ -67,7 +67,8 @@ export interface AnnotationExportJobCreateRequest {
     | "coco_detection"
     | "coco_segmentation"
     | "yolo_detection"
-    | "yolo_segmentation";
+    | "yolo_segmentation"
+    | "voc";
   sample_query: AnnotationExportSampleQuery;
   include_empty: boolean;
 }

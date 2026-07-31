@@ -31,6 +31,7 @@ FORMAT_TITLE = {
     "coco_segmentation": "COCO segmentation",
     "yolo_detection": "YOLO detection",
     "yolo_segmentation": "YOLO segmentation",
+    "voc": "Pascal VOC",
 }
 
 
