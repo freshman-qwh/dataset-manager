@@ -143,6 +143,7 @@ def list_samples(
     page_size: int = 60,
     sort_by: str = "created_at",
     sort_order: str = "desc",
+    thumbnail_prefetch: int = 0,
 ) -> SampleListResponse:
     safe_page_size = min(max(page_size, 1), 200)
     safe_sort_by = sort_by if sort_by in SORTABLE_SAMPLE_FIELDS else "created_at"
@@ -187,6 +188,43 @@ def list_samples(
         .options(selectinload(Sample.tags))
     )
     samples = list(session.exec(statement).all())
+    thumbnail_prefetch_sample_ids: list[int] = []
+    safe_thumbnail_prefetch = min(max(thumbnail_prefetch, 0), 12)
+    if safe_thumbnail_prefetch:
+        page_start = (safe_page - 1) * safe_page_size
+        window_start = max(page_start - safe_thumbnail_prefetch, 0)
+        window_end = min(page_start + safe_page_size + safe_thumbnail_prefetch, total)
+        prefetch_statement = _apply_sample_filters(
+            select(Sample.id, Sample.file_type, Sample.file_status),
+            session,
+            dataset_id,
+            search=search,
+            file_type=file_type,
+            file_status=file_status,
+            tag=tag,
+            split=split,
+            review_status=review_status,
+            annotation_progress=annotation_progress,
+        )
+        prefetch_statement = (
+            prefetch_statement.order_by(
+                *_sample_order_clauses(
+                    safe_sort_by,
+                    safe_sort_order,
+                    duplicate_only=file_status == "duplicate",
+                )
+            )
+            .offset(window_start)
+            .limit(window_end - window_start)
+        )
+        current_ids = {sample.id for sample in samples if sample.id is not None}
+        thumbnail_prefetch_sample_ids = [
+            int(row[0])
+            for row in session.exec(prefetch_statement).all()
+            if row[0] not in current_ids
+            and row[1] == "image"
+            and row[2] == "normal"
+        ]
     return SampleListResponse(
         items=[to_sample_read(sample) for sample in samples],
         total=total,
@@ -194,6 +232,7 @@ def list_samples(
         page_size=safe_page_size,
         sort_by=safe_sort_by,
         sort_order=safe_sort_order,
+        thumbnail_prefetch_sample_ids=thumbnail_prefetch_sample_ids,
     )
 
 

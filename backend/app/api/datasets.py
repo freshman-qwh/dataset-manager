@@ -161,6 +161,7 @@ def list_dataset_samples(
     page_size: int = Query(default=60, ge=1, le=200),
     sort_by: str = Query(default="created_at"),
     sort_order: str = Query(default="desc", pattern="^(asc|desc)$"),
+    thumbnail_prefetch: int = Query(default=0, ge=0, le=12),
     session: Session = Depends(get_session),
 ) -> SampleListResponse:
     dataset_service.get_dataset_or_404(session, dataset_id)
@@ -178,6 +179,7 @@ def list_dataset_samples(
         page_size,
         sort_by,
         sort_order,
+        thumbnail_prefetch,
     )
 
 

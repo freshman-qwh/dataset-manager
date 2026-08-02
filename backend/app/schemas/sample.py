@@ -104,6 +104,7 @@ class SampleListResponse(BaseModel):
     page_size: int
     sort_by: str
     sort_order: str
+    thumbnail_prefetch_sample_ids: list[int] = Field(default_factory=list)
 
 
 class SampleNavigationResponse(BaseModel):

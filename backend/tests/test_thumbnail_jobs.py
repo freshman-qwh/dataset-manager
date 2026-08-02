@@ -316,3 +316,28 @@ def test_thumbnail_api_rejects_stale_hash_and_unmigrated_job_creation(
         )
         assert stale.status_code == 409
     engine.dispose()
+
+
+def test_thumbnail_candidates_preserve_priority_before_prefetch(
+    tmp_path: Path,
+) -> None:
+    engine = _migrated_engine(tmp_path / "thumbnail-priority.db")
+    with Session(engine) as session:
+        dataset, image_samples = _create_dataset_with_images(session, tmp_path / "raw", 3)
+        assert dataset.id is not None
+        priority = image_samples[2]
+        prefetch = image_samples[0]
+        assert priority.id is not None
+        assert prefetch.id is not None
+        candidates, stale_count = thumbnail_job_service._job_candidates(
+            session,
+            dataset.id,
+            [
+                {"sample_id": priority.id, "file_hash": priority.file_hash},
+                {"sample_id": prefetch.id, "file_hash": prefetch.file_hash},
+            ],
+        )
+
+    assert stale_count == 0
+    assert [candidate.sample_id for candidate in candidates] == [priority.id, prefetch.id]
+    engine.dispose()

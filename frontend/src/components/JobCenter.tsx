@@ -26,6 +26,8 @@ const stageCopy: Record<string, string> = {
   writing_archive: "写入导出包",
   writing_json: "写入 COCO JSON",
   generating_thumbnails: "生成图片缩略图",
+  scanning_thumbnail_cache: "盘点缩略图缓存",
+  pruning_thumbnail_cache: "清理缩略图缓存",
   finalizing: "校验导出产物",
   completed: "已完成",
   failed: "失败",
@@ -108,6 +110,23 @@ function thumbnailSummary(job: Job): string | null {
     return null;
   }
   return `缩略图：生成 ${generated} · 复用 ${cached} · 失败 ${failed}`;
+}
+
+function thumbnailMaintenanceSummary(job: Job): string | null {
+  if (job.job_type !== "thumbnail.maintain" || !job.result) return null;
+  const oldSpec = job.result.old_spec_removed_count;
+  const orphan = job.result.orphan_removed_count;
+  const capacity = job.result.capacity_removed_count;
+  const sizeAfter = job.result.size_after_bytes;
+  if (
+    typeof oldSpec !== "number"
+    || typeof orphan !== "number"
+    || typeof capacity !== "number"
+    || typeof sizeAfter !== "number"
+  ) {
+    return null;
+  }
+  return `缓存清理：旧规格 ${oldSpec} · 孤立 ${orphan} · 容量淘汰 ${capacity} · 剩余 ${(sizeAfter / 1024 / 1024).toFixed(1)} MiB`;
 }
 
 function triggerDownload(blob: Blob, filename: string) {
@@ -308,6 +327,7 @@ export default function JobCenter() {
                         {scanResultSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{scanResultSummary(job)}</p> : null}
                         {annotationExportSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{annotationExportSummary(job)}</p> : null}
                         {thumbnailSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{thumbnailSummary(job)}</p> : null}
+                        {thumbnailMaintenanceSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{thumbnailMaintenanceSummary(job)}</p> : null}
                         {canCancel || canRetry || canDownload ? (
                           <div className="mt-3 flex justify-end gap-2">
                             {canDownload ? (

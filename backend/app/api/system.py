@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlmodel import Session
 
 from app.core.config import get_settings
 from app.core.database import get_session
+from app.core.job_runtime import job_runner
 from app.schemas.database_integrity import (
     DatabaseIntegrityReport,
     DatabaseRepairPreview,
@@ -10,10 +11,38 @@ from app.schemas.database_integrity import (
     DatabaseRepairRequest,
     DatabaseRepairResult,
 )
-from app.services import database_integrity_service
+from app.schemas.thumbnail import ThumbnailMaintenanceJobCreateResponse
+from app.services import database_integrity_service, job_service, thumbnail_maintenance_service
 
 
 router = APIRouter(prefix="/api/system", tags=["system"])
+
+
+@router.post(
+    "/thumbnail-cache/maintenance-jobs",
+    response_model=ThumbnailMaintenanceJobCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_thumbnail_cache_maintenance_job(
+    response: Response,
+    force: bool = Query(default=False),
+    session: Session = Depends(get_session),
+) -> ThumbnailMaintenanceJobCreateResponse:
+    try:
+        result = thumbnail_maintenance_service.create_thumbnail_maintenance_job(
+            session,
+            force=force,
+        )
+    except job_service.JobSchemaUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    if not result.created:
+        response.status_code = status.HTTP_200_OK
+    if result.job is not None:
+        job_runner.notify()
+    return result
 
 
 @router.get("/database-integrity", response_model=DatabaseIntegrityReport)

@@ -140,6 +140,34 @@ def test_sample_list_and_navigation_query_counts_do_not_scale_with_dataset_size(
         assert null_split_navigation.next_sample is not None
 
 
+def test_sample_list_returns_bounded_adjacent_thumbnail_prefetch_ids():
+    engine = _make_engine()
+    with Session(engine) as session:
+        dataset_id = _seed_samples(session, 40)
+        result = sample_service.list_samples(
+            session,
+            dataset_id,
+            page=2,
+            page_size=10,
+            sort_by="filename",
+            sort_order="asc",
+            thumbnail_prefetch=3,
+        )
+        current_ids = {sample.id for sample in result.items}
+        assert len(result.thumbnail_prefetch_sample_ids) == 6
+        assert not current_ids.intersection(result.thumbnail_prefetch_sample_ids)
+        assert result.thumbnail_prefetch_sample_ids == [8, 9, 10, 21, 22, 23]
+
+        without_prefetch = sample_service.list_samples(
+            session,
+            dataset_id,
+            page=2,
+            page_size=10,
+        )
+        assert without_prefetch.thumbnail_prefetch_sample_ids == []
+    engine.dispose()
+
+
 def test_stats_and_duplicate_report_only_materialize_aggregate_or_duplicate_rows():
     engine = _make_engine()
     with Session(engine) as session:

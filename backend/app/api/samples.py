@@ -91,6 +91,7 @@ def read_sample_thumbnail(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="The sample thumbnail has not been generated.",
         )
+    thumbnail_service.touch_thumbnail_access(path)
     return FileResponse(
         path,
         media_type="image/webp",

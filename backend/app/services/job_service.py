@@ -155,7 +155,7 @@ def find_active_job(
     session: Session,
     *,
     job_type: str,
-    dataset_id: int,
+    dataset_id: int | None,
     parameter_match: tuple[str, object] | None = None,
 ) -> JobRead | None:
     ensure_jobs_schema(session)

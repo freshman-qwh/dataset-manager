@@ -27,6 +27,7 @@ import {
   applySplitPlan,
   batchUpdateSamples,
   createScanJob,
+  createThumbnailMaintenanceJob,
   createThumbnailJob,
   deleteDataset,
   deleteSample,
@@ -175,6 +176,7 @@ export default function DatasetDetailPage() {
   const [dataset, setDataset] = useState<Dataset | null>(initialCache?.dataset ?? null);
   const [stats, setStats] = useState<DatasetStats | null>(initialCache?.stats ?? null);
   const [samples, setSamples] = useState<Sample[]>(initialCache?.samples ?? []);
+  const [thumbnailPrefetchSampleIds, setThumbnailPrefetchSampleIds] = useState<number[]>([]);
   const [sampleTotal, setSampleTotal] = useState(initialCache?.sampleTotal ?? 0);
   const [duplicateReport, setDuplicateReport] = useState<DuplicateReport | null>(initialCache?.duplicateReport ?? null);
   const [qualityReport, setQualityReport] = useState<DatasetQualityReport | null>(null);
@@ -233,6 +235,7 @@ export default function DatasetDetailPage() {
   const overviewRequestIdRef = useRef(0);
   const samplesRequestIdRef = useRef(0);
   const thumbnailRequestKeyRef = useRef("");
+  const thumbnailMaintenanceRequestedRef = useRef(false);
   const detailCacheStateRef = useRef<Parameters<typeof writeDatasetDetailCache>[0] | null>(null);
   const debouncedSearch = useDebouncedValue(search);
   const debouncedTag = useDebouncedValue(tag);
@@ -268,12 +271,14 @@ export default function DatasetDetailPage() {
       page,
       pageSize,
       sortBy,
-      sortOrder
+      sortOrder,
+      thumbnailPrefetch: 12
     }, signal);
     if (signal?.aborted || requestId !== samplesRequestIdRef.current) {
       return;
     }
     setSamples(nextSamples.items);
+    setThumbnailPrefetchSampleIds(nextSamples.thumbnail_prefetch_sample_ids);
     setSampleTotal(nextSamples.total);
     if (nextSamples.page !== page) {
       setPage(nextSamples.page);
@@ -336,6 +341,7 @@ export default function DatasetDetailPage() {
     setThumbnailJobId(null);
     setThumbnailJobsAvailable(true);
     setThumbnailRevision(0);
+    setThumbnailPrefetchSampleIds([]);
   }, [datasetId]);
 
   useEffect(() => {
@@ -346,11 +352,15 @@ export default function DatasetDetailPage() {
     if (imageSamples.length === 0) return;
     const requestKey = `${datasetId}:${imageSamples
       .map((sample) => `${sample.id}:${sample.file_hash}`)
-      .join(",")}`;
+      .join(",")}:prefetch:${thumbnailPrefetchSampleIds.join(",")}`;
     if (thumbnailRequestKeyRef.current === requestKey) return;
     thumbnailRequestKeyRef.current = requestKey;
 
-    void createThumbnailJob(datasetId, imageSamples.map((sample) => sample.id))
+    void createThumbnailJob(
+      datasetId,
+      imageSamples.map((sample) => sample.id),
+      thumbnailPrefetchSampleIds
+    )
       .then((response) => {
         if (thumbnailRequestKeyRef.current !== requestKey) return;
         if (response.job) {
@@ -358,6 +368,18 @@ export default function DatasetDetailPage() {
           window.dispatchEvent(new Event("dataset-manager:jobs-changed"));
         } else {
           setThumbnailRevision((current) => current + 1);
+        }
+        if (!thumbnailMaintenanceRequestedRef.current) {
+          thumbnailMaintenanceRequestedRef.current = true;
+          void createThumbnailMaintenanceJob()
+            .then((maintenance) => {
+              if (maintenance.job) {
+                window.dispatchEvent(new Event("dataset-manager:jobs-changed"));
+              }
+            })
+            .catch(() => {
+              // Thumbnail previews stay usable if optional maintenance is unavailable.
+            });
         }
       })
       .catch((caught) => {
@@ -368,7 +390,7 @@ export default function DatasetDetailPage() {
         }
         thumbnailRequestKeyRef.current = "";
       });
-  }, [datasetId, samples, thumbnailJobsAvailable]);
+  }, [datasetId, samples, thumbnailJobsAvailable, thumbnailPrefetchSampleIds]);
 
   useEffect(() => {
     if (thumbnailJobId === null) return;

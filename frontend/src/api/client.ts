@@ -54,6 +54,7 @@ import type {
   Job,
   JobListResponse,
   ScanJobCreateResponse,
+  ThumbnailMaintenanceJobCreateResponse,
   ThumbnailJobCreateResponse
 } from "../types/job";
 
@@ -249,17 +250,28 @@ export async function createScanJob(
 
 export async function createThumbnailJob(
   datasetId: number,
-  sampleIds: number[]
+  sampleIds: number[],
+  prefetchSampleIds: number[] = []
 ): Promise<ThumbnailJobCreateResponse> {
   const { data } = await client.post<ThumbnailJobCreateResponse>(
     `/datasets/${datasetId}/thumbnail-jobs`,
-    { sample_ids: sampleIds }
+    {
+      sample_ids: sampleIds,
+      prefetch_sample_ids: prefetchSampleIds
+    }
+  );
+  return data;
+}
+
+export async function createThumbnailMaintenanceJob(): Promise<ThumbnailMaintenanceJobCreateResponse> {
+  const { data } = await client.post<ThumbnailMaintenanceJobCreateResponse>(
+    "/system/thumbnail-cache/maintenance-jobs"
   );
   return data;
 }
 
 export async function listSamples(params: SampleQuery, signal?: AbortSignal): Promise<SampleListResponse> {
-  const { datasetId, search, fileType, fileStatus, tag, split, reviewStatus, annotationProgress, page, pageSize, sortBy, sortOrder } = params;
+  const { datasetId, search, fileType, fileStatus, tag, split, reviewStatus, annotationProgress, page, pageSize, sortBy, sortOrder, thumbnailPrefetch } = params;
   const { data } = await client.get<SampleListResponse>(`/datasets/${datasetId}/samples`, {
     signal,
     params: {
@@ -273,7 +285,8 @@ export async function listSamples(params: SampleQuery, signal?: AbortSignal): Pr
       page,
       page_size: pageSize,
       sort_by: sortBy,
-      sort_order: sortOrder
+      sort_order: sortOrder,
+      thumbnail_prefetch: thumbnailPrefetch
     }
   });
   return data;

@@ -116,6 +116,7 @@ export interface SampleListResponse {
   page_size: number;
   sort_by: string;
   sort_order: "asc" | "desc" | string;
+  thumbnail_prefetch_sample_ids: number[];
 }
 
 export interface SampleNavigationResponse {
@@ -272,6 +273,7 @@ export interface SampleQuery {
   pageSize?: number;
   sortBy?: string;
   sortOrder?: "asc" | "desc";
+  thumbnailPrefetch?: number;
 }
 
 export type QualityIssueSeverity = "error" | "warning" | "info";

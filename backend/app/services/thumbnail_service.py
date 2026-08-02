@@ -44,12 +44,12 @@ def thumbnail_cache_root() -> Path:
     return get_settings().storage_root / "thumbnails"
 
 
-def _cache_digest(file_hash: str) -> str:
+def thumbnail_cache_digest(file_hash: str) -> str:
     return sha256(f"{THUMBNAIL_SPEC_VERSION}:{file_hash}".encode("utf-8")).hexdigest()
 
 
 def thumbnail_path(file_hash: str) -> Path:
-    digest = _cache_digest(file_hash)
+    digest = thumbnail_cache_digest(file_hash)
     return (
         thumbnail_cache_root()
         / THUMBNAIL_SPEC_VERSION
@@ -61,6 +61,14 @@ def thumbnail_path(file_hash: str) -> Path:
 def is_thumbnail_cached(file_hash: str) -> bool:
     path = thumbnail_path(file_hash)
     return path.exists() and path.is_file()
+
+
+def touch_thumbnail_access(path: Path) -> None:
+    try:
+        os.utime(path, None)
+    except OSError:
+        # Cache access tracking must never block a valid preview response.
+        return
 
 
 def _same_timestamp(actual: float, expected: datetime | None) -> bool:

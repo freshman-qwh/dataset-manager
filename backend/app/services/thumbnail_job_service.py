@@ -45,12 +45,19 @@ def create_thumbnail_job(
 ) -> ThumbnailJobCreateResponse:
     job_service.ensure_jobs_schema(session)
     dataset = dataset_service.get_dataset_or_404(session, dataset_id)
-    sample_ids = list(dict.fromkeys(payload.sample_ids))
+    priority_sample_ids = list(dict.fromkeys(payload.sample_ids))
+    prefetch_sample_ids = [
+        sample_id
+        for sample_id in dict.fromkeys(payload.prefetch_sample_ids)
+        if sample_id not in priority_sample_ids
+    ]
+    sample_ids = [*priority_sample_ids, *prefetch_sample_ids]
     eligible = _eligible_samples(session, dataset_id, sample_ids)
+    samples_by_id = {sample.id: sample for sample in eligible if sample.id is not None}
     items = [
-        {"sample_id": sample.id, "file_hash": sample.file_hash}
-        for sample in eligible
-        if sample.id is not None
+        {"sample_id": sample_id, "file_hash": samples_by_id[sample_id].file_hash}
+        for sample_id in sample_ids
+        if sample_id in samples_by_id
     ]
     cached_count = sum(
         1 for item in items if thumbnail_service.is_thumbnail_cached(str(item["file_hash"]))
@@ -120,10 +127,15 @@ def _job_candidates(
         and isinstance(item.get("file_hash"), str)
     }
     samples = _eligible_samples(session, dataset_id, list(frozen))
+    samples_by_id = {sample.id: sample for sample in samples if sample.id is not None}
     candidates_by_hash: dict[str, thumbnail_service.ThumbnailCandidate] = {}
     stale_count = 0
-    for sample in samples:
-        if sample.id is None or frozen.get(sample.id) != sample.file_hash:
+    for sample_id, frozen_hash in frozen.items():
+        sample = samples_by_id.get(sample_id)
+        if sample is None:
+            stale_count += 1
+            continue
+        if frozen_hash != sample.file_hash:
             stale_count += 1
             continue
         candidates_by_hash.setdefault(
@@ -136,7 +148,6 @@ def _job_candidates(
                 file_modified_at=sample.file_modified_at,
             ),
         )
-    stale_count += len(frozen) - len(samples)
     return list(candidates_by_hash.values()), stale_count
 
 
