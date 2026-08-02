@@ -22,6 +22,7 @@ from app.schemas.scan import ScanJobCreateResponse, ScanRequest, ScanResult
 from app.schemas.split import SplitPlanRequest, SplitPlanResult
 from app.schemas.stats import DatasetStats
 from app.schemas.tag import TagCreate, TagRead
+from app.schemas.thumbnail import ThumbnailJobCreateResponse, ThumbnailJobRequest
 from app.schemas.training_readiness import (
     TrainingReadinessConfig,
     TrainingReadinessConfigRequest,
@@ -41,6 +42,7 @@ from app.services import (
     split_service,
     stats_service,
     tag_service,
+    thumbnail_job_service,
     training_readiness_service,
 )
 
@@ -110,6 +112,35 @@ def create_dataset_scan_job(
     if not result.created:
         response.status_code = status.HTTP_200_OK
     job_runner.notify()
+    return result
+
+
+@router.post(
+    "/datasets/{dataset_id}/thumbnail-jobs",
+    response_model=ThumbnailJobCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_dataset_thumbnail_job(
+    dataset_id: int,
+    payload: ThumbnailJobRequest,
+    response: Response,
+    session: Session = Depends(get_session),
+) -> ThumbnailJobCreateResponse:
+    try:
+        result = thumbnail_job_service.create_thumbnail_job(
+            session,
+            dataset_id,
+            payload,
+        )
+    except job_service.JobSchemaUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    if not result.created:
+        response.status_code = status.HTTP_200_OK
+    if result.job is not None:
+        job_runner.notify()
     return result
 
 

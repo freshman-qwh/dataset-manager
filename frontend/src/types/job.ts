@@ -42,3 +42,12 @@ export interface AnnotationExportJobCreateResponse {
   job: Job;
   created: boolean;
 }
+
+export interface ThumbnailJobCreateResponse {
+  job: Job | null;
+  created: boolean;
+  requested_count: number;
+  eligible_count: number;
+  cached_count: number;
+  skipped_count: number;
+}

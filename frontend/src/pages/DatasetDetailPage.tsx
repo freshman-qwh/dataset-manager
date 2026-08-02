@@ -27,6 +27,7 @@ import {
   applySplitPlan,
   batchUpdateSamples,
   createScanJob,
+  createThumbnailJob,
   deleteDataset,
   deleteSample,
   deleteSamples,
@@ -208,6 +209,9 @@ export default function DatasetDetailPage() {
   const [scanning, setScanning] = useState(false);
   const [scanJobId, setScanJobId] = useState<number | null>(null);
   const [scanNotice, setScanNotice] = useState<string | null>(null);
+  const [thumbnailJobId, setThumbnailJobId] = useState<number | null>(null);
+  const [thumbnailJobsAvailable, setThumbnailJobsAvailable] = useState(true);
+  const [thumbnailRevision, setThumbnailRevision] = useState(0);
   const [saving, setSaving] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [deletingDataset, setDeletingDataset] = useState(false);
@@ -228,6 +232,7 @@ export default function DatasetDetailPage() {
   const samplesSectionRef = useRef<HTMLElement | null>(null);
   const overviewRequestIdRef = useRef(0);
   const samplesRequestIdRef = useRef(0);
+  const thumbnailRequestKeyRef = useRef("");
   const detailCacheStateRef = useRef<Parameters<typeof writeDatasetDetailCache>[0] | null>(null);
   const debouncedSearch = useDebouncedValue(search);
   const debouncedTag = useDebouncedValue(tag);
@@ -325,6 +330,91 @@ export default function DatasetDetailPage() {
     });
     return () => controller.abort();
   }, [datasetId, loadSamples]);
+
+  useEffect(() => {
+    thumbnailRequestKeyRef.current = "";
+    setThumbnailJobId(null);
+    setThumbnailJobsAvailable(true);
+    setThumbnailRevision(0);
+  }, [datasetId]);
+
+  useEffect(() => {
+    if (!Number.isFinite(datasetId) || !thumbnailJobsAvailable) return;
+    const imageSamples = samples.filter(
+      (sample) => sample.file_type === "image" && sample.file_status === "normal"
+    );
+    if (imageSamples.length === 0) return;
+    const requestKey = `${datasetId}:${imageSamples
+      .map((sample) => `${sample.id}:${sample.file_hash}`)
+      .join(",")}`;
+    if (thumbnailRequestKeyRef.current === requestKey) return;
+    thumbnailRequestKeyRef.current = requestKey;
+
+    void createThumbnailJob(datasetId, imageSamples.map((sample) => sample.id))
+      .then((response) => {
+        if (thumbnailRequestKeyRef.current !== requestKey) return;
+        if (response.job) {
+          setThumbnailJobId(response.job.id);
+          window.dispatchEvent(new Event("dataset-manager:jobs-changed"));
+        } else {
+          setThumbnailRevision((current) => current + 1);
+        }
+      })
+      .catch((caught) => {
+        if (thumbnailRequestKeyRef.current !== requestKey) return;
+        if (axios.isAxiosError(caught) && caught.response?.status === 409) {
+          setThumbnailJobsAvailable(false);
+          return;
+        }
+        thumbnailRequestKeyRef.current = "";
+      });
+  }, [datasetId, samples, thumbnailJobsAvailable]);
+
+  useEffect(() => {
+    if (thumbnailJobId === null) return;
+    let disposed = false;
+    let timer: number | undefined;
+
+    const poll = async () => {
+      try {
+        const job = await getJob(thumbnailJobId);
+        if (disposed) return;
+        if (job.status === "queued" || job.status === "running") {
+          timer = window.setTimeout(() => void poll(), 750);
+          return;
+        }
+        setThumbnailJobId(null);
+        if (job.status === "succeeded") {
+          setThumbnailRevision((current) => current + 1);
+        }
+        window.dispatchEvent(new Event("dataset-manager:jobs-changed"));
+      } catch {
+        if (!disposed) setThumbnailJobId(null);
+      }
+    };
+
+    void poll();
+    return () => {
+      disposed = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [thumbnailJobId]);
+
+  useEffect(() => {
+    const handleJobAction = (event: Event) => {
+      const job = (event as CustomEvent<{ job?: Job }>).detail?.job;
+      if (
+        job?.job_type === "thumbnail.generate"
+        && job.dataset_id === datasetId
+        && (job.status === "queued" || job.status === "running")
+      ) {
+        setThumbnailJobsAvailable(true);
+        setThumbnailJobId(job.id);
+      }
+    };
+    window.addEventListener("dataset-manager:job-action", handleJobAction);
+    return () => window.removeEventListener("dataset-manager:job-action", handleJobAction);
+  }, [datasetId]);
 
   detailCacheStateRef.current = {
     datasetId,
@@ -1387,6 +1477,8 @@ export default function DatasetDetailPage() {
             samples={samples}
             selectedId={selected?.id}
             selectedSampleIds={selectedSampleIds}
+            useThumbnails={thumbnailJobsAvailable}
+            thumbnailRevision={thumbnailRevision}
             onSelect={handleSelect}
             onToggleSelect={handleToggleSelect}
             onAnnotate={geometryTask ? handleAnnotate : undefined}

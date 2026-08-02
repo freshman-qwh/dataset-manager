@@ -25,6 +25,7 @@ const stageCopy: Record<string, string> = {
   prechecking: "导出预检",
   writing_archive: "写入导出包",
   writing_json: "写入 COCO JSON",
+  generating_thumbnails: "生成图片缩略图",
   finalizing: "校验导出产物",
   completed: "已完成",
   failed: "失败",
@@ -92,6 +93,21 @@ function annotationExportSummary(job: Job): string | null {
     voc: "Pascal VOC"
   };
   return `${formatCopy[format] ?? format} · ${sampleCount} 个样本${typeof size === "number" ? ` · ${Math.ceil(size / 1024)} KiB` : ""}`;
+}
+
+function thumbnailSummary(job: Job): string | null {
+  if (job.job_type !== "thumbnail.generate" || !job.result) return null;
+  const generated = job.result.generated_count;
+  const cached = job.result.cached_count;
+  const failed = job.result.failed_count;
+  if (
+    typeof generated !== "number"
+    || typeof cached !== "number"
+    || typeof failed !== "number"
+  ) {
+    return null;
+  }
+  return `缩略图：生成 ${generated} · 复用 ${cached} · 失败 ${failed}`;
 }
 
 function triggerDownload(blob: Blob, filename: string) {
@@ -178,8 +194,12 @@ export default function JobCenter() {
   async function act(job: Job, action: "cancel" | "retry") {
     setActingId(job.id);
     try {
-      await (action === "cancel" ? cancelJob(job.id) : retryJob(job.id));
+      const updatedJob = await (action === "cancel" ? cancelJob(job.id) : retryJob(job.id));
       await load(true);
+      window.dispatchEvent(new Event("dataset-manager:jobs-changed"));
+      window.dispatchEvent(new CustomEvent("dataset-manager:job-action", {
+        detail: { job: updatedJob }
+      }));
     } catch {
       setError(action === "cancel" ? "取消请求未能提交" : "重试未能创建");
     } finally {
@@ -287,6 +307,7 @@ export default function JobCenter() {
                         {errorMessage(job) ? <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">{errorMessage(job)}</p> : null}
                         {scanResultSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{scanResultSummary(job)}</p> : null}
                         {annotationExportSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{annotationExportSummary(job)}</p> : null}
+                        {thumbnailSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{thumbnailSummary(job)}</p> : null}
                         {canCancel || canRetry || canDownload ? (
                           <div className="mt-3 flex justify-end gap-2">
                             {canDownload ? (

@@ -1,13 +1,13 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import FileResponse
 from sqlmodel import Session
 
 from app.core.database import get_session
 from app.schemas.sample import SampleDeleteResult, SamplePreview, SampleRead, SampleRepairRequest, SampleUpdate
 from app.schemas.tag import TagRead, TagUpdate
-from app.services import sample_service, tag_service
+from app.services import sample_service, tag_service, thumbnail_service
 
 router = APIRouter(prefix="/api", tags=["samples"])
 
@@ -71,3 +71,28 @@ def read_sample_file(sample_id: int, session: Session = Depends(get_session)) ->
             detail="Sample file is missing from disk.",
         )
     return FileResponse(path, media_type=sample.mime_type, filename=sample.filename)
+
+
+@router.get("/samples/{sample_id}/thumbnail")
+def read_sample_thumbnail(
+    sample_id: int,
+    content_hash: str = Query(min_length=1, max_length=128),
+    session: Session = Depends(get_session),
+) -> FileResponse:
+    sample = sample_service.get_sample_or_404(session, sample_id)
+    if content_hash != sample.file_hash:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The requested thumbnail hash is stale.",
+        )
+    path = thumbnail_service.thumbnail_path(content_hash)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The sample thumbnail has not been generated.",
+        )
+    return FileResponse(
+        path,
+        media_type="image/webp",
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )

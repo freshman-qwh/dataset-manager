@@ -53,7 +53,8 @@ import type {
   AnnotationExportJobCreateResponse,
   Job,
   JobListResponse,
-  ScanJobCreateResponse
+  ScanJobCreateResponse,
+  ThumbnailJobCreateResponse
 } from "../types/job";
 
 export const API_BASE_URL =
@@ -246,6 +247,17 @@ export async function createScanJob(
   return data;
 }
 
+export async function createThumbnailJob(
+  datasetId: number,
+  sampleIds: number[]
+): Promise<ThumbnailJobCreateResponse> {
+  const { data } = await client.post<ThumbnailJobCreateResponse>(
+    `/datasets/${datasetId}/thumbnail-jobs`,
+    { sample_ids: sampleIds }
+  );
+  return data;
+}
+
 export async function listSamples(params: SampleQuery, signal?: AbortSignal): Promise<SampleListResponse> {
   const { datasetId, search, fileType, fileStatus, tag, split, reviewStatus, annotationProgress, page, pageSize, sortBy, sortOrder } = params;
   const { data } = await client.get<SampleListResponse>(`/datasets/${datasetId}/samples`, {
@@ -374,6 +386,11 @@ export async function getDatasetStats(datasetId: number, signal?: AbortSignal): 
 
 export function getSampleFileUrl(sampleId: number): string {
   return `${API_BASE_URL}/samples/${sampleId}/file`;
+}
+
+export function getSampleThumbnailUrl(sampleId: number, contentHash: string): string {
+  const params = new URLSearchParams({ content_hash: contentHash });
+  return `${API_BASE_URL}/samples/${sampleId}/thumbnail?${params.toString()}`;
 }
 
 export function getManifestUrl(datasetId: number, params?: Omit<SampleQuery, "datasetId" | "page" | "pageSize">): string {

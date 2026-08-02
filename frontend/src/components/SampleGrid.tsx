@@ -1,6 +1,7 @@
 import { AlertTriangle, CheckSquare, Database, FileText, Image as ImageIcon, PencilLine, Square, Video } from "lucide-react";
+import { useEffect, useState } from "react";
 
-import { getSampleFileUrl } from "../api/client";
+import { getSampleFileUrl, getSampleThumbnailUrl } from "../api/client";
 import type { Sample } from "../types/dataset";
 import { tagChipStyle } from "../utils/colors";
 
@@ -11,6 +12,8 @@ interface SampleGridProps {
   onSelect: (sample: Sample) => void;
   onToggleSelect: (sampleId: number) => void;
   onAnnotate?: (sample: Sample) => void;
+  useThumbnails?: boolean;
+  thumbnailRevision?: number;
 }
 
 function formatBytes(value: number): string {
@@ -23,7 +26,21 @@ function formatBytes(value: number): string {
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function FilePreview({ sample }: { sample: Sample }) {
+function FilePreview({
+  sample,
+  useThumbnails,
+  thumbnailRevision
+}: {
+  sample: Sample;
+  useThumbnails: boolean;
+  thumbnailRevision: number;
+}) {
+  const [thumbnailFailed, setThumbnailFailed] = useState(false);
+
+  useEffect(() => {
+    setThumbnailFailed(false);
+  }, [sample.file_hash, sample.id, thumbnailRevision, useThumbnails]);
+
   if (sample.file_status === "missing") {
     return (
       <div className="flex h-full w-full items-center justify-center bg-amber-50 text-amber-600">
@@ -33,12 +50,18 @@ function FilePreview({ sample }: { sample: Sample }) {
   }
 
   if (sample.file_type === "image") {
+    const shouldUseThumbnail = useThumbnails && !thumbnailFailed;
     return (
       <img
-        src={getSampleFileUrl(sample.id)}
+        src={shouldUseThumbnail
+          ? getSampleThumbnailUrl(sample.id, sample.file_hash)
+          : getSampleFileUrl(sample.id)}
         alt={sample.filename}
         className="h-full w-full object-cover"
         loading="lazy"
+        onError={() => {
+          if (shouldUseThumbnail) setThumbnailFailed(true);
+        }}
       />
     );
   }
@@ -77,7 +100,9 @@ export default function SampleGrid({
   selectedSampleIds,
   onSelect,
   onToggleSelect,
-  onAnnotate
+  onAnnotate,
+  useThumbnails = true,
+  thumbnailRevision = 0
 }: SampleGridProps) {
   if (samples.length === 0) {
     return (
@@ -113,7 +138,11 @@ export default function SampleGrid({
             )}
             <button type="button" onClick={() => onSelect(sample)} className="block w-full text-left">
               <div className="aspect-[4/3] overflow-hidden bg-gray-50">
-                <FilePreview sample={sample} />
+                <FilePreview
+                  sample={sample}
+                  useThumbnails={useThumbnails}
+                  thumbnailRevision={thumbnailRevision}
+                />
               </div>
             </button>
           </div>
