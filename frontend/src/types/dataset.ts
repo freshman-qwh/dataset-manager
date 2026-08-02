@@ -386,15 +386,31 @@ export interface MetadataImportRequest {
   match_by: string;
   tag_column: string;
   replace_tags: boolean;
+  dry_run?: boolean;
+  expected_source_sha256?: string;
+}
+
+export interface MetadataImportIssue {
+  severity: "warning" | "error";
+  code: string;
+  message: string;
+  row_number: number | null;
+  match_value: string | null;
 }
 
 export interface MetadataImportResult {
   dataset_id: number;
   source_path: string;
+  source_size_bytes: number;
+  source_sha256: string;
+  dry_run: boolean;
   total_rows: number;
   matched: number;
+  planned_updates: number;
   updated: number;
   skipped: number;
+  error_count: number;
+  issues: MetadataImportIssue[];
   errors: string[];
 }
 

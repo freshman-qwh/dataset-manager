@@ -1,13 +1,20 @@
 import csv
+from hashlib import sha256
+import io
 import json
 from pathlib import Path, PureWindowsPath
 
 from fastapi import HTTPException, status
+from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.models.dataset import utc_now
 from app.models.sample import Sample
-from app.schemas.metadata_import import MetadataImportRequest, MetadataImportResult
+from app.schemas.metadata_import import (
+    MetadataImportIssue,
+    MetadataImportRequest,
+    MetadataImportResult,
+)
 from app.services.dataset_service import get_dataset_or_404
 from app.services.sample_service import _clean_tag_names, _get_or_create_tag, _validate_review_status
 from app.utils.paths import resolve_local_path
@@ -36,17 +43,38 @@ def import_metadata(session: Session, dataset_id: int, payload: MetadataImportRe
     if payload.match_by not in SUPPORTED_MATCH_FIELDS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported match_by field: {payload.match_by}")
 
-    rows = _load_rows(source)
-    samples = session.exec(select(Sample).where(Sample.dataset_id == dataset_id)).all()
+    source_bytes = _read_source(source)
+    source_sha256 = sha256(source_bytes).hexdigest()
+    if (
+        payload.expected_source_sha256 is not None
+        and payload.expected_source_sha256.casefold() != source_sha256
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Metadata source changed after preview. Run preview again before importing.",
+        )
+    rows = _load_rows(source, source_bytes)
+    samples = session.exec(
+        select(Sample)
+        .where(Sample.dataset_id == dataset_id)
+        .options(selectinload(Sample.tags))
+    ).all()
     if not samples:
-        return MetadataImportResult(
+        issue = _issue(
+            "NO_SAMPLES",
+            "Dataset has no registered samples. Run scan before importing metadata.",
+        )
+        return _result(
             dataset_id=dataset_id,
-            source_path=str(source),
+            source=source,
+            source_bytes=source_bytes,
+            source_sha256=source_sha256,
+            payload=payload,
             total_rows=len(rows),
             matched=0,
+            planned_updates=0,
             updated=0,
-            skipped=len(rows),
-            errors=["Dataset has no registered samples. Run scan before importing metadata."],
+            issues=[issue],
         )
 
     sample_index = _build_sample_index(samples, payload.match_by)
@@ -54,56 +82,120 @@ def import_metadata(session: Session, dataset_id: int, payload: MetadataImportRe
     filename_index = _build_filename_index(samples)
 
     matched = 0
-    updated = 0
-    errors: list[str] = []
+    issues: list[MetadataImportIssue] = []
+    operations: list[tuple[Sample, dict[str, object]]] = []
 
     for row_number, row in enumerate(rows, start=1):
         key = str(row.get(payload.match_by, "")).strip()
         if not key:
-            errors.append(f"Row {row_number}: missing {payload.match_by}")
+            issues.append(
+                _issue(
+                    "MISSING_MATCH_VALUE",
+                    f"Row {row_number}: missing {payload.match_by}",
+                    row_number=row_number,
+                )
+            )
             continue
-        sample = _match_sample(sample_index, payload.match_by, key)
-        if not sample and payload.match_by == "absolute_path":
-            sample = _match_absolute_by_dataset_root(relative_index, key, dataset.root_path)
+        sample, ambiguous = _match_sample(sample_index, payload.match_by, key)
+        if not sample and not ambiguous and payload.match_by == "absolute_path":
+            sample, ambiguous = _match_absolute_by_dataset_root(
+                relative_index,
+                key,
+                dataset.root_path,
+            )
+        if ambiguous:
+            issues.append(
+                _issue(
+                    "AMBIGUOUS_SAMPLE_MATCH",
+                    f"Row {row_number}: multiple samples matched {payload.match_by}={key}",
+                    row_number=row_number,
+                    match_value=key,
+                )
+            )
+            continue
         if not sample:
-            errors.append(_build_no_match_error(row_number, payload.match_by, key, dataset.root_path, filename_index))
+            issues.append(
+                _issue(
+                    "SAMPLE_NOT_FOUND",
+                    _build_no_match_error(
+                        row_number,
+                        payload.match_by,
+                        key,
+                        dataset.root_path,
+                        filename_index,
+                    ),
+                    row_number=row_number,
+                    match_value=key,
+                )
+            )
             continue
 
         matched += 1
-        _apply_row(session, dataset_id, sample, row, payload.tag_column, payload.replace_tags)
-        session.add(sample)
-        updated += 1
+        row_issue = _validate_row(row, row_number, key)
+        if row_issue is not None:
+            issues.append(row_issue)
+            continue
+        operations.append((sample, row))
 
-    session.commit()
-    return MetadataImportResult(
+    updated = 0
+    if not payload.dry_run:
+        for sample, row in operations:
+            _apply_row(
+                session,
+                dataset_id,
+                sample,
+                row,
+                payload.tag_column,
+                payload.replace_tags,
+            )
+            session.add(sample)
+            updated += 1
+        session.commit()
+    return _result(
         dataset_id=dataset_id,
-        source_path=str(source),
+        source=source,
+        source_bytes=source_bytes,
+        source_sha256=source_sha256,
+        payload=payload,
         total_rows=len(rows),
         matched=matched,
+        planned_updates=len(operations),
         updated=updated,
-        skipped=len(rows) - matched,
-        errors=errors[:50],
+        issues=issues,
     )
 
 
-def _load_rows(path: Path) -> list[dict[str, object]]:
+def _read_source(path: Path) -> bytes:
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unable to read metadata: {exc}",
+        ) from exc
+
+
+def _load_rows(path: Path, source_bytes: bytes) -> list[dict[str, object]]:
+    try:
+        source_text = source_bytes.decode(
+            "utf-8-sig",
+            errors="replace" if path.suffix.lower() == ".csv" else "strict",
+        )
+    except UnicodeDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="JSON metadata must be encoded as UTF-8.",
+        ) from exc
     if path.suffix.lower() == ".csv":
-        try:
-            with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as file:
-                reader = csv.DictReader(file)
-                if not reader.fieldnames:
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CSV metadata must include a header row.")
-                return [dict(row) for row in reader]
-        except OSError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unable to read CSV metadata: {exc}") from exc
+        reader = csv.DictReader(io.StringIO(source_text, newline=""))
+        if not reader.fieldnames:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CSV metadata must include a header row.")
+        return [dict(row) for row in reader]
 
     try:
-        with path.open("r", encoding="utf-8-sig") as file:
-            parsed = json.load(file)
+        parsed = json.loads(source_text)
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid JSON metadata: {exc.msg}") from exc
-    except OSError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unable to read JSON metadata: {exc}") from exc
 
     if isinstance(parsed, dict) and isinstance(parsed.get("samples"), list):
         parsed = parsed["samples"]
@@ -115,13 +207,15 @@ def _load_rows(path: Path) -> list[dict[str, object]]:
     return rows
 
 
-def _build_sample_index(samples: list[Sample], match_by: str) -> dict[str, Sample]:
-    index: dict[str, Sample] = {}
+def _build_sample_index(samples: list[Sample], match_by: str) -> dict[str, list[Sample]]:
+    index: dict[str, list[Sample]] = {}
     for sample in samples:
         value = sample.id if match_by == "sample_id" else getattr(sample, match_by)
         if value is not None:
             for key in _normalize_match_keys(match_by, value):
-                index.setdefault(key, sample)
+                matches = index.setdefault(key, [])
+                if all(existing.id != sample.id for existing in matches):
+                    matches.append(sample)
     return index
 
 
@@ -132,12 +226,19 @@ def _build_filename_index(samples: list[Sample]) -> dict[str, list[Sample]]:
     return index
 
 
-def _match_sample(index: dict[str, Sample], match_by: str, value: object) -> Sample | None:
+def _match_sample(
+    index: dict[str, list[Sample]],
+    match_by: str,
+    value: object,
+) -> tuple[Sample | None, bool]:
+    matches: dict[int, Sample] = {}
     for key in _normalize_match_keys(match_by, value):
-        sample = index.get(key)
-        if sample:
-            return sample
-    return None
+        for sample in index.get(key, []):
+            if sample.id is not None:
+                matches[sample.id] = sample
+    if len(matches) == 1:
+        return next(iter(matches.values())), False
+    return None, len(matches) > 1
 
 
 def _normalize_match_keys(match_by: str, value: object) -> list[str]:
@@ -180,18 +281,18 @@ def _unique_keys(values) -> list[str]:
 
 
 def _match_absolute_by_dataset_root(
-    relative_index: dict[str, Sample],
+    relative_index: dict[str, list[Sample]],
     absolute_path: str,
     dataset_root: str | None,
-) -> Sample | None:
+) -> tuple[Sample | None, bool]:
     if not dataset_root:
-        return None
+        return None, False
     try:
         path = Path(absolute_path).expanduser().resolve(strict=False)
         root = Path(dataset_root).expanduser().resolve(strict=False)
         relative = path.relative_to(root).as_posix()
     except (OSError, RuntimeError, ValueError):
-        return None
+        return None, False
     return _match_sample(relative_index, "relative_path", relative)
 
 
@@ -222,6 +323,75 @@ def _build_no_match_error(
         candidate_paths = ", ".join(sample.absolute_path for sample in candidates[:3])
         detail += f"; same filename exists at: {candidate_paths}"
     return detail
+
+
+def _validate_row(
+    row: dict[str, object],
+    row_number: int,
+    match_value: str,
+) -> MetadataImportIssue | None:
+    if "review_status" not in row:
+        return None
+    review_status = str(row.get("review_status") or "").strip()
+    if not review_status:
+        return None
+    try:
+        _validate_review_status(review_status)
+    except HTTPException as exc:
+        return _issue(
+            "INVALID_REVIEW_STATUS",
+            f"Row {row_number}: {exc.detail}",
+            row_number=row_number,
+            match_value=match_value,
+        )
+    return None
+
+
+def _issue(
+    code: str,
+    message: str,
+    *,
+    row_number: int | None = None,
+    match_value: str | None = None,
+) -> MetadataImportIssue:
+    return MetadataImportIssue(
+        severity="error",
+        code=code,
+        message=message,
+        row_number=row_number,
+        match_value=match_value,
+    )
+
+
+def _result(
+    *,
+    dataset_id: int,
+    source: Path,
+    source_bytes: bytes,
+    source_sha256: str,
+    payload: MetadataImportRequest,
+    total_rows: int,
+    matched: int,
+    planned_updates: int,
+    updated: int,
+    issues: list[MetadataImportIssue],
+) -> MetadataImportResult:
+    error_issues = [issue for issue in issues if issue.severity == "error"]
+    return MetadataImportResult(
+        dataset_id=dataset_id,
+        source_path=str(source),
+        source_size_bytes=len(source_bytes),
+        source_sha256=source_sha256,
+        dry_run=payload.dry_run,
+        total_rows=total_rows,
+        matched=matched,
+        planned_updates=planned_updates,
+        updated=updated,
+        skipped=total_rows - planned_updates,
+        error_count=len(error_issues),
+        issues=issues[:100],
+        errors=[issue.message for issue in error_issues[:50]],
+    )
 
 
 def _apply_row(
