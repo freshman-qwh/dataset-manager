@@ -27,6 +27,7 @@ import type {
   MissingSampleRepairRequest,
   MissingSampleRepairResult,
   MetadataImportRequest,
+  MetadataImportJobCreateRequest,
   MetadataImportResult,
   Sample,
   SampleDeleteResult,
@@ -55,6 +56,8 @@ import type {
   JobListResponse,
   ScanJobCreateResponse,
   ThumbnailMaintenanceJobCreateResponse,
+  MetadataImportJobCreateResponse,
+  MetadataImportRollbackJobCreateResponse,
   ThumbnailJobCreateResponse
 } from "../types/job";
 
@@ -227,6 +230,26 @@ export async function importMetadata(
   payload: MetadataImportRequest
 ): Promise<MetadataImportResult> {
   const { data } = await client.post<MetadataImportResult>(`/datasets/${datasetId}/import-metadata`, payload);
+  return data;
+}
+
+export async function createMetadataImportJob(
+  datasetId: number,
+  payload: MetadataImportJobCreateRequest
+): Promise<MetadataImportJobCreateResponse> {
+  const { data } = await client.post<MetadataImportJobCreateResponse>(
+    `/datasets/${datasetId}/metadata-import-jobs`,
+    payload
+  );
+  return data;
+}
+
+export async function createMetadataImportRollbackJob(
+  jobId: number
+): Promise<MetadataImportRollbackJobCreateResponse> {
+  const { data } = await client.post<MetadataImportRollbackJobCreateResponse>(
+    `/jobs/${jobId}/metadata-import-rollback-jobs`
+  );
   return data;
 }
 

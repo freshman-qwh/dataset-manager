@@ -1,8 +1,9 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import axios from "axios";
 
-import { importMetadata } from "../api/client";
+import { createMetadataImportJob, getJob, importMetadata } from "../api/client";
 import type { MetadataImportIssue, MetadataImportResult } from "../types/dataset";
+import type { Job } from "../types/job";
 import Modal from "./Modal";
 
 interface MetadataImportModalProps {
@@ -20,16 +21,46 @@ export default function MetadataImportModal({ datasetId, open, onClose, onImport
   const [result, setResult] = useState<MetadataImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [job, setJob] = useState<Job | null>(null);
+  const [compatibilityNotice, setCompatibilityNotice] = useState<string | null>(null);
+  const refreshedJobIds = useRef(new Set<number>());
 
   useEffect(() => {
     setResult(null);
     setError(null);
     setBusy(false);
+    setJob(null);
+    setCompatibilityNotice(null);
   }, [datasetId]);
+
+  useEffect(() => {
+    if (!job || (job.status !== "queued" && job.status !== "running")) {
+      return;
+    }
+    let stopped = false;
+    const timer = window.setInterval(() => {
+      void getJob(job.id).then(async (nextJob) => {
+        if (stopped) return;
+        setJob(nextJob);
+        if (nextJob.status === "succeeded" && !refreshedJobIds.current.has(nextJob.id)) {
+          refreshedJobIds.current.add(nextJob.id);
+          await onImported();
+        }
+      }).catch(() => {
+        if (!stopped) setError("暂时无法刷新导入任务状态，请在任务中心查看。");
+      });
+    }, 1000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [job, onImported]);
 
   function invalidatePreview() {
     setResult(null);
     setError(null);
+    setJob(null);
+    setCompatibilityNotice(null);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -44,20 +75,43 @@ export default function MetadataImportModal({ datasetId, open, onClose, onImport
       setResult(null);
     }
     try {
-      const nextResult = await importMetadata(datasetId, {
-        file_path: filePath.trim(),
-        match_by: matchBy,
-        tag_column: tagColumn.trim() || "tags",
-        replace_tags: replaceTags,
-        dry_run: !preview,
-        expected_source_sha256: preview?.source_sha256
-      });
-      setResult(nextResult);
-      if (!nextResult.dry_run) {
-        await onImported();
+      if (!preview) {
+        const nextResult = await importMetadata(datasetId, {
+          file_path: filePath.trim(),
+          match_by: matchBy,
+          tag_column: tagColumn.trim() || "tags",
+          replace_tags: replaceTags,
+          dry_run: true
+        });
+        setResult(nextResult);
+      } else {
+        try {
+          const created = await createMetadataImportJob(datasetId, {
+            file_path: filePath.trim(),
+            match_by: matchBy,
+            tag_column: tagColumn.trim() || "tags",
+            replace_tags: replaceTags,
+            expected_source_sha256: preview.source_sha256
+          });
+          setJob(created.job);
+          window.dispatchEvent(new Event("dataset-manager:jobs-changed"));
+        } catch (caught) {
+          if (!isJobsSchemaUnavailable(caught)) throw caught;
+          const nextResult = await importMetadata(datasetId, {
+            file_path: filePath.trim(),
+            match_by: matchBy,
+            tag_column: tagColumn.trim() || "tags",
+            replace_tags: replaceTags,
+            dry_run: false,
+            expected_source_sha256: preview.source_sha256
+          });
+          setResult(nextResult);
+          setCompatibilityNotice("当前数据库尚未启用本地任务，已使用兼容模式完成本次导入；升级后可使用取消、重试和回滚。");
+          await onImported();
+        }
       }
     } catch (caught) {
-      if (preview) {
+      if (preview && !job) {
         setResult(null);
       }
       setError(apiErrorMessage(caught));
@@ -72,6 +126,7 @@ export default function MetadataImportModal({ datasetId, open, onClose, onImport
         <label className="block">
           <span className="text-sm font-medium text-gray-700">CSV / JSON 文件路径 *</span>
           <input
+            disabled={Boolean(job)}
             value={filePath}
             onChange={(event) => {
               setFilePath(event.target.value);
@@ -103,6 +158,7 @@ images/a.png,"cat;review",train,"good sample",high`}</pre>
           <label className="block">
             <span className="text-sm font-medium text-gray-700">匹配字段</span>
             <select
+              disabled={Boolean(job)}
               value={matchBy}
               onChange={(event) => {
                 setMatchBy(event.target.value);
@@ -120,6 +176,7 @@ images/a.png,"cat;review",train,"good sample",high`}</pre>
           <label className="block">
             <span className="text-sm font-medium text-gray-700">标签列</span>
             <input
+              disabled={Boolean(job)}
               value={tagColumn}
               onChange={(event) => {
                 setTagColumn(event.target.value);
@@ -132,6 +189,7 @@ images/a.png,"cat;review",train,"good sample",high`}</pre>
         <label className="flex items-center gap-2 text-sm text-gray-700">
           <input
             type="checkbox"
+            disabled={Boolean(job)}
             checked={replaceTags}
             onChange={(event) => {
               setReplaceTags(event.target.checked);
@@ -159,10 +217,12 @@ images/a.png,"cat;review",train,"good sample",high`}</pre>
               </div>
             )}
             {result.dry_run && result.planned_updates > 0 && (
-              <div className="mt-2 text-xs text-gray-500">确认导入时会校验文件指纹；文件发生变化将要求重新预检。</div>
+              <div className="mt-2 text-xs text-gray-500">确认后会创建可取消、可重试的分批任务；文件发生变化将要求重新预检，已提交变更可从任务中心显式回滚。</div>
             )}
           </div>
         )}
+        {job && <MetadataImportJobStatus job={job} />}
+        {compatibilityNotice && <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-800">{compatibilityNotice}</div>}
         {error && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onClose} className="rounded-lg border border-line px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
@@ -170,16 +230,42 @@ images/a.png,"cat;review",train,"good sample",high`}</pre>
           </button>
           <button
             type="submit"
-            disabled={busy || !filePath.trim() || (result?.dry_run === true && result.planned_updates === 0)}
+            disabled={busy || Boolean(job) || !filePath.trim() || (result?.dry_run === true && result.planned_updates === 0)}
             className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-gray-300"
           >
             {busy
-              ? (result?.dry_run ? "导入中" : "预检中")
+              ? (result?.dry_run ? "提交任务中" : "预检中")
               : (result?.dry_run ? `确认导入 ${result.planned_updates} 行` : "预览导入")}
           </button>
         </div>
       </form>
     </Modal>
+  );
+}
+
+function MetadataImportJobStatus({ job }: { job: Job }) {
+  const progress = job.progress_total && job.progress_total > 0
+    ? Math.min(100, Math.round((job.progress_current / job.progress_total) * 100))
+    : 0;
+  const statusText: Record<Job["status"], string> = {
+    queued: "等待开始",
+    running: "正在分批写入",
+    succeeded: "导入完成",
+    failed: "导入失败",
+    cancelled: "导入已取消",
+    interrupted: "导入已中断"
+  };
+  return (
+    <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+      <div className="flex items-center justify-between gap-3 font-medium">
+        <span>{statusText[job.status]}</span>
+        <span>{progress}%</span>
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-blue-100">
+        <div className="h-full rounded-full bg-blue-600 transition-[width]" style={{ width: `${progress}%` }} />
+      </div>
+      <p className="mt-2 text-xs leading-5 text-blue-700">任务 #{job.id} 已进入本地任务中心。关闭窗口不会中止任务；可在任务中心取消、重试或回滚已提交变更。</p>
+    </div>
   );
 }
 
@@ -203,4 +289,10 @@ function apiErrorMessage(caught: unknown): string {
     }
   }
   return "导入失败，请检查文件路径、格式和匹配字段。";
+}
+
+function isJobsSchemaUnavailable(caught: unknown): boolean {
+  if (!axios.isAxiosError(caught) || caught.response?.status !== 409) return false;
+  const detail = caught.response?.data?.detail;
+  return typeof detail === "string" && detail.toLowerCase().includes("jobs schema");
 }

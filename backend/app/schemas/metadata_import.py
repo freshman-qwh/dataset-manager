@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.job import JobRead
+
 
 class MetadataImportRequest(BaseModel):
     file_path: str = Field(min_length=1)
@@ -37,3 +39,29 @@ class MetadataImportResult(BaseModel):
     error_count: int = Field(ge=0)
     issues: list[MetadataImportIssue] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+
+
+class MetadataImportJobCreateRequest(BaseModel):
+    file_path: str = Field(min_length=1)
+    match_by: str = Field(default="relative_path")
+    tag_column: str = Field(default="tags")
+    replace_tags: bool = False
+    expected_source_sha256: str = Field(pattern="^[0-9a-fA-F]{64}$")
+
+
+class MetadataImportJobParameters(MetadataImportJobCreateRequest):
+    file_path: str
+    source_size_bytes: int = Field(ge=0)
+    planned_updates: int = Field(ge=0)
+    preview_error_count: int = Field(ge=0)
+    request_fingerprint: str
+
+
+class MetadataImportJobCreateResponse(BaseModel):
+    job: JobRead
+    created: bool
+
+
+class MetadataImportRollbackJobCreateResponse(BaseModel):
+    job: JobRead
+    created: bool

@@ -43,6 +43,16 @@ export interface AnnotationExportJobCreateResponse {
   created: boolean;
 }
 
+export interface MetadataImportJobCreateResponse {
+  job: Job;
+  created: boolean;
+}
+
+export interface MetadataImportRollbackJobCreateResponse {
+  job: Job;
+  created: boolean;
+}
+
 export interface ThumbnailJobCreateResponse {
   job: Job | null;
   created: boolean;

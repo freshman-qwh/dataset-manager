@@ -1,8 +1,8 @@
 import axios from "axios";
-import { Activity, Ban, Download, RefreshCw, RotateCcw, X } from "lucide-react";
+import { Activity, Ban, Download, RefreshCw, RotateCcw, Undo2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { cancelJob, downloadJobArtifact, listJobs, retryJob } from "../api/client";
+import { cancelJob, createMetadataImportRollbackJob, downloadJobArtifact, listJobs, retryJob } from "../api/client";
 import type { Job, JobStatus } from "../types/job";
 
 const statusCopy: Record<JobStatus, string> = {
@@ -22,7 +22,9 @@ const stageCopy: Record<string, string> = {
   hashing: "校验变化文件",
   writing: "写入元数据",
   missing_detection: "检查缺失文件",
-  prechecking: "导出预检",
+  prechecking: "任务预检",
+  writing_metadata: "分批写入元数据",
+  rolling_back_metadata: "恢复导入前元数据",
   writing_archive: "写入导出包",
   writing_json: "写入 COCO JSON",
   generating_thumbnails: "生成图片缩略图",
@@ -127,6 +129,25 @@ function thumbnailMaintenanceSummary(job: Job): string | null {
     return null;
   }
   return `缓存清理：旧规格 ${oldSpec} · 孤立 ${orphan} · 容量淘汰 ${capacity} · 剩余 ${(sizeAfter / 1024 / 1024).toFixed(1)} MiB`;
+}
+
+function metadataImportSummary(job: Job): string | null {
+  if (job.job_type !== "metadata.import" || !job.result) return null;
+  const updated = job.result.updated;
+  const unique = job.result.unique_samples_changed;
+  const batches = job.result.batches_committed;
+  if (typeof updated !== "number" || typeof unique !== "number" || typeof batches !== "number") {
+    return null;
+  }
+  return `元数据：写入 ${updated} 行 · 影响 ${unique} 个样本 · ${batches} 批`;
+}
+
+function metadataRollbackSummary(job: Job): string | null {
+  if (job.job_type !== "metadata.import.rollback" || !job.result) return null;
+  const restored = job.result.restored;
+  const missing = job.result.missing;
+  if (typeof restored !== "number" || typeof missing !== "number") return null;
+  return `元数据回滚：恢复 ${restored} 个样本${missing > 0 ? ` · 缺失 ${missing}` : ""}`;
 }
 
 function triggerDownload(blob: Blob, filename: string) {
@@ -238,6 +259,19 @@ export default function JobCenter() {
     }
   }
 
+  async function rollbackMetadataImport(job: Job) {
+    setActingId(job.id);
+    try {
+      await createMetadataImportRollbackJob(job.id);
+      await load(true);
+      window.dispatchEvent(new Event("dataset-manager:jobs-changed"));
+    } catch (caught) {
+      setError(apiDetail(caught) ?? "回滚任务未能创建");
+    } finally {
+      setActingId(null);
+    }
+  }
+
   return (
     <>
       <button
@@ -305,6 +339,8 @@ export default function JobCenter() {
                     const canCancel = job.status === "queued" || job.status === "running";
                     const canRetry = terminalRetryStatuses.has(job.status);
                     const canDownload = job.job_type === "annotation.export" && job.status === "succeeded";
+                    const canRollback = job.job_type === "metadata.import"
+                      && (job.result?.rollback_available === true || job.status === "interrupted");
                     return (
                       <article key={job.id} className="rounded-2xl border border-line p-4">
                         <div className="flex items-start justify-between gap-3">
@@ -328,8 +364,15 @@ export default function JobCenter() {
                         {annotationExportSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{annotationExportSummary(job)}</p> : null}
                         {thumbnailSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{thumbnailSummary(job)}</p> : null}
                         {thumbnailMaintenanceSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{thumbnailMaintenanceSummary(job)}</p> : null}
-                        {canCancel || canRetry || canDownload ? (
+                        {metadataImportSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{metadataImportSummary(job)}</p> : null}
+                        {metadataRollbackSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{metadataRollbackSummary(job)}</p> : null}
+                        {canCancel || canRetry || canDownload || canRollback ? (
                           <div className="mt-3 flex justify-end gap-2">
+                            {canRollback ? (
+                              <button type="button" disabled={actingId === job.id} onClick={() => void rollbackMetadataImport(job)} className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs font-medium text-ink hover:bg-gray-50 disabled:opacity-50">
+                                <Undo2 size={14} /> 回滚
+                              </button>
+                            ) : null}
                             {canDownload ? (
                               <button type="button" disabled={actingId === job.id} onClick={() => void downloadArtifact(job)} className="inline-flex items-center gap-1.5 rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-50">
                                 <Download size={14} /> 下载
@@ -358,4 +401,10 @@ export default function JobCenter() {
       ) : null}
     </>
   );
+}
+
+function apiDetail(caught: unknown): string | null {
+  if (!axios.isAxiosError(caught)) return null;
+  const detail = caught.response?.data?.detail;
+  return typeof detail === "string" ? detail : null;
 }

@@ -390,6 +390,14 @@ export interface MetadataImportRequest {
   expected_source_sha256?: string;
 }
 
+export interface MetadataImportJobCreateRequest {
+  file_path: string;
+  match_by: string;
+  tag_column: string;
+  replace_tags: boolean;
+  expected_source_sha256: string;
+}
+
 export interface MetadataImportIssue {
   severity: "warning" | "error";
   code: string;

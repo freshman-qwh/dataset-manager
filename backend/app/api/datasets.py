@@ -6,7 +6,12 @@ from app.core.job_runtime import job_runner
 from app.schemas.dataset import DatasetCreate, DatasetRead, DatasetUpdate
 from app.schemas.duplicates import DuplicateReport
 from app.schemas.export_template import ExportTemplateResponse
-from app.schemas.metadata_import import MetadataImportRequest, MetadataImportResult
+from app.schemas.metadata_import import (
+    MetadataImportJobCreateRequest,
+    MetadataImportJobCreateResponse,
+    MetadataImportRequest,
+    MetadataImportResult,
+)
 from app.schemas.quality import DatasetQualityReport
 from app.schemas.sample import (
     BatchSampleDelete,
@@ -35,6 +40,7 @@ from app.services import (
     job_service,
     manifest_service,
     metadata_import_service,
+    metadata_import_job_service,
     quality_service,
     sample_service,
     scan_job_service,
@@ -294,6 +300,39 @@ def import_dataset_metadata(
     session: Session = Depends(get_session),
 ) -> MetadataImportResult:
     return metadata_import_service.import_metadata(session, dataset_id, payload)
+
+
+@router.post(
+    "/datasets/{dataset_id}/metadata-import-jobs",
+    response_model=MetadataImportJobCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_dataset_metadata_import_job(
+    dataset_id: int,
+    payload: MetadataImportJobCreateRequest,
+    response: Response,
+    session: Session = Depends(get_session),
+) -> MetadataImportJobCreateResponse:
+    try:
+        result = metadata_import_job_service.create_metadata_import_job(
+            session,
+            dataset_id,
+            payload,
+        )
+    except job_service.JobSchemaUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except job_service.JobError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+    if not result.created:
+        response.status_code = status.HTTP_200_OK
+    job_runner.notify()
+    return result
 
 
 @router.get("/stats/datasets/{dataset_id}", response_model=DatasetStats)

@@ -1,4 +1,5 @@
 import csv
+from dataclasses import dataclass
 from hashlib import sha256
 import io
 import json
@@ -33,7 +34,63 @@ RESERVED_COLUMNS = {
 SUPPORTED_MATCH_FIELDS = {"sample_id", "relative_path", "absolute_path", "filename", "file_hash"}
 
 
+@dataclass(frozen=True)
+class MetadataImportOperation:
+    sample_id: int
+    row: dict[str, object]
+
+
+@dataclass(frozen=True)
+class MetadataImportPlan:
+    dataset_id: int
+    source: Path
+    source_bytes: bytes
+    source_sha256: str
+    payload: MetadataImportRequest
+    total_rows: int
+    matched: int
+    issues: list[MetadataImportIssue]
+    operations: list[MetadataImportOperation]
+
+
 def import_metadata(session: Session, dataset_id: int, payload: MetadataImportRequest) -> MetadataImportResult:
+    plan = prepare_metadata_import(session, dataset_id, payload)
+    updated = 0
+    if not payload.dry_run:
+        samples = {
+            sample.id: sample
+            for sample in session.exec(
+                select(Sample)
+                .where(
+                    Sample.dataset_id == dataset_id,
+                    Sample.id.in_([operation.sample_id for operation in plan.operations]),
+                )
+                .options(selectinload(Sample.tags))
+            ).all()
+        }
+        for operation in plan.operations:
+            sample = samples.get(operation.sample_id)
+            if sample is None:
+                continue
+            apply_metadata_row(
+                session,
+                dataset_id,
+                sample,
+                operation.row,
+                payload.tag_column,
+                payload.replace_tags,
+            )
+            session.add(sample)
+            updated += 1
+        session.commit()
+    return metadata_import_result(plan, updated=updated)
+
+
+def prepare_metadata_import(
+    session: Session,
+    dataset_id: int,
+    payload: MetadataImportRequest,
+) -> MetadataImportPlan:
     dataset = get_dataset_or_404(session, dataset_id)
     source = resolve_local_path(payload.file_path)
     if not source.exists() or not source.is_file():
@@ -64,7 +121,7 @@ def import_metadata(session: Session, dataset_id: int, payload: MetadataImportRe
             "NO_SAMPLES",
             "Dataset has no registered samples. Run scan before importing metadata.",
         )
-        return _result(
+        return MetadataImportPlan(
             dataset_id=dataset_id,
             source=source,
             source_bytes=source_bytes,
@@ -72,9 +129,8 @@ def import_metadata(session: Session, dataset_id: int, payload: MetadataImportRe
             payload=payload,
             total_rows=len(rows),
             matched=0,
-            planned_updates=0,
-            updated=0,
             issues=[issue],
+            operations=[],
         )
 
     sample_index = _build_sample_index(samples, payload.match_by)
@@ -83,7 +139,7 @@ def import_metadata(session: Session, dataset_id: int, payload: MetadataImportRe
 
     matched = 0
     issues: list[MetadataImportIssue] = []
-    operations: list[tuple[Sample, dict[str, object]]] = []
+    operations: list[MetadataImportOperation] = []
 
     for row_number, row in enumerate(rows, start=1):
         key = str(row.get(payload.match_by, "")).strip()
@@ -135,23 +191,11 @@ def import_metadata(session: Session, dataset_id: int, payload: MetadataImportRe
         if row_issue is not None:
             issues.append(row_issue)
             continue
-        operations.append((sample, row))
+        if sample.id is None:
+            raise RuntimeError("A persisted metadata import sample must have an id.")
+        operations.append(MetadataImportOperation(sample_id=sample.id, row=row))
 
-    updated = 0
-    if not payload.dry_run:
-        for sample, row in operations:
-            _apply_row(
-                session,
-                dataset_id,
-                sample,
-                row,
-                payload.tag_column,
-                payload.replace_tags,
-            )
-            session.add(sample)
-            updated += 1
-        session.commit()
-    return _result(
+    return MetadataImportPlan(
         dataset_id=dataset_id,
         source=source,
         source_bytes=source_bytes,
@@ -159,9 +203,8 @@ def import_metadata(session: Session, dataset_id: int, payload: MetadataImportRe
         payload=payload,
         total_rows=len(rows),
         matched=matched,
-        planned_updates=len(operations),
-        updated=updated,
         issues=issues,
+        operations=operations,
     )
 
 
@@ -363,38 +406,30 @@ def _issue(
     )
 
 
-def _result(
+def metadata_import_result(
+    plan: MetadataImportPlan,
     *,
-    dataset_id: int,
-    source: Path,
-    source_bytes: bytes,
-    source_sha256: str,
-    payload: MetadataImportRequest,
-    total_rows: int,
-    matched: int,
-    planned_updates: int,
     updated: int,
-    issues: list[MetadataImportIssue],
 ) -> MetadataImportResult:
-    error_issues = [issue for issue in issues if issue.severity == "error"]
+    error_issues = [issue for issue in plan.issues if issue.severity == "error"]
     return MetadataImportResult(
-        dataset_id=dataset_id,
-        source_path=str(source),
-        source_size_bytes=len(source_bytes),
-        source_sha256=source_sha256,
-        dry_run=payload.dry_run,
-        total_rows=total_rows,
-        matched=matched,
-        planned_updates=planned_updates,
+        dataset_id=plan.dataset_id,
+        source_path=str(plan.source),
+        source_size_bytes=len(plan.source_bytes),
+        source_sha256=plan.source_sha256,
+        dry_run=plan.payload.dry_run,
+        total_rows=plan.total_rows,
+        matched=plan.matched,
+        planned_updates=len(plan.operations),
         updated=updated,
-        skipped=total_rows - planned_updates,
+        skipped=plan.total_rows - len(plan.operations),
         error_count=len(error_issues),
-        issues=issues[:100],
+        issues=plan.issues[:100],
         errors=[issue.message for issue in error_issues[:50]],
     )
 
 
-def _apply_row(
+def apply_metadata_row(
     session: Session,
     dataset_id: int,
     sample: Sample,

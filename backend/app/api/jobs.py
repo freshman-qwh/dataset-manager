@@ -1,13 +1,14 @@
 from typing import NoReturn
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import FileResponse
 from sqlmodel import Session
 
 from app.core.database import get_session
 from app.core.job_runtime import job_runner
 from app.schemas.job import JobCreate, JobListResponse, JobRead, JobStatus
-from app.services import job_artifact_service, job_service
+from app.schemas.metadata_import import MetadataImportRollbackJobCreateResponse
+from app.services import job_artifact_service, job_service, metadata_import_job_service
 
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -140,3 +141,26 @@ def retry_job(
         _raise_job_http_error(exc)
     job_runner.notify()
     return retried
+
+
+@router.post(
+    "/{job_id}/metadata-import-rollback-jobs",
+    response_model=MetadataImportRollbackJobCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_metadata_import_rollback_job(
+    job_id: int,
+    response: Response,
+    session: Session = Depends(get_session),
+) -> MetadataImportRollbackJobCreateResponse:
+    try:
+        result = metadata_import_job_service.create_metadata_import_rollback_job(
+            session,
+            job_id,
+        )
+    except job_service.JobError as exc:
+        _raise_job_http_error(exc)
+    if not result.created:
+        response.status_code = status.HTTP_200_OK
+    job_runner.notify()
+    return result

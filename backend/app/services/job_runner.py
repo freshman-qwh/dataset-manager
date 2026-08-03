@@ -43,6 +43,19 @@ class JobInterrupted(RuntimeError):
         self.result = result
 
 
+class JobFailed(RuntimeError):
+    """Raised by a handler when failure recovery metadata must be retained."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        result: dict[str, object] | None = None,
+    ):
+        super().__init__(message)
+        self.result = result
+
+
 @dataclass(frozen=True)
 class JobContext:
     job_id: int
@@ -209,6 +222,14 @@ class JobRunner:
                 result=exc.result,
                 error={"code": "runner_stopped", "message": str(exc)},
             )
+        except JobFailed as exc:
+            self._finish_failed(
+                job.id,
+                code="handler_failed",
+                message=str(exc)[:2000],
+                error_type=type(exc).__name__,
+                result=exc.result,
+            )
         except Exception as exc:  # A task failure must not terminate the worker.
             self._finish_failed(
                 job.id,
@@ -258,8 +279,15 @@ class JobRunner:
         code: str,
         message: str,
         error_type: str | None = None,
+        result: dict[str, object] | None = None,
     ) -> None:
         error: dict[str, object] = {"code": code, "message": message}
         if error_type is not None:
             error["type"] = error_type
-        self._finish_terminal(job_id, "failed", stage="failed", error=error)
+        self._finish_terminal(
+            job_id,
+            "failed",
+            stage="failed",
+            result=result,
+            error=error,
+        )
