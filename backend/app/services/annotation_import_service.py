@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+from hashlib import sha256
 import json
 from pathlib import Path
 from typing import Any
@@ -15,11 +17,59 @@ from app.utils.paths import resolve_local_path
 SUPPORTED_LABELME_SHAPES = {"rectangle", "polygon", "point", "points"}
 
 
+@dataclass(frozen=True)
+class LabelmeImportOperation:
+    sample_id: int
+    sample_path: str
+    source_file: Path
+    annotations: list[AnnotationCreate]
+
+
+@dataclass(frozen=True)
+class LabelmeImportPlan:
+    dataset_id: int
+    source: Path
+    source_size_bytes: int
+    source_sha256: str
+    plan_fingerprint: str
+    checked_files: int
+    matched_files: int
+    skipped_shapes: int
+    warnings: list[LabelmeImportIssue]
+    errors: list[LabelmeImportIssue]
+    operations: list[LabelmeImportOperation]
+
+
 def import_labelme_annotations(
     session: Session,
     dataset_id: int,
     payload: LabelmeImportRequest,
 ) -> LabelmeImportResult:
+    plan = prepare_labelme_import(session, dataset_id, payload)
+    if not payload.dry_run:
+        for operation in plan.operations:
+            next_annotations = operation.annotations
+            if payload.strategy == "append":
+                existing_annotations = [
+                    _annotation_read_to_create(item)
+                    for item in annotation_service.list_sample_annotations(session, operation.sample_id)
+                ]
+                next_annotations = append_annotations(existing_annotations, operation.annotations)
+            annotation_service.replace_sample_annotations(
+                session,
+                operation.sample_id,
+                AnnotationReplaceRequest(annotations=next_annotations, save_mode="draft"),
+            )
+            if payload.sync_sample_tags:
+                annotation_service.sync_annotation_classes_to_sample_tags(session, operation.sample_id)
+    return labelme_import_result(plan, payload)
+
+
+def prepare_labelme_import(
+    session: Session,
+    dataset_id: int,
+    payload: LabelmeImportRequest,
+) -> LabelmeImportPlan:
     dataset_service.get_dataset_or_404(session, dataset_id)
     source = resolve_local_path(payload.path)
     source_files = _resolve_labelme_sources(source, payload.mode)
@@ -27,9 +77,8 @@ def import_labelme_annotations(
     matcher = _SampleMatcher(samples)
     warnings: list[LabelmeImportIssue] = []
     errors: list[LabelmeImportIssue] = []
-    operations: list[tuple[Sample, list[AnnotationCreate], Path]] = []
+    operations: list[LabelmeImportOperation] = []
     matched_files = 0
-    created_annotations = 0
     skipped_shapes = 0
     seen_sample_ids: set[int] = set()
 
@@ -38,8 +87,20 @@ def import_labelme_annotations(
             _issue("error", "NO_SAMPLES", "Dataset has no registered samples. Run scan before importing labelme annotations.")
         )
 
+    source_hasher = sha256()
+    source_size_bytes = 0
     for source_file in source_files:
-        parsed = _load_labelme_json(source_file, errors)
+        source_bytes = _read_labelme_bytes(source_file, errors)
+        if source_bytes is None:
+            continue
+        relative_source = source_file.name if payload.mode == "file" else source_file.relative_to(source).as_posix()
+        relative_bytes = relative_source.encode("utf-8")
+        source_hasher.update(len(relative_bytes).to_bytes(8, "big"))
+        source_hasher.update(relative_bytes)
+        source_hasher.update(len(source_bytes).to_bytes(8, "big"))
+        source_hasher.update(source_bytes)
+        source_size_bytes += len(source_bytes)
+        parsed = _load_labelme_json(source_file, source_bytes, errors)
         if parsed is None:
             continue
         sample = _match_import_sample(session, dataset_id, payload, parsed, source_file, matcher, errors)
@@ -76,50 +137,83 @@ def import_labelme_annotations(
             )
             continue
         _warn_on_image_size_mismatch(parsed, source_file, sample, warnings)
-        operations.append((sample, annotations, source_file))
-        created_annotations += len(annotations)
-
-    if not payload.dry_run:
-        for sample, annotations, _source_file in operations:
-            next_annotations = annotations
-            if payload.strategy == "append":
-                existing_annotations = [
-                    _annotation_read_to_create(item)
-                    for item in annotation_service.list_sample_annotations(session, sample.id or 0)
-                ]
-                appended_annotations = [
-                    item.model_copy(update={"z_order": len(existing_annotations) + index})
-                    for index, item in enumerate(annotations)
-                ]
-                next_annotations = [
-                    *existing_annotations,
-                    *appended_annotations,
-                ]
-            annotation_service.replace_sample_annotations(
-                session,
-                sample.id or 0,
-                AnnotationReplaceRequest(
-                    annotations=next_annotations,
-                    save_mode="draft",
-                ),
+        if sample.id is None:
+            raise RuntimeError("A persisted LabelMe import sample must have an id.")
+        operations.append(
+            LabelmeImportOperation(
+                sample_id=sample.id,
+                sample_path=sample.relative_path,
+                source_file=source_file,
+                annotations=annotations,
             )
-            if payload.sync_sample_tags:
-                annotation_service.sync_annotation_classes_to_sample_tags(session, sample.id or 0)
+        )
 
-    return LabelmeImportResult(
+    source_sha256 = source_hasher.hexdigest()
+    if payload.expected_source_sha256 is not None and source_sha256 != payload.expected_source_sha256.lower():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="LabelMe source changed after preview. Run preview again before importing.",
+        )
+    plan_payload = [
+        {
+            "sample_id": operation.sample_id,
+            "source": operation.source_file.name if payload.mode == "file" else operation.source_file.relative_to(source).as_posix(),
+            "annotations": [item.model_dump(mode="json") for item in operation.annotations],
+        }
+        for operation in operations
+    ]
+    plan_fingerprint = sha256(
+        json.dumps(plan_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    if payload.expected_plan_fingerprint is not None and plan_fingerprint != payload.expected_plan_fingerprint.lower():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="LabelMe import targets changed after preview. Run preview again before importing.",
+        )
+    return LabelmeImportPlan(
         dataset_id=dataset_id,
-        source_path=str(source),
-        mode=payload.mode,
-        strategy=payload.strategy,
-        dry_run=payload.dry_run,
+        source=source,
+        source_size_bytes=source_size_bytes,
+        source_sha256=source_sha256,
+        plan_fingerprint=plan_fingerprint,
         checked_files=len(source_files),
         matched_files=matched_files,
-        imported_samples=len(operations),
-        created_annotations=created_annotations,
         skipped_shapes=skipped_shapes,
         warnings=warnings[:100],
         errors=errors[:100],
+        operations=operations,
     )
+
+
+def labelme_import_result(plan: LabelmeImportPlan, payload: LabelmeImportRequest) -> LabelmeImportResult:
+    return LabelmeImportResult(
+        dataset_id=plan.dataset_id,
+        source_path=str(plan.source),
+        mode=payload.mode,
+        strategy=payload.strategy,
+        dry_run=payload.dry_run,
+        source_size_bytes=plan.source_size_bytes,
+        source_sha256=plan.source_sha256,
+        plan_fingerprint=plan.plan_fingerprint,
+        checked_files=plan.checked_files,
+        matched_files=plan.matched_files,
+        imported_samples=len(plan.operations),
+        created_annotations=sum(len(operation.annotations) for operation in plan.operations),
+        skipped_shapes=plan.skipped_shapes,
+        warnings=plan.warnings,
+        errors=plan.errors,
+    )
+
+
+def append_annotations(
+    existing_annotations: list[AnnotationCreate],
+    imported_annotations: list[AnnotationCreate],
+) -> list[AnnotationCreate]:
+    appended_annotations = [
+        item.model_copy(update={"z_order": len(existing_annotations) + index})
+        for index, item in enumerate(imported_annotations)
+    ]
+    return [*existing_annotations, *appended_annotations]
 
 
 def _resolve_labelme_sources(source: Path, mode: str) -> list[Path]:
@@ -135,15 +229,24 @@ def _resolve_labelme_sources(source: Path, mode: str) -> list[Path]:
     return sorted(path for path in source.rglob("*.json") if path.is_file())
 
 
-def _load_labelme_json(source_file: Path, errors: list[LabelmeImportIssue]) -> dict[str, Any] | None:
+def _read_labelme_bytes(source_file: Path, errors: list[LabelmeImportIssue]) -> bytes | None:
     try:
-        with source_file.open("r", encoding="utf-8-sig") as file:
-            parsed = json.load(file)
-    except json.JSONDecodeError as exc:
-        errors.append(_issue("error", "INVALID_JSON", f"Invalid labelme JSON: {exc.msg}", file_path=str(source_file)))
-        return None
+        return source_file.read_bytes()
     except OSError as exc:
         errors.append(_issue("error", "READ_FAILED", f"Unable to read labelme JSON: {exc}", file_path=str(source_file)))
+        return None
+
+
+def _load_labelme_json(
+    source_file: Path,
+    source_bytes: bytes,
+    errors: list[LabelmeImportIssue],
+) -> dict[str, Any] | None:
+    try:
+        parsed = json.loads(source_bytes.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        message = exc.msg if isinstance(exc, json.JSONDecodeError) else str(exc)
+        errors.append(_issue("error", "INVALID_JSON", f"Invalid labelme JSON: {message}", file_path=str(source_file)))
         return None
     if not isinstance(parsed, dict):
         errors.append(_issue("error", "INVALID_LABELME_ROOT", "Labelme JSON root must be an object.", file_path=str(source_file)))

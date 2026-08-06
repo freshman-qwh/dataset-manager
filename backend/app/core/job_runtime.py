@@ -3,6 +3,12 @@ from app.services.annotation_export_job_service import (
     ANNOTATION_EXPORT_JOB_TYPE,
     run_annotation_export_job,
 )
+from app.services.annotation_import_job_service import (
+    LABELME_IMPORT_JOB_TYPE,
+    LABELME_IMPORT_ROLLBACK_JOB_TYPE,
+    run_labelme_import_job,
+    run_labelme_import_rollback_job,
+)
 from app.services.scan_job_service import SCAN_JOB_TYPE, run_scan_job
 from app.services.metadata_import_job_service import (
     METADATA_IMPORT_JOB_TYPE,
@@ -26,6 +32,11 @@ job_runner.register_handler(
     run_metadata_import_rollback_job,
 )
 job_runner.register_handler(ANNOTATION_EXPORT_JOB_TYPE, run_annotation_export_job)
+job_runner.register_handler(LABELME_IMPORT_JOB_TYPE, run_labelme_import_job)
+job_runner.register_handler(
+    LABELME_IMPORT_ROLLBACK_JOB_TYPE,
+    run_labelme_import_rollback_job,
+)
 job_runner.register_handler(THUMBNAIL_JOB_TYPE, run_thumbnail_job)
 job_runner.register_handler(
     THUMBNAIL_MAINTENANCE_JOB_TYPE,

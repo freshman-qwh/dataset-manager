@@ -29,6 +29,9 @@ import type {
   MetadataImportRequest,
   MetadataImportJobCreateRequest,
   MetadataImportResult,
+  LabelmeImportRequest,
+  LabelmeImportJobCreateRequest,
+  LabelmeImportResult,
   Sample,
   SampleDeleteResult,
   SampleListResponse,
@@ -58,6 +61,8 @@ import type {
   ThumbnailMaintenanceJobCreateResponse,
   MetadataImportJobCreateResponse,
   MetadataImportRollbackJobCreateResponse,
+  LabelmeImportJobCreateResponse,
+  LabelmeImportRollbackJobCreateResponse,
   ThumbnailJobCreateResponse
 } from "../types/job";
 
@@ -249,6 +254,37 @@ export async function createMetadataImportRollbackJob(
 ): Promise<MetadataImportRollbackJobCreateResponse> {
   const { data } = await client.post<MetadataImportRollbackJobCreateResponse>(
     `/jobs/${jobId}/metadata-import-rollback-jobs`
+  );
+  return data;
+}
+
+export async function importLabelmeAnnotations(
+  datasetId: number,
+  payload: LabelmeImportRequest
+): Promise<LabelmeImportResult> {
+  const { data } = await client.post<LabelmeImportResult>(
+    `/datasets/${datasetId}/annotations/import-labelme`,
+    payload
+  );
+  return data;
+}
+
+export async function createLabelmeImportJob(
+  datasetId: number,
+  payload: LabelmeImportJobCreateRequest
+): Promise<LabelmeImportJobCreateResponse> {
+  const { data } = await client.post<LabelmeImportJobCreateResponse>(
+    `/datasets/${datasetId}/annotation-import-labelme-jobs`,
+    payload
+  );
+  return data;
+}
+
+export async function createLabelmeImportRollbackJob(
+  jobId: number
+): Promise<LabelmeImportRollbackJobCreateResponse> {
+  const { data } = await client.post<LabelmeImportRollbackJobCreateResponse>(
+    `/jobs/${jobId}/annotation-import-labelme-rollback-jobs`
   );
   return data;
 }

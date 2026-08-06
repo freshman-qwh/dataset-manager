@@ -9,9 +9,11 @@ interface DatasetActionMenuProps {
   onManageTags: () => void;
   onScan: () => void;
   onImportMetadata: () => void;
+  onImportLabelme: () => void;
   onExport: () => void;
   onAnnotationExport: () => void;
   annotationExportEnabled?: boolean;
+  annotationImportEnabled?: boolean;
   annotationExportHint?: string;
   scanning?: boolean;
 }
@@ -22,9 +24,11 @@ export default function DatasetActionMenu({
   onManageTags,
   onScan,
   onImportMetadata,
+  onImportLabelme,
   onExport,
   onAnnotationExport,
   annotationExportEnabled = true,
+  annotationImportEnabled = true,
   annotationExportHint,
   scanning = false
 }: DatasetActionMenuProps) {
@@ -71,6 +75,15 @@ export default function DatasetActionMenu({
           >
             <Upload size={16} />
             导入元数据
+          </button>
+          <button
+            type="button"
+            onClick={() => closeAfter(onImportLabelme)}
+            disabled={!annotationImportEnabled}
+            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300"
+          >
+            <Upload size={16} />
+            导入 LabelMe 标注
           </button>
           <div className="my-2 border-t border-line" />
           <label className="block px-3 text-xs font-medium text-gray-500">导出格式</label>

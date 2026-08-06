@@ -53,6 +53,16 @@ export interface MetadataImportRollbackJobCreateResponse {
   created: boolean;
 }
 
+export interface LabelmeImportJobCreateResponse {
+  job: Job;
+  created: boolean;
+}
+
+export interface LabelmeImportRollbackJobCreateResponse {
+  job: Job;
+  created: boolean;
+}
+
 export interface ThumbnailJobCreateResponse {
   job: Job | null;
   created: boolean;

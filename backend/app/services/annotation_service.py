@@ -52,6 +52,8 @@ def replace_sample_annotations(
     session: Session,
     sample_id: int,
     payload: AnnotationReplaceRequest,
+    *,
+    commit: bool = True,
 ) -> list[AnnotationRead]:
     sample = sample_service.get_sample_or_404(session, sample_id)
     if sample.file_type != "image":
@@ -121,15 +123,20 @@ def replace_sample_annotations(
         sample.annotation_progress = "in_progress"
     sample.updated_at = now
     session.add(sample)
-    session.commit()
-    for item in created:
-        session.refresh(item)
+    if commit:
+        session.commit()
+        for item in created:
+            session.refresh(item)
+    else:
+        session.flush()
     return [to_annotation_read(item) for item in created]
 
 
 def sync_annotation_classes_to_sample_tags(
     session: Session,
     sample_id: int,
+    *,
+    commit: bool = True,
 ) -> AnnotationTagSyncResult:
     sample = sample_service.get_sample_or_404(session, sample_id)
     annotations = session.exec(
@@ -151,7 +158,10 @@ def sync_annotation_classes_to_sample_tags(
         sample.tags.append(sample_service._get_or_create_tag(session, sample.dataset_id, label))
     sample.updated_at = utc_now()
     session.add(sample)
-    session.commit()
+    if commit:
+        session.commit()
+    else:
+        session.flush()
     return AnnotationTagSyncResult(
         sample_id=sample.id or 0,
         added_tags=added_tags,

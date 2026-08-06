@@ -98,9 +98,30 @@ def test_labelme_import_dry_run_then_replace_and_export_shapes(tmp_path: Path):
         assert dry_run.json()["created_annotations"] == 4
         assert client.get(f"/api/samples/{sample_id}/annotations").json() == []
 
+        changed_plan = client.post(
+            f"/api/datasets/{dataset_id}/annotations/import-labelme",
+            json={
+                "path": str(labelme_file),
+                "mode": "file",
+                "sample_id": sample_id,
+                "dry_run": False,
+                "expected_source_sha256": dry_run.json()["source_sha256"],
+                "expected_plan_fingerprint": "0" * 64,
+            },
+        )
+        assert changed_plan.status_code == 409
+        assert client.get(f"/api/samples/{sample_id}/annotations").json() == []
+
         imported = client.post(
             f"/api/datasets/{dataset_id}/annotations/import-labelme",
-            json={"path": str(labelme_file), "mode": "file", "sample_id": sample_id, "strategy": "replace"},
+            json={
+                "path": str(labelme_file),
+                "mode": "file",
+                "sample_id": sample_id,
+                "strategy": "replace",
+                "expected_source_sha256": dry_run.json()["source_sha256"],
+                "expected_plan_fingerprint": dry_run.json()["plan_fingerprint"],
+            },
         )
         assert imported.status_code == 200
         payload = imported.json()

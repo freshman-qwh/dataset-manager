@@ -422,6 +422,57 @@ export interface MetadataImportResult {
   errors: string[];
 }
 
+export type LabelmeImportMode = "file" | "directory";
+export type LabelmeImportStrategy = "replace" | "append";
+
+export interface LabelmeImportRequest {
+  path: string;
+  mode: LabelmeImportMode;
+  sample_id?: number;
+  strategy: LabelmeImportStrategy;
+  dry_run?: boolean;
+  sync_sample_tags: boolean;
+  expected_source_sha256?: string;
+  expected_plan_fingerprint?: string;
+}
+
+export interface LabelmeImportJobCreateRequest {
+  path: string;
+  mode: LabelmeImportMode;
+  sample_id?: number;
+  strategy: LabelmeImportStrategy;
+  sync_sample_tags: boolean;
+  expected_source_sha256: string;
+  expected_plan_fingerprint: string;
+}
+
+export interface LabelmeImportIssue {
+  severity: "warning" | "error";
+  code: string;
+  message: string;
+  file_path: string | null;
+  sample_id: number | null;
+  sample_path: string | null;
+}
+
+export interface LabelmeImportResult {
+  dataset_id: number;
+  source_path: string;
+  mode: LabelmeImportMode;
+  strategy: LabelmeImportStrategy;
+  dry_run: boolean;
+  source_size_bytes: number;
+  source_sha256: string;
+  plan_fingerprint: string;
+  checked_files: number;
+  matched_files: number;
+  imported_samples: number;
+  created_annotations: number;
+  skipped_shapes: number;
+  warnings: LabelmeImportIssue[];
+  errors: LabelmeImportIssue[];
+}
+
 export interface ExportTemplateResponse {
   dataset_id: number;
   format: string;

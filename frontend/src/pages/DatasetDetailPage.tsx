@@ -59,6 +59,7 @@ import DatasetQualityModal from "../components/DatasetQualityModal";
 import DatasetSettingsModal from "../components/DatasetSettingsModal";
 import ExportPreviewModal, { type ExportPreview } from "../components/ExportPreviewModal";
 import MetadataImportModal from "../components/MetadataImportModal";
+import LabelmeImportModal from "../components/LabelmeImportModal";
 import MissingRepairModal from "../components/MissingRepairModal";
 import SampleDetailPanel from "../components/SampleDetailPanel";
 import SampleGrid from "../components/SampleGrid";
@@ -201,6 +202,7 @@ export default function DatasetDetailPage() {
   const [tagsOpen, setTagsOpen] = useState(false);
   const [tagStatsOpen, setTagStatsOpen] = useState(false);
   const [metadataImportOpen, setMetadataImportOpen] = useState(false);
+  const [labelmeImportOpen, setLabelmeImportOpen] = useState(false);
   const [missingRepairOpen, setMissingRepairOpen] = useState(false);
   const [splitPlanOpen, setSplitPlanOpen] = useState(false);
   const [qualityOpen, setQualityOpen] = useState(false);
@@ -1366,9 +1368,11 @@ export default function DatasetDetailPage() {
                 onManageTags={() => setTagsOpen(true)}
                 onScan={() => setScanOpen(true)}
                 onImportMetadata={() => setMetadataImportOpen(true)}
+                onImportLabelme={() => setLabelmeImportOpen(true)}
                 onExport={() => void handleExport()}
                 onAnnotationExport={() => setAnnotationExportOpen(true)}
                 annotationExportEnabled={geometryTask}
+                annotationImportEnabled={geometryTask}
                 scanning={scanning}
                 annotationExportHint={
                   classificationTask ? "分类整理请使用 CSV 标签表" : dataset?.task_capabilities.unsupported_reason ?? undefined
@@ -1565,6 +1569,14 @@ export default function DatasetDetailPage() {
         datasetId={datasetId}
         open={metadataImportOpen}
         onClose={() => setMetadataImportOpen(false)}
+        onImported={async () => {
+          await Promise.all([loadOverview(), loadSamples()]);
+        }}
+      />
+      <LabelmeImportModal
+        datasetId={datasetId}
+        open={labelmeImportOpen}
+        onClose={() => setLabelmeImportOpen(false)}
         onImported={async () => {
           await Promise.all([loadOverview(), loadSamples()]);
         }}
