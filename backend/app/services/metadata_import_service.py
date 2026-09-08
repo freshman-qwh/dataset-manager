@@ -17,6 +17,7 @@ from app.schemas.metadata_import import (
     MetadataImportResult,
 )
 from app.services.dataset_service import get_dataset_or_404
+from app.services.dataset_revision_service import bump_dataset_revision
 from app.services.sample_service import _clean_tag_names, _get_or_create_tag, _validate_review_status
 from app.utils.paths import resolve_local_path
 
@@ -82,6 +83,8 @@ def import_metadata(session: Session, dataset_id: int, payload: MetadataImportRe
             )
             session.add(sample)
             updated += 1
+        if updated:
+            bump_dataset_revision(session, dataset_id)
         session.commit()
     return metadata_import_result(plan, updated=updated)
 

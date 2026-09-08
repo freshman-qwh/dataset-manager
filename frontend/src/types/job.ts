@@ -77,3 +77,8 @@ export interface ThumbnailMaintenanceJobCreateResponse {
   created: boolean;
   due: boolean;
 }
+
+export interface DatabaseBackupJobCreateResponse {
+  job: Job;
+  created: boolean;
+}

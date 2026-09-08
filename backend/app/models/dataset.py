@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from sqlalchemy import Column, Integer, text
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
@@ -27,6 +28,10 @@ class Dataset(SQLModel, table=True):
     project: str | None = Field(default=None, max_length=160)
     notes: str | None = Field(default=None, max_length=4000)
     auto_scan_on_open: bool = Field(default=False)
+    revision: int = Field(
+        default=1,
+        sa_column=Column(Integer, nullable=False, server_default=text("1")),
+    )
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 

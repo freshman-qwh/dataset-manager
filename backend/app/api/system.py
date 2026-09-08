@@ -11,11 +11,44 @@ from app.schemas.database_integrity import (
     DatabaseRepairRequest,
     DatabaseRepairResult,
 )
+from app.schemas.database_backup import DatabaseBackupJobCreateResponse
 from app.schemas.thumbnail import ThumbnailMaintenanceJobCreateResponse
-from app.services import database_integrity_service, job_service, thumbnail_maintenance_service
+from app.services import (
+    database_backup_service,
+    database_integrity_service,
+    job_service,
+    thumbnail_maintenance_service,
+)
 
 
 router = APIRouter(prefix="/api/system", tags=["system"])
+
+
+@router.post(
+    "/database-backup-jobs",
+    response_model=DatabaseBackupJobCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_database_backup_job(
+    response: Response,
+    session: Session = Depends(get_session),
+) -> DatabaseBackupJobCreateResponse:
+    try:
+        result = database_backup_service.create_database_backup_job(session)
+    except job_service.JobSchemaUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except job_service.JobError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+    if not result.created:
+        response.status_code = status.HTTP_200_OK
+    job_runner.notify()
+    return result
 
 
 @router.post(

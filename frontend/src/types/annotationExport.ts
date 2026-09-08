@@ -13,6 +13,7 @@ export interface AnnotationExportSampleQuery {
   tag?: string;
   split?: string;
   review_status?: string;
+  annotation_progress?: string;
   sample_ids?: number[];
   sort_by?: string;
   sort_order?: "asc" | "desc";

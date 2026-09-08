@@ -10,6 +10,7 @@ from app.models.annotation_class import AnnotationClass
 from app.models.dataset import utc_now
 from app.schemas.annotation import AnnotationCreate, AnnotationRead, AnnotationReplaceRequest, AnnotationTagSyncResult
 from app.services import annotation_class_service, sample_service
+from app.services.dataset_revision_service import bump_dataset_revision
 from app.services.annotation_geometry import points_within_image, polygon_area
 from app.utils.image_size import read_image_size
 
@@ -54,6 +55,7 @@ def replace_sample_annotations(
     payload: AnnotationReplaceRequest,
     *,
     commit: bool = True,
+    bump_revision: bool = True,
 ) -> list[AnnotationRead]:
     sample = sample_service.get_sample_or_404(session, sample_id)
     if sample.file_type != "image":
@@ -123,6 +125,8 @@ def replace_sample_annotations(
         sample.annotation_progress = "in_progress"
     sample.updated_at = now
     session.add(sample)
+    if bump_revision:
+        bump_dataset_revision(session, sample.dataset_id)
     if commit:
         session.commit()
         for item in created:
@@ -137,6 +141,7 @@ def sync_annotation_classes_to_sample_tags(
     sample_id: int,
     *,
     commit: bool = True,
+    bump_revision: bool = True,
 ) -> AnnotationTagSyncResult:
     sample = sample_service.get_sample_or_404(session, sample_id)
     annotations = session.exec(
@@ -158,6 +163,8 @@ def sync_annotation_classes_to_sample_tags(
         sample.tags.append(sample_service._get_or_create_tag(session, sample.dataset_id, label))
     sample.updated_at = utc_now()
     session.add(sample)
+    if bump_revision and added_tags:
+        bump_dataset_revision(session, sample.dataset_id)
     if commit:
         session.commit()
     else:

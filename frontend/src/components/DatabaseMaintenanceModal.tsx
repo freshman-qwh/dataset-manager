@@ -1,11 +1,16 @@
-import { AlertTriangle, CheckCircle2, Database, RefreshCw, ShieldCheck } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Database, Download, HardDriveDownload, RefreshCw, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  createDatabaseBackupJob,
+  downloadJobArtifact,
   getDatabaseIntegrityReport,
+  getJob,
+  listJobs,
   previewDatabaseIntegrityRepair,
   repairDatabaseIntegrity
 } from "../api/client";
+import type { Job } from "../types/job";
 import type {
   DatabaseIntegrityReport,
   DatabaseRepairPreview,
@@ -39,6 +44,24 @@ const statusCopy = {
   }
 };
 
+function formatBackupSize(value: unknown): string | null {
+  if (typeof value !== "number") return null;
+  return value >= 1024 * 1024
+    ? `${(value / 1024 / 1024).toFixed(1)} MiB`
+    : `${Math.ceil(value / 1024)} KiB`;
+}
+
+function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 export default function DatabaseMaintenanceModal({
   open,
   onClose
@@ -52,6 +75,10 @@ export default function DatabaseMaintenanceModal({
   const [previewing, setPreviewing] = useState(false);
   const [repairing, setRepairing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [backupJob, setBackupJob] = useState<Job | null>(null);
+  const [creatingBackup, setCreatingBackup] = useState(false);
+  const [downloadingBackup, setDownloadingBackup] = useState(false);
+  const [backupError, setBackupError] = useState<string | null>(null);
 
   async function loadReport() {
     setLoading(true);
@@ -73,8 +100,62 @@ export default function DatabaseMaintenanceModal({
   useEffect(() => {
     if (open) {
       void loadReport();
+      void listJobs(1, { jobType: "database.backup" })
+        .then((response) => setBackupJob(response.items[0] ?? null))
+        .catch(() => setBackupJob(null));
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!open || !backupJob || (backupJob.status !== "queued" && backupJob.status !== "running")) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void getJob(backupJob.id).then(setBackupJob).catch(() => undefined);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [backupJob, open]);
+
+  async function handleCreateBackup() {
+    setCreatingBackup(true);
+    setBackupError(null);
+    try {
+      const response = await createDatabaseBackupJob();
+      setBackupJob(response.job);
+      window.dispatchEvent(new Event("dataset-manager:jobs-changed"));
+    } catch {
+      setBackupError("备份任务未能创建，请确认数据库已完成结构升级。");
+    } finally {
+      setCreatingBackup(false);
+    }
+  }
+
+  async function handleDownloadBackup() {
+    if (!backupJob) return;
+    setDownloadingBackup(true);
+    setBackupError(null);
+    try {
+      const artifact = await downloadJobArtifact(backupJob.id);
+      triggerDownload(artifact.blob, artifact.filename);
+    } catch {
+      setBackupError("备份文件已不可用，请重新创建备份。");
+    } finally {
+      setDownloadingBackup(false);
+    }
+  }
+
+  const backupActive = backupJob?.status === "queued" || backupJob?.status === "running";
+  const backupArtifact = backupJob?.result?.artifact;
+  const backupVerification = backupJob?.result?.verification;
+  const backupSize = backupArtifact && typeof backupArtifact === "object"
+    ? formatBackupSize((backupArtifact as Record<string, unknown>).size_bytes)
+    : null;
+  const backupSha = backupArtifact && typeof backupArtifact === "object"
+    ? (backupArtifact as Record<string, unknown>).sha256
+    : null;
+  const backupQuickCheck = backupVerification && typeof backupVerification === "object"
+    ? (backupVerification as Record<string, unknown>).quick_check
+    : null;
 
   const selectedCount = useMemo(
     () =>
@@ -143,6 +224,71 @@ export default function DatabaseMaintenanceModal({
   return (
     <Modal open={open} title="数据库维护" onClose={onClose} size="lg">
       <div className="max-h-[75vh] overflow-y-auto p-5">
+        <section aria-labelledby="database-backup-title">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 id="database-backup-title" className="text-sm font-medium text-ink">轻量元数据备份</h3>
+              <p className="mt-1 text-sm leading-6 text-gray-500">
+                备份 SQLite 中的数据集、样本、标签、标注、任务配置和校验信息，不复制原始文件。
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleCreateBackup()}
+              disabled={creatingBackup || backupActive}
+              className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <HardDriveDownload size={16} />
+              {creatingBackup ? "正在创建…" : backupActive ? "备份进行中" : "创建备份"}
+            </button>
+          </div>
+
+          {backupError ? (
+            <div role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {backupError}
+            </div>
+          ) : null}
+
+          {backupJob ? (
+            <div className="mt-4 rounded-lg border border-line bg-gray-50 px-4 py-3" aria-live="polite">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-medium text-ink">
+                    {backupJob.status === "succeeded"
+                      ? "最近备份已校验"
+                      : backupActive
+                        ? "正在生成一致性快照"
+                        : backupJob.status === "failed"
+                          ? "最近备份失败"
+                          : "最近备份未完成"}
+                  </p>
+                  <p className="mt-1 text-xs text-gray-500">
+                    任务 #{backupJob.id} · {new Date(backupJob.created_at).toLocaleString("zh-CN")}
+                    {backupSize ? ` · ${backupSize}` : ""}
+                    {typeof backupQuickCheck === "string" ? ` · 完整性 ${backupQuickCheck}` : ""}
+                  </p>
+                  {typeof backupSha === "string" ? (
+                    <p className="mt-1 break-all text-xs text-gray-400">SHA-256：{backupSha}</p>
+                  ) : null}
+                </div>
+                {backupJob.status === "succeeded" ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleDownloadBackup()}
+                    disabled={downloadingBackup}
+                    className="inline-flex items-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                  >
+                    <Download size={15} />
+                    {downloadingBackup ? "准备下载…" : "下载 .db"}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+        </section>
+
+        <div className="my-5 border-t border-line" />
+
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-sm font-medium text-ink">元数据完整性检查</p>

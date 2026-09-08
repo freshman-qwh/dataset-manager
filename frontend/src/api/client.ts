@@ -63,8 +63,20 @@ import type {
   MetadataImportRollbackJobCreateResponse,
   LabelmeImportJobCreateResponse,
   LabelmeImportRollbackJobCreateResponse,
-  ThumbnailJobCreateResponse
+  ThumbnailJobCreateResponse,
+  DatabaseBackupJobCreateResponse
 } from "../types/job";
+import type {
+  DatasetSnapshot,
+  DatasetSnapshotCreate,
+  DatasetSnapshotDiffResponse,
+  DatasetSnapshotDocument,
+  DatasetSnapshotTrainingLabels
+} from "../types/datasetSnapshot";
+import type {
+  DatasetSavedView,
+  DatasetSavedViewCreate
+} from "../types/datasetSavedView";
 
 export const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8000/api";
@@ -105,6 +117,13 @@ export async function cancelJob(jobId: number): Promise<Job> {
 
 export async function retryJob(jobId: number): Promise<Job> {
   const { data } = await client.post<Job>(`/jobs/${jobId}/retry`);
+  return data;
+}
+
+export async function createDatabaseBackupJob(): Promise<DatabaseBackupJobCreateResponse> {
+  const { data } = await client.post<DatabaseBackupJobCreateResponse>(
+    "/system/database-backup-jobs"
+  );
   return data;
 }
 
@@ -154,6 +173,95 @@ export async function getDataset(datasetId: number, signal?: AbortSignal): Promi
   return data;
 }
 
+export async function createDatasetSavedView(
+  datasetId: number,
+  payload: DatasetSavedViewCreate
+): Promise<DatasetSavedView> {
+  const { data } = await client.post<DatasetSavedView>(
+    `/datasets/${datasetId}/saved-views`,
+    payload
+  );
+  return data;
+}
+
+export async function listDatasetSavedViews(datasetId: number): Promise<DatasetSavedView[]> {
+  const { data } = await client.get<DatasetSavedView[]>(`/datasets/${datasetId}/saved-views`);
+  return data;
+}
+
+export async function getDatasetSavedView(
+  datasetId: number,
+  savedViewId: number
+): Promise<DatasetSavedView> {
+  const { data } = await client.get<DatasetSavedView>(
+    `/datasets/${datasetId}/saved-views/${savedViewId}`
+  );
+  return data;
+}
+
+export async function deleteDatasetSavedView(
+  datasetId: number,
+  savedViewId: number
+): Promise<void> {
+  await client.delete(`/datasets/${datasetId}/saved-views/${savedViewId}`);
+}
+
+export async function createDatasetSnapshot(
+  datasetId: number,
+  payload: DatasetSnapshotCreate
+): Promise<DatasetSnapshot> {
+  const { data } = await client.post<DatasetSnapshot>(`/datasets/${datasetId}/snapshots`, payload);
+  return data;
+}
+
+export async function listDatasetSnapshots(datasetId: number): Promise<DatasetSnapshot[]> {
+  const { data } = await client.get<DatasetSnapshot[]>(`/datasets/${datasetId}/snapshots`);
+  return data;
+}
+
+export async function readDatasetSnapshot(
+  datasetId: number,
+  snapshotId: number
+): Promise<DatasetSnapshotDocument> {
+  const { data } = await client.get<DatasetSnapshotDocument>(
+    `/datasets/${datasetId}/snapshots/${snapshotId}/content`
+  );
+  return data;
+}
+
+export function getDatasetSnapshotDownloadUrl(datasetId: number, snapshotId: number): string {
+  return `${API_BASE_URL}/datasets/${datasetId}/snapshots/${snapshotId}/download`;
+}
+
+export async function compareDatasetSnapshots(
+  datasetId: number,
+  baseSnapshotId: number,
+  targetSnapshotId: number
+): Promise<DatasetSnapshotDiffResponse> {
+  const { data } = await client.get<DatasetSnapshotDiffResponse>(
+    `/datasets/${datasetId}/snapshots/compare`,
+    { params: { base_snapshot_id: baseSnapshotId, target_snapshot_id: targetSnapshotId } }
+  );
+  return data;
+}
+
+export async function rebuildDatasetSnapshotTrainingLabels(
+  datasetId: number,
+  snapshotId: number
+): Promise<DatasetSnapshotTrainingLabels> {
+  const { data } = await client.get<DatasetSnapshotTrainingLabels>(
+    `/datasets/${datasetId}/snapshots/${snapshotId}/training-labels`
+  );
+  return data;
+}
+
+export function getDatasetSnapshotTrainingLabelsDownloadUrl(
+  datasetId: number,
+  snapshotId: number
+): string {
+  return `${API_BASE_URL}/datasets/${datasetId}/snapshots/${snapshotId}/training-labels/download`;
+}
+
 export async function listDirectories(path?: string): Promise<DirectoryListResponse> {
   const { data } = await client.get<DirectoryListResponse>("/filesystem/directories", {
     params: { path: path || undefined }
@@ -161,8 +269,23 @@ export async function listDirectories(path?: string): Promise<DirectoryListRespo
   return data;
 }
 
-export async function getDuplicateReport(datasetId: number, signal?: AbortSignal): Promise<DuplicateReport> {
-  const { data } = await client.get<DuplicateReport>(`/datasets/${datasetId}/duplicates`, { signal });
+export async function getDuplicateReport(
+  datasetId: number,
+  options: {
+    leakageOnly?: boolean;
+    page?: number;
+    pageSize?: number;
+    signal?: AbortSignal;
+  } = {}
+): Promise<DuplicateReport> {
+  const { data } = await client.get<DuplicateReport>(`/datasets/${datasetId}/duplicates`, {
+    signal: options.signal,
+    params: {
+      leakage_only: options.leakageOnly || undefined,
+      page: options.page,
+      page_size: options.pageSize
+    }
+  });
   return data;
 }
 

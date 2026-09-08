@@ -304,6 +304,116 @@ def test_duplicate_sample_filter_groups_hashes_together(tmp_path: Path):
     app.dependency_overrides.clear()
 
 
+def test_duplicate_report_explains_cross_split_leakage_and_paginates(tmp_path: Path):
+    data_root = tmp_path / "duplicate-leakage"
+    data_root.mkdir()
+    payloads = {
+        "a_train.png": b"leak-a",
+        "a_val.png": b"leak-a",
+        "b_val.png": b"leak-b",
+        "b_test.png": b"leak-b",
+        "b_unassigned.png": b"leak-b",
+        "c_train_first.png": b"same-split",
+        "c_train_second.png": b"same-split",
+        "d_train.png": b"assigned-and-unassigned",
+        "d_unassigned.png": b"assigned-and-unassigned",
+        "unique.png": b"unique",
+    }
+    for filename, content in payloads.items():
+        (data_root / filename).write_bytes(content)
+    original_contents = {path.name: path.read_bytes() for path in data_root.iterdir()}
+
+    with make_client() as client:
+        dataset = client.post(
+            "/api/datasets",
+            json={"name": "Duplicate leakage", "root_path": str(data_root)},
+        ).json()
+        scan = client.post(
+            f"/api/datasets/{dataset['id']}/scan",
+            json={"folder_path": str(data_root)},
+        )
+        assert scan.status_code == 200
+
+        samples = client.get(
+            f"/api/datasets/{dataset['id']}/samples",
+            params={"page_size": 20},
+        ).json()["items"]
+        samples_by_name = {sample["filename"]: sample for sample in samples}
+        splits = {
+            "a_train.png": "train",
+            "a_val.png": "val",
+            "b_val.png": "val",
+            "b_test.png": "test",
+            "c_train_first.png": "train",
+            "c_train_second.png": "train",
+            "d_train.png": "train",
+        }
+        for filename, split_name in splits.items():
+            response = client.patch(
+                f"/api/samples/{samples_by_name[filename]['id']}",
+                json={"split": split_name},
+            )
+            assert response.status_code == 200
+
+        first_page = client.get(
+            f"/api/datasets/{dataset['id']}/duplicates",
+            params={"page": 1, "page_size": 2},
+        )
+        assert first_page.status_code == 200
+        report = first_page.json()
+        assert report["group_count"] == 4
+        assert report["duplicate_sample_count"] == 9
+        assert report["cross_split_group_count"] == 2
+        assert report["cross_split_sample_count"] == 5
+        assert report["filtered_group_count"] == 4
+        assert report["has_previous"] is False
+        assert report["has_next"] is True
+        assert len(report["groups"]) == 2
+        assert all(group["cross_split"] for group in report["groups"])
+
+        three_sample_group = next(group for group in report["groups"] if group["count"] == 3)
+        assert three_sample_group["training_splits"] == ["val", "test"]
+        assert three_sample_group["split_counts"] == {"test": 1, "unassigned": 1, "val": 1}
+        assert {sample["filename"] for sample in three_sample_group["samples"]} == {
+            "b_test.png",
+            "b_unassigned.png",
+            "b_val.png",
+        }
+
+        leakage_page = client.get(
+            f"/api/datasets/{dataset['id']}/duplicates",
+            params={"leakage_only": True, "page": 99, "page_size": 1},
+        )
+        assert leakage_page.status_code == 200
+        leakage_report = leakage_page.json()
+        assert leakage_report["filtered_group_count"] == 2
+        assert leakage_report["page"] == 2
+        assert leakage_report["has_previous"] is True
+        assert leakage_report["has_next"] is False
+        assert len(leakage_report["groups"]) == 1
+        assert leakage_report["groups"][0]["training_splits"] == ["train", "val"]
+
+        target_hash = leakage_report["groups"][0]["file_hash"]
+        located = client.get(
+            f"/api/datasets/{dataset['id']}/samples",
+            params={"file_status": "duplicate", "search": target_hash, "page_size": 20},
+        )
+        assert located.status_code == 200
+        assert located.json()["total"] == 2
+        assert {item["filename"] for item in located.json()["items"]} == {
+            "a_train.png",
+            "a_val.png",
+        }
+
+        assert client.get(
+            f"/api/datasets/{dataset['id']}/duplicates",
+            params={"page_size": 101},
+        ).status_code == 422
+        assert {path.name: path.read_bytes() for path in data_root.iterdir()} == original_contents
+
+    app.dependency_overrides.clear()
+
+
 def test_sample_navigation_uses_context_and_skips_non_normal_images(tmp_path: Path):
     data_root = tmp_path / "navigation"
     data_root.mkdir()

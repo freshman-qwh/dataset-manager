@@ -9,6 +9,10 @@ from app.services.annotation_import_job_service import (
     run_labelme_import_job,
     run_labelme_import_rollback_job,
 )
+from app.services.database_backup_service import (
+    DATABASE_BACKUP_JOB_TYPE,
+    run_database_backup_job,
+)
 from app.services.scan_job_service import SCAN_JOB_TYPE, run_scan_job
 from app.services.metadata_import_job_service import (
     METADATA_IMPORT_JOB_TYPE,
@@ -42,3 +46,4 @@ job_runner.register_handler(
     THUMBNAIL_MAINTENANCE_JOB_TYPE,
     run_thumbnail_maintenance_job,
 )
+job_runner.register_handler(DATABASE_BACKUP_JOB_TYPE, run_database_backup_job)

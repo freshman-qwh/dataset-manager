@@ -15,6 +15,7 @@ from app.schemas.training_readiness import (
     TrainingReadinessReport,
 )
 from app.services import dataset_service, quality_service
+from app.services.dataset_revision_service import bump_dataset_revision
 
 
 EXPORT_FORMATS_BY_TASK: dict[str, tuple[list[str], list[str]]] = {
@@ -147,6 +148,7 @@ def _save_state(
     payload: TrainingReadinessConfigRequest,
     *,
     mark_exported: bool,
+    bump_revision: bool,
 ) -> TrainingReadinessConfig:
     dataset = dataset_service.get_dataset_or_404(session, dataset_id)
     _validate_config(session, dataset_id, dataset.task_type, payload)
@@ -175,6 +177,8 @@ def _save_state(
     if mark_exported:
         state.last_export_at = saved_at
     session.add(state)
+    if bump_revision:
+        bump_dataset_revision(session, dataset_id)
     session.commit()
     session.refresh(state)
     config = _state_to_config(state)
@@ -193,6 +197,7 @@ def save_training_readiness_config(
         dataset_id,
         payload,
         mark_exported=False,
+        bump_revision=True,
     )
 
 
@@ -206,6 +211,7 @@ def record_training_export(
         dataset_id,
         payload,
         mark_exported=True,
+        bump_revision=False,
     )
 
 

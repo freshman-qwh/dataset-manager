@@ -11,6 +11,7 @@ from app.models.tag import Tag
 from app.models.training_readiness_state import TrainingReadinessState
 from app.schemas.dataset import DatasetCreate, DatasetRead, DatasetUpdate
 from app.core.workflow import task_capabilities
+from app.services.dataset_revision_service import bump_dataset_revision
 
 
 def _dataset_read(session: Session, dataset: Dataset) -> DatasetRead:
@@ -60,15 +61,20 @@ def update_dataset(session: Session, dataset_id: int, payload: DatasetUpdate) ->
         setattr(dataset, key, value)
     dataset.updated_at = utc_now().astimezone(timezone.utc)
     session.add(dataset)
+    if updates:
+        bump_dataset_revision(session, dataset_id)
     session.commit()
     session.refresh(dataset)
     return _dataset_read(session, dataset)
 
 
 def delete_dataset(session: Session, dataset_id: int) -> None:
-    from app.services import annotation_service
+    from app.services import annotation_service, dataset_saved_view_service, dataset_snapshot_service
 
     dataset = get_dataset_or_404(session, dataset_id)
+    # Read/delete saved-view rows before mutating the sample graph. The service
+    # performs a schema inspection and SELECT, both of which may autoflush.
+    dataset_saved_view_service.delete_dataset_saved_views(session, dataset_id)
     samples = session.exec(select(Sample).where(Sample.dataset_id == dataset_id)).all()
     annotation_service.delete_sample_annotations(session, [sample.id for sample in samples if sample.id is not None])
     for sample in samples:
@@ -94,5 +100,10 @@ def delete_dataset(session: Session, dataset_id: int) -> None:
     for training_state in training_states:
         session.delete(training_state)
 
+    snapshot_artifacts = dataset_snapshot_service.delete_dataset_snapshot_records(
+        session,
+        dataset_id,
+    )
     session.delete(dataset)
     session.commit()
+    dataset_snapshot_service.remove_snapshot_artifacts(snapshot_artifacts)

@@ -24,6 +24,7 @@ from app.schemas.annotation_import import (
 )
 from app.schemas.job import JobCreate, JobRead
 from app.services import annotation_import_service, annotation_service, dataset_service, job_service
+from app.services.dataset_revision_service import DatasetRevisionTracker
 from app.services.job_runner import JobCancelled, JobContext, JobFailed, JobInterrupted
 from app.services.sample_service import _get_or_create_tag
 
@@ -149,6 +150,7 @@ def run_labelme_import_job(context: JobContext, parameters: dict[str, object]) -
     journal.initialize()
     imported_samples = 0
     batches_committed = 0
+    revision_tracker = DatasetRevisionTracker(dataset_id)
 
     def result() -> dict[str, object]:
         return {
@@ -193,13 +195,16 @@ def run_labelme_import_job(context: JobContext, parameters: dict[str, object]) -
                         operation.sample_id,
                         AnnotationReplaceRequest(annotations=next_annotations, save_mode="draft"),
                         commit=False,
+                        bump_revision=False,
                     )
                     if snapshot.sync_sample_tags:
                         annotation_service.sync_annotation_classes_to_sample_tags(
                             session,
                             operation.sample_id,
                             commit=False,
+                            bump_revision=False,
                         )
+                revision_tracker.bump_once(session)
                 session.commit()
             imported_samples += len(batch)
             batches_committed += 1
@@ -292,6 +297,7 @@ def run_labelme_import_rollback_job(context: JobContext, parameters: dict[str, o
     restored = 0
     missing = 0
     batches_committed = 0
+    revision_tracker = DatasetRevisionTracker(journal.dataset_id)
 
     def result() -> dict[str, object]:
         return {"source_job_id": journal_job_id, "restored": restored, "missing": missing, "batches_committed": batches_committed}
@@ -319,6 +325,8 @@ def run_labelme_import_rollback_job(context: JobContext, parameters: dict[str, o
                         continue
                     _restore_sample(session, journal.dataset_id, sample, entry)
                     restored += 1
+                if any(sample_id in samples for sample_id in sample_ids):
+                    revision_tracker.bump_once(session)
                 session.commit()
             batches_committed += 1
             context.report_progress(

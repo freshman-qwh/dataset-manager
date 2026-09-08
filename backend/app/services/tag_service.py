@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 from app.models.annotation import Annotation
 from app.models.tag import Tag
 from app.schemas.tag import TagCreate, TagRead, TagUpdate
+from app.services.dataset_revision_service import bump_dataset_revision
 
 
 def tag_to_read(tag: Tag) -> TagRead:
@@ -42,6 +43,7 @@ def create_tag(session: Session, dataset_id: int, payload: TagCreate) -> TagRead
     )
     session.add(tag)
     try:
+        bump_dataset_revision(session, dataset_id)
         session.commit()
     except IntegrityError as exc:
         session.rollback()
@@ -79,6 +81,7 @@ def update_tag(session: Session, tag_id: int, payload: TagUpdate) -> TagRead:
 
     session.add(tag)
     try:
+        bump_dataset_revision(session, tag.dataset_id)
         session.commit()
     except IntegrityError as exc:
         session.rollback()
@@ -89,6 +92,7 @@ def update_tag(session: Session, tag_id: int, payload: TagUpdate) -> TagRead:
 
 def delete_tag(session: Session, tag_id: int) -> None:
     tag = get_tag_or_404(session, tag_id)
+    dataset_id = tag.dataset_id
     tag.samples.clear()
     session.add(tag)
     session.exec(
@@ -97,6 +101,7 @@ def delete_tag(session: Session, tag_id: int) -> None:
         .values(tag_id=None)
     )
     session.delete(tag)
+    bump_dataset_revision(session, dataset_id)
     session.commit()
 
 

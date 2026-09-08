@@ -181,7 +181,12 @@ def test_stats_and_duplicate_report_only_materialize_aggregate_or_duplicate_rows
 
         def duplicate_action():
             nonlocal duplicate_result
-            duplicate_result = duplicate_service.get_duplicate_report(session, dataset_id)
+            duplicate_result = duplicate_service.get_duplicate_report(
+                session,
+                dataset_id,
+                page=1,
+                page_size=3,
+            )
 
         duplicate_selects = _count_selects(engine, duplicate_action)
 
@@ -190,3 +195,42 @@ def test_stats_and_duplicate_report_only_materialize_aggregate_or_duplicate_rows
         assert duplicate_result is not None
         assert duplicate_result.group_count == 10
         assert duplicate_result.duplicate_sample_count == 20
+        assert duplicate_result.filtered_group_count == 10
+        assert len(duplicate_result.groups) == 3
+        assert duplicate_result.has_next is True
+
+
+def test_duplicate_report_bounds_samples_inside_a_large_group():
+    engine = _make_engine()
+    with Session(engine) as session:
+        dataset_id = _seed_samples(session, 1)
+        session.add_all(
+            [
+                Sample(
+                    dataset_id=dataset_id,
+                    filename=f"copy-{index:03d}.png",
+                    absolute_path=f"/benchmark/copy-{index:03d}.png",
+                    relative_path=f"copies/copy-{index:03d}.png",
+                    file_size=1024,
+                    extension=".png",
+                    file_type="image",
+                    mime_type="image/png",
+                    file_hash="large-duplicate-group",
+                    split="train" if index % 2 == 0 else "val",
+                )
+                for index in range(25)
+            ]
+        )
+        session.commit()
+
+        report = duplicate_service.get_duplicate_report(session, dataset_id)
+
+        assert report.group_count == 1
+        assert report.groups[0].count == 25
+        assert len(report.groups[0].samples) == 20
+        assert report.groups[0].samples_truncated is True
+        assert report.groups[0].cross_split is True
+        assert report.groups[0].training_splits == ["train", "val"]
+        assert report.groups[0].split_counts == {"train": 13, "val": 12}
+        assert sum(report.groups[0].split_counts.values()) == report.groups[0].count
+    engine.dispose()

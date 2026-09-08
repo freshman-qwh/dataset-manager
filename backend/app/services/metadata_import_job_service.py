@@ -22,6 +22,7 @@ from app.schemas.metadata_import import (
     MetadataImportRollbackJobCreateResponse,
 )
 from app.services import dataset_service, job_service, metadata_import_service
+from app.services.dataset_revision_service import DatasetRevisionTracker
 from app.services.job_runner import JobCancelled, JobContext, JobFailed, JobInterrupted
 from app.services.sample_service import _get_or_create_tag
 
@@ -162,6 +163,7 @@ def run_metadata_import_job(
     journal.initialize()
     updated = 0
     batches_committed = 0
+    revision_tracker = DatasetRevisionTracker(dataset_id)
 
     def result() -> dict[str, object]:
         return {
@@ -208,6 +210,7 @@ def run_metadata_import_job(
                         snapshot.replace_tags,
                     )
                     session.add(sample)
+                revision_tracker.bump_once(session)
                 session.commit()
             updated += len(batch)
             batches_committed += 1
@@ -312,6 +315,7 @@ def run_metadata_import_rollback_job(
     restored = 0
     missing = 0
     batches_committed = 0
+    revision_tracker = DatasetRevisionTracker(journal.dataset_id)
 
     def result() -> dict[str, object]:
         return {
@@ -348,6 +352,8 @@ def run_metadata_import_rollback_job(
                     _restore_sample(session, journal.dataset_id, sample, entry)
                     session.add(sample)
                     restored += 1
+                if any(sample_id in samples for sample_id in sample_ids):
+                    revision_tracker.bump_once(session)
                 session.commit()
             batches_committed += 1
             context.report_progress(

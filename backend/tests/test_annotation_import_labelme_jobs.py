@@ -143,6 +143,9 @@ def test_labelme_import_job_retry_is_idempotent_and_rollback_restores_annotation
     _register_handlers(runner)
     with Session(engine) as session:
         dataset_id, sample_ids = _create_dataset(session, tmp_path / "raw", 3)
+        dataset = session.get(Dataset, dataset_id)
+        assert dataset is not None
+        base_revision = dataset.revision
         monkeypatch.setattr(
             annotation_import_job_service.annotation_service,
             "replace_sample_annotations",
@@ -183,6 +186,10 @@ def test_labelme_import_job_retry_is_idempotent_and_rollback_restores_annotation
     assert failed.result["imported_samples"] == 1
     assert failed.result["rollback_available"] is True
     with Session(engine) as session:
+        dataset = session.get(Dataset, dataset_id)
+        assert dataset is not None
+        assert dataset.revision == base_revision + 1
+    with Session(engine) as session:
         retried = job_service.retry_job(session, failed.id)
     runner.notify()
     completed = _wait_for_terminal(engine, retried.id)
@@ -190,6 +197,9 @@ def test_labelme_import_job_retry_is_idempotent_and_rollback_restores_annotation
     assert completed.result is not None
     assert completed.result["source_job_id"] == created.job.id
     with Session(engine) as session:
+        dataset = session.get(Dataset, dataset_id)
+        assert dataset is not None
+        assert dataset.revision == base_revision + 2
         for index, sample_id in enumerate(sample_ids):
             annotations = annotation_service.list_sample_annotations(session, sample_id)
             assert [item.label for item in annotations] == ["original", f"imported-{index}"]
@@ -202,6 +212,9 @@ def test_labelme_import_job_retry_is_idempotent_and_rollback_restores_annotation
     rolled_back = _wait_for_terminal(engine, rollback.job.id)
     assert rolled_back.status == "succeeded"
     with Session(engine) as session:
+        dataset = session.get(Dataset, dataset_id)
+        assert dataset is not None
+        assert dataset.revision == base_revision + 3
         for sample_id in sample_ids:
             annotations = annotation_service.list_sample_annotations(session, sample_id)
             assert [item.label for item in annotations] == ["original"]

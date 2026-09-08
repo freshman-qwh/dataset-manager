@@ -1,9 +1,21 @@
+from typing import NoReturn
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import FileResponse
 from sqlmodel import Session
 
 from app.core.database import get_session
 from app.core.job_runtime import job_runner
 from app.schemas.dataset import DatasetCreate, DatasetRead, DatasetUpdate
+from app.schemas.dataset_saved_view import DatasetSavedViewCreate, DatasetSavedViewRead
+from app.schemas.dataset_snapshot import (
+    DatasetSnapshotChangeType,
+    DatasetSnapshotCreate,
+    DatasetSnapshotDiffResponse,
+    DatasetSnapshotDocument,
+    DatasetSnapshotRead,
+    DatasetSnapshotTrainingLabels,
+)
 from app.schemas.duplicates import DuplicateReport
 from app.schemas.export_template import ExportTemplateResponse
 from app.schemas.metadata_import import (
@@ -35,6 +47,9 @@ from app.schemas.training_readiness import (
 )
 from app.services import (
     dataset_service,
+    dataset_saved_view_service,
+    dataset_snapshot_service,
+    dataset_snapshot_compare_service,
     duplicate_service,
     export_template_service,
     job_service,
@@ -53,6 +68,26 @@ from app.services import (
 )
 
 router = APIRouter(prefix="/api", tags=["datasets"])
+
+
+def _raise_snapshot_http_error(exc: dataset_snapshot_service.DatasetSnapshotError) -> NoReturn:
+    if isinstance(exc, dataset_snapshot_service.DatasetSnapshotSchemaUnavailableError):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    if isinstance(exc, dataset_snapshot_service.DatasetSnapshotStaleError):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if isinstance(exc, dataset_snapshot_service.DatasetSnapshotArtifactError):
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail=str(exc)) from exc
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+def _raise_saved_view_http_error(exc: dataset_saved_view_service.DatasetSavedViewError) -> NoReturn:
+    if isinstance(exc, dataset_saved_view_service.DatasetSavedViewSchemaUnavailableError):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    if isinstance(exc, dataset_saved_view_service.DatasetSavedViewConflictError):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if isinstance(exc, dataset_saved_view_service.DatasetSavedViewDataError):
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.get("/datasets", response_model=list[DatasetRead])
@@ -85,6 +120,67 @@ def update_dataset(
 @router.delete("/datasets/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_dataset(dataset_id: int, session: Session = Depends(get_session)) -> Response:
     dataset_service.delete_dataset(session, dataset_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/datasets/{dataset_id}/saved-views",
+    response_model=DatasetSavedViewRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_dataset_saved_view(
+    dataset_id: int,
+    payload: DatasetSavedViewCreate,
+    session: Session = Depends(get_session),
+) -> DatasetSavedViewRead:
+    try:
+        return dataset_saved_view_service.create_saved_view(session, dataset_id, payload)
+    except dataset_saved_view_service.DatasetSavedViewError as exc:
+        _raise_saved_view_http_error(exc)
+
+
+@router.get(
+    "/datasets/{dataset_id}/saved-views",
+    response_model=list[DatasetSavedViewRead],
+)
+def list_dataset_saved_views(
+    dataset_id: int,
+    session: Session = Depends(get_session),
+) -> list[DatasetSavedViewRead]:
+    try:
+        return dataset_saved_view_service.list_saved_views(session, dataset_id)
+    except dataset_saved_view_service.DatasetSavedViewError as exc:
+        _raise_saved_view_http_error(exc)
+
+
+@router.get(
+    "/datasets/{dataset_id}/saved-views/{saved_view_id}",
+    response_model=DatasetSavedViewRead,
+)
+def get_dataset_saved_view(
+    dataset_id: int,
+    saved_view_id: int,
+    session: Session = Depends(get_session),
+) -> DatasetSavedViewRead:
+    try:
+        return dataset_saved_view_service.get_saved_view(session, dataset_id, saved_view_id)
+    except dataset_saved_view_service.DatasetSavedViewError as exc:
+        _raise_saved_view_http_error(exc)
+
+
+@router.delete(
+    "/datasets/{dataset_id}/saved-views/{saved_view_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_dataset_saved_view(
+    dataset_id: int,
+    saved_view_id: int,
+    session: Session = Depends(get_session),
+) -> Response:
+    try:
+        dataset_saved_view_service.delete_saved_view(session, dataset_id, saved_view_id)
+    except dataset_saved_view_service.DatasetSavedViewError as exc:
+        _raise_saved_view_http_error(exc)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -268,9 +364,18 @@ def repair_dataset_missing_samples(
 @router.get("/datasets/{dataset_id}/duplicates", response_model=DuplicateReport)
 def dataset_duplicates(
     dataset_id: int,
+    leakage_only: bool = Query(default=False),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
     session: Session = Depends(get_session),
 ) -> Response:
-    report = duplicate_service.get_duplicate_report(session, dataset_id)
+    report = duplicate_service.get_duplicate_report(
+        session,
+        dataset_id,
+        leakage_only=leakage_only,
+        page=page,
+        page_size=page_size,
+    )
     return Response(
         content=report.model_dump_json(),
         media_type="application/json",
@@ -421,6 +526,154 @@ def export_dataset_manifest(
         sample_ids=sample_ids,
         sort_by=sort_by,
         sort_order=sort_order,
+    )
+
+
+@router.post(
+    "/datasets/{dataset_id}/snapshots",
+    response_model=DatasetSnapshotRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_dataset_snapshot(
+    dataset_id: int,
+    payload: DatasetSnapshotCreate,
+    session: Session = Depends(get_session),
+) -> DatasetSnapshotRead:
+    try:
+        return dataset_snapshot_service.create_snapshot(session, dataset_id, payload)
+    except dataset_snapshot_service.DatasetSnapshotError as exc:
+        _raise_snapshot_http_error(exc)
+
+
+@router.get(
+    "/datasets/{dataset_id}/snapshots",
+    response_model=list[DatasetSnapshotRead],
+)
+def list_dataset_snapshots(
+    dataset_id: int,
+    session: Session = Depends(get_session),
+) -> list[DatasetSnapshotRead]:
+    try:
+        return dataset_snapshot_service.list_snapshots(session, dataset_id)
+    except dataset_snapshot_service.DatasetSnapshotError as exc:
+        _raise_snapshot_http_error(exc)
+
+
+@router.get(
+    "/datasets/{dataset_id}/snapshots/compare",
+    response_model=DatasetSnapshotDiffResponse,
+)
+def compare_dataset_snapshots(
+    dataset_id: int,
+    base_snapshot_id: int = Query(gt=0),
+    target_snapshot_id: int = Query(gt=0),
+    change_type: DatasetSnapshotChangeType | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    session: Session = Depends(get_session),
+) -> DatasetSnapshotDiffResponse:
+    try:
+        return dataset_snapshot_compare_service.compare_snapshots(
+            session,
+            dataset_id,
+            base_snapshot_id,
+            target_snapshot_id,
+            change_type=change_type,
+            page=page,
+            page_size=page_size,
+        )
+    except dataset_snapshot_service.DatasetSnapshotError as exc:
+        _raise_snapshot_http_error(exc)
+
+
+@router.get(
+    "/datasets/{dataset_id}/snapshots/{snapshot_id}",
+    response_model=DatasetSnapshotRead,
+)
+def get_dataset_snapshot(
+    dataset_id: int,
+    snapshot_id: int,
+    session: Session = Depends(get_session),
+) -> DatasetSnapshotRead:
+    try:
+        return dataset_snapshot_service.get_snapshot_read(session, dataset_id, snapshot_id)
+    except dataset_snapshot_service.DatasetSnapshotError as exc:
+        _raise_snapshot_http_error(exc)
+
+
+@router.get(
+    "/datasets/{dataset_id}/snapshots/{snapshot_id}/content",
+    response_model=DatasetSnapshotDocument,
+)
+def read_dataset_snapshot(
+    dataset_id: int,
+    snapshot_id: int,
+    session: Session = Depends(get_session),
+) -> DatasetSnapshotDocument:
+    try:
+        return dataset_snapshot_service.read_snapshot_document(session, dataset_id, snapshot_id)
+    except dataset_snapshot_service.DatasetSnapshotError as exc:
+        _raise_snapshot_http_error(exc)
+
+
+@router.get(
+    "/datasets/{dataset_id}/snapshots/{snapshot_id}/training-labels",
+    response_model=DatasetSnapshotTrainingLabels,
+)
+def rebuild_dataset_snapshot_training_labels(
+    dataset_id: int,
+    snapshot_id: int,
+    session: Session = Depends(get_session),
+) -> DatasetSnapshotTrainingLabels:
+    try:
+        return dataset_snapshot_compare_service.rebuild_training_labels(
+            session, dataset_id, snapshot_id
+        )
+    except dataset_snapshot_service.DatasetSnapshotError as exc:
+        _raise_snapshot_http_error(exc)
+
+
+@router.get(
+    "/datasets/{dataset_id}/snapshots/{snapshot_id}/training-labels/download"
+)
+def download_dataset_snapshot_training_labels(
+    dataset_id: int,
+    snapshot_id: int,
+    session: Session = Depends(get_session),
+) -> Response:
+    try:
+        result = dataset_snapshot_compare_service.rebuild_training_labels(
+            session, dataset_id, snapshot_id
+        )
+    except dataset_snapshot_service.DatasetSnapshotError as exc:
+        _raise_snapshot_http_error(exc)
+    content = result.model_dump_json(indent=2).encode("utf-8")
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="dataset-{dataset_id}-snapshot-{snapshot_id}-training-labels.json"'
+            )
+        },
+    )
+
+
+@router.get("/datasets/{dataset_id}/snapshots/{snapshot_id}/download")
+def download_dataset_snapshot(
+    dataset_id: int,
+    snapshot_id: int,
+    session: Session = Depends(get_session),
+) -> FileResponse:
+    try:
+        snapshot = dataset_snapshot_service.get_snapshot_read(session, dataset_id, snapshot_id)
+        path = dataset_snapshot_service.snapshot_artifact_path(session, dataset_id, snapshot_id)
+    except dataset_snapshot_service.DatasetSnapshotError as exc:
+        _raise_snapshot_http_error(exc)
+    return FileResponse(
+        path,
+        media_type="application/json",
+        filename=f"dataset-{dataset_id}-revision-{snapshot.dataset_revision}-snapshot-{snapshot_id}.json",
     )
 
 

@@ -11,6 +11,7 @@ from app.models.sample import Sample
 from app.schemas.annotation import AnnotationCreate, AnnotationReplaceRequest
 from app.schemas.annotation_import import LabelmeImportIssue, LabelmeImportRequest, LabelmeImportResult
 from app.services import annotation_service, dataset_service
+from app.services.dataset_revision_service import bump_dataset_revision
 from app.utils.image_size import read_image_size
 from app.utils.paths import resolve_local_path
 
@@ -59,9 +60,19 @@ def import_labelme_annotations(
                 session,
                 operation.sample_id,
                 AnnotationReplaceRequest(annotations=next_annotations, save_mode="draft"),
+                commit=False,
+                bump_revision=False,
             )
             if payload.sync_sample_tags:
-                annotation_service.sync_annotation_classes_to_sample_tags(session, operation.sample_id)
+                annotation_service.sync_annotation_classes_to_sample_tags(
+                    session,
+                    operation.sample_id,
+                    commit=False,
+                    bump_revision=False,
+                )
+        if plan.operations:
+            bump_dataset_revision(session, dataset_id)
+            session.commit()
     return labelme_import_result(plan, payload)
 
 

@@ -33,6 +33,10 @@ const stageCopy: Record<string, string> = {
   generating_thumbnails: "生成图片缩略图",
   scanning_thumbnail_cache: "盘点缩略图缓存",
   pruning_thumbnail_cache: "清理缩略图缓存",
+  preparing_backup: "准备元数据备份",
+  copying_database: "复制 SQLite 快照",
+  verifying_backup: "检查备份完整性",
+  hashing_backup: "计算备份校验值",
   finalizing: "校验导出产物",
   completed: "已完成",
   failed: "失败",
@@ -170,6 +174,20 @@ function labelmeRollbackSummary(job: Job): string | null {
   return `LabelMe 回滚：恢复 ${restored} 个样本${missing > 0 ? ` · 缺失 ${missing}` : ""}`;
 }
 
+function databaseBackupSummary(job: Job): string | null {
+  if (job.job_type !== "database.backup" || !job.result) return null;
+  const artifact = job.result.artifact;
+  const verification = job.result.verification;
+  if (!artifact || typeof artifact !== "object" || !verification || typeof verification !== "object") {
+    return null;
+  }
+  const size = (artifact as Record<string, unknown>).size_bytes;
+  const quickCheck = (verification as Record<string, unknown>).quick_check;
+  const revision = (verification as Record<string, unknown>).current_revision;
+  if (typeof size !== "number" || typeof quickCheck !== "string") return null;
+  return `SQLite 元数据 ${(size / 1024 / 1024).toFixed(1)} MiB · 完整性 ${quickCheck}${typeof revision === "string" ? ` · ${revision}` : ""}`;
+}
+
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -273,7 +291,7 @@ export default function JobCenter() {
       const result = await downloadJobArtifact(job.id);
       triggerDownload(result.blob, result.filename);
     } catch {
-      setError("导出产物已不可用，请重新提交任务");
+      setError("任务产物已不可用，请重新提交任务");
     } finally {
       setActingId(null);
     }
@@ -362,7 +380,7 @@ export default function JobCenter() {
                       : null;
                     const canCancel = job.status === "queued" || job.status === "running";
                     const canRetry = terminalRetryStatuses.has(job.status);
-                    const canDownload = job.job_type === "annotation.export" && job.status === "succeeded";
+                    const canDownload = (job.job_type === "annotation.export" || job.job_type === "database.backup") && job.status === "succeeded";
                     const canRollback = (job.job_type === "metadata.import" || job.job_type === "annotation.import.labelme")
                       && (job.result?.rollback_available === true || job.status === "interrupted");
                     return (
@@ -392,6 +410,7 @@ export default function JobCenter() {
                         {metadataRollbackSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{metadataRollbackSummary(job)}</p> : null}
                         {labelmeImportSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{labelmeImportSummary(job)}</p> : null}
                         {labelmeRollbackSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{labelmeRollbackSummary(job)}</p> : null}
+                        {databaseBackupSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{databaseBackupSummary(job)}</p> : null}
                         {canCancel || canRetry || canDownload || canRollback ? (
                           <div className="mt-3 flex justify-end gap-2">
                             {canRollback ? (

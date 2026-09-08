@@ -202,6 +202,7 @@ def _filtered_image_samples(
         tag=query.tag,
         split=query.split,
         review_status=query.review_status,
+        annotation_progress=query.annotation_progress,
         sample_ids=query.sample_ids,
         sort_by=query.sort_by,
         sort_order=query.sort_order,

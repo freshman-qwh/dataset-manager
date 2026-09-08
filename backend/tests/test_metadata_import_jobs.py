@@ -169,6 +169,7 @@ def test_metadata_import_job_batches_deduplicates_and_rolls_back(
         "sample-001.jpg",
         "sample-002.jpg",
     ]
+    assert runner.stop() is True
 
     with Session(engine) as session:
         changed = session.get(Sample, sample_ids[0])
@@ -179,6 +180,9 @@ def test_metadata_import_job_batches_deduplicates_and_rolls_back(
         assert changed.notes == "after"
         assert json.loads(changed.metadata_json or "{}") == {"quality": "after-0"}
         assert [tag.name for tag in changed.tags] == ["imported"]
+        dataset = session.get(Dataset, dataset_id)
+        assert dataset is not None
+        assert dataset.revision == 2
         rollback = metadata_import_job_service.create_metadata_import_rollback_job(
             session,
             completed.id,
@@ -190,6 +194,7 @@ def test_metadata_import_job_batches_deduplicates_and_rolls_back(
         )
         assert duplicate_rollback.created is False
 
+    assert runner.start() is True
     runner.notify()
     rolled_back = _wait_for_terminal(engine, rollback.job.id)
     assert rolled_back.status == "succeeded"
@@ -208,6 +213,9 @@ def test_metadata_import_job_batches_deduplicates_and_rolls_back(
         assert restored.notes == "before"
         assert json.loads(restored.metadata_json or "{}") == {"quality": "before"}
         assert [tag.name for tag in restored.tags] == ["original"]
+        dataset = session.get(Dataset, dataset_id)
+        assert dataset is not None
+        assert dataset.revision == 3
     assert runner.stop() is True
     engine.dispose()
 

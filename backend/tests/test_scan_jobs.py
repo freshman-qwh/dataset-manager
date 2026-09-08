@@ -90,12 +90,19 @@ def test_scan_job_runs_incrementally_and_deduplicates_active_job(
             ScanRequest(folder_path=str(root)),
         )
         assert second.created is True
+        stored = session.get(Dataset, dataset_id)
+        assert stored is not None
+        assert stored.revision == 2
     runner.notify()
     rescanned = _wait_for_terminal(engine, second.job.id)
     assert rescanned.status == "succeeded"
     assert rescanned.result is not None
     assert rescanned.result["hashed"] == 0
     assert rescanned.result["hash_skipped_unchanged"] == 5
+    with Session(engine) as session:
+        stored = session.get(Dataset, dataset_id)
+        assert stored is not None
+        assert stored.revision == 2
     assert runner.stop() is True
     engine.dispose()
 

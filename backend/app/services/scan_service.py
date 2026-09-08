@@ -14,6 +14,7 @@ from app.models.dataset import utc_now
 from app.models.sample import Sample
 from app.schemas.scan import ScanRequest, ScanResult
 from app.services.dataset_service import get_dataset_or_404
+from app.services.dataset_revision_service import DatasetRevisionTracker
 from app.utils.file_types import detect_file_type, detect_mime_type
 from app.utils.hashing import sha256_file
 from app.utils.paths import relative_to_root, resolve_local_path
@@ -124,6 +125,27 @@ def _apply_file_metadata(
     sample.updated_at = scanned_at
 
 
+def _file_metadata_changed(
+    sample: Sample,
+    candidate: FileCandidate,
+    file_hash: str,
+) -> bool:
+    return any(
+        (
+            sample.filename != candidate.path.name,
+            sample.absolute_path != candidate.absolute_path,
+            sample.relative_path != candidate.relative_path,
+            sample.file_size != candidate.size,
+            sample.extension != candidate.path.suffix.lower(),
+            sample.file_type != candidate.file_type,
+            sample.mime_type != detect_mime_type(candidate.path),
+            sample.file_hash != file_hash,
+            sample.file_status != "normal",
+            not _mtime_matches(sample.file_modified_at, candidate.modified_at),
+        )
+    )
+
+
 def _iter_candidates(
     root: Path,
     counters: ScanCounters,
@@ -192,6 +214,7 @@ def _process_batch(
     seen_sample_ids: set[int],
     hash_workers: int,
     scanned_at: datetime,
+    revision_tracker: DatasetRevisionTracker,
 ) -> None:
     absolute_paths = [candidate.absolute_path for candidate in candidates]
     existing_samples = list(
@@ -204,6 +227,7 @@ def _process_batch(
     )
     existing_by_path = {sample.absolute_path: sample for sample in existing_samples}
     needs_hash: list[FileCandidate] = []
+    batch_changed = False
 
     for candidate in candidates:
         existing = existing_by_path.get(candidate.absolute_path)
@@ -214,9 +238,14 @@ def _process_batch(
         ):
             if existing.id is not None:
                 seen_sample_ids.add(existing.id)
+            metadata_changed = _file_metadata_changed(existing, candidate, existing.file_hash)
             _apply_file_metadata(existing, candidate, existing.file_hash, scanned_at)
             session.add(existing)
-            counters.unchanged += 1
+            if metadata_changed:
+                counters.updated += 1
+                batch_changed = True
+            else:
+                counters.unchanged += 1
             counters.hash_skipped_unchanged += 1
         else:
             needs_hash.append(candidate)
@@ -236,11 +265,12 @@ def _process_batch(
         if existing is not None:
             if existing.id is not None:
                 seen_sample_ids.add(existing.id)
-            content_changed = existing.file_hash != file_hash or existing.file_size != candidate.size
+            metadata_changed = _file_metadata_changed(existing, candidate, file_hash)
             _apply_file_metadata(existing, candidate, file_hash, scanned_at)
             session.add(existing)
-            if content_changed:
+            if metadata_changed:
                 counters.updated += 1
+                batch_changed = True
             else:
                 counters.unchanged += 1
             continue
@@ -261,7 +291,10 @@ def _process_batch(
         )
         session.add(sample)
         counters.imported += 1
+        batch_changed = True
 
+    if batch_changed:
+        revision_tracker.bump_once(session)
     session.commit()
     counters.batches_committed += 1
 
@@ -276,6 +309,7 @@ def _mark_missing_samples(
     errors: list[str],
     checkpoint: ScanCheckpoint,
     batch_size: int,
+    revision_tracker: DatasetRevisionTracker,
 ) -> None:
     last_id = 0
     while True:
@@ -314,6 +348,7 @@ def _mark_missing_samples(
                 changed = True
                 _record_error(counters, errors, f"{sample.absolute_path}: {exc}")
         if changed:
+            revision_tracker.bump_once(session)
             session.commit()
 
 
@@ -364,6 +399,7 @@ def scan_dataset(
     check = checkpoint or (lambda: None)
     report = progress or (lambda stage, current, total, error_count: None)
     scanned_at = utc_now()
+    revision_tracker = DatasetRevisionTracker(dataset_id)
 
     def guarded_checkpoint() -> None:
         try:
@@ -398,6 +434,7 @@ def scan_dataset(
             seen_sample_ids=seen_sample_ids,
             hash_workers=hash_workers,
             scanned_at=scanned_at,
+            revision_tracker=revision_tracker,
         )
         guarded_report("writing", counters.scanned, None, counters.error_count)
         pending = []
@@ -414,6 +451,7 @@ def scan_dataset(
             seen_sample_ids=seen_sample_ids,
             hash_workers=hash_workers,
             scanned_at=scanned_at,
+            revision_tracker=revision_tracker,
         )
         guarded_report("writing", counters.scanned, None, counters.error_count)
 
@@ -432,6 +470,7 @@ def scan_dataset(
         errors=errors,
         checkpoint=guarded_checkpoint,
         batch_size=batch_size,
+        revision_tracker=revision_tracker,
     )
     guarded_report("completed", counters.scanned, counters.scanned, counters.error_count)
     return _build_result(dataset_id, root, counters, errors)

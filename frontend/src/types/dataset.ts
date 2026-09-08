@@ -32,6 +32,7 @@ export interface Dataset {
   project: string | null;
   notes: string | null;
   auto_scan_on_open: boolean;
+  revision: number;
   sample_count: number;
   created_at: string;
   updated_at: string;
@@ -371,13 +372,36 @@ export interface DirectoryListResponse {
 export interface DuplicateGroup {
   file_hash: string;
   count: number;
-  samples: Sample[];
+  cross_split: boolean;
+  training_splits: string[];
+  split_counts: Record<string, number>;
+  samples_truncated: boolean;
+  samples: DuplicateSample[];
+}
+
+export interface DuplicateSample {
+  id: number;
+  filename: string;
+  relative_path: string;
+  file_size: number;
+  file_status: string;
+  split: string | null;
+  annotation_progress: string;
+  review_status: string;
 }
 
 export interface DuplicateReport {
   dataset_id: number;
   group_count: number;
   duplicate_sample_count: number;
+  cross_split_group_count: number;
+  cross_split_sample_count: number;
+  filtered_group_count: number;
+  leakage_only: boolean;
+  page: number;
+  page_size: number;
+  has_previous: boolean;
+  has_next: boolean;
   groups: DuplicateGroup[];
 }
 

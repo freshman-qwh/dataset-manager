@@ -17,6 +17,8 @@ EXPECTED_TABLES = {
     "annotation_classes",
     "annotations",
     "datasets",
+    "dataset_snapshots",
+    "dataset_saved_views",
     "jobs",
     "sample_tag_links",
     "samples",
@@ -66,6 +68,22 @@ def test_upgrade_creates_fresh_database_at_head(tmp_path: Path) -> None:
     assert second_result.changed is False
     assert second_result.backup is None
     assert EXPECTED_TABLES.issubset(_table_names(database_path))
+    with closing(sqlite3.connect(database_path)) as connection:
+        columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(datasets)").fetchall()
+        }
+        snapshot_columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(dataset_snapshots)").fetchall()
+        }
+        saved_view_columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(dataset_saved_views)").fetchall()
+        }
+    assert "revision" in columns
+    assert {"dataset_revision", "content_sha256", "artifact_path"}.issubset(snapshot_columns)
+    assert {"name", "task_type", "queue_scope", "query_json"}.issubset(saved_view_columns)
     assert migrations.migration_status(database_path).needs_upgrade is False
 
 
@@ -95,6 +113,9 @@ def test_upgrade_adds_known_columns_to_legacy_table(tmp_path: Path) -> None:
         task_type = connection.execute(
             "SELECT task_type FROM datasets WHERE id = 1"
         ).fetchone()[0]
+        revision = connection.execute(
+            "SELECT revision FROM datasets WHERE id = 1"
+        ).fetchone()[0]
     assert {
         "task_type",
         "source",
@@ -106,6 +127,7 @@ def test_upgrade_adds_known_columns_to_legacy_table(tmp_path: Path) -> None:
         "auto_scan_on_open",
     }.issubset(columns)
     assert task_type == "detection"
+    assert revision == 1
 
 
 def test_upgrade_backs_up_and_preserves_unversioned_database(tmp_path: Path) -> None:

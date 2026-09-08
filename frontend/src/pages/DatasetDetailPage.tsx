@@ -2,11 +2,13 @@ import axios from "axios";
 import {
   AlertTriangle,
   ArrowLeft,
+  Bookmark,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   CheckSquare,
   ClipboardCheck,
+  Camera,
   Database,
   FileText,
   FolderOpen,
@@ -57,6 +59,8 @@ import DatasetActionMenu from "../components/DatasetActionMenu";
 import DatasetIssueModal from "../components/DatasetIssueModal";
 import DatasetQualityModal from "../components/DatasetQualityModal";
 import DatasetSettingsModal from "../components/DatasetSettingsModal";
+import DatasetSavedViewModal from "../components/DatasetSavedViewModal";
+import DatasetSnapshotModal from "../components/DatasetSnapshotModal";
 import ExportPreviewModal, { type ExportPreview } from "../components/ExportPreviewModal";
 import MetadataImportModal from "../components/MetadataImportModal";
 import LabelmeImportModal from "../components/LabelmeImportModal";
@@ -72,6 +76,7 @@ import TagStatsModal from "../components/TagStatsModal";
 import TrainingReadinessModal from "../components/TrainingReadinessModal";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import type {
+  AnnotationProgress,
   Dataset,
   DatasetQualityReport,
   DatasetStats,
@@ -85,10 +90,16 @@ import type {
   SplitPlanResult,
   Tag,
   TrainingReadinessConfigInput,
-  TrainingReadinessReport
+  TrainingReadinessReport,
+  ReviewStatus
 } from "../types/dataset";
 import type { AnnotationExportFormat } from "../types/annotationExport";
 import type { Job } from "../types/job";
+import type {
+  DatasetSavedView,
+  DatasetSavedViewQuery,
+  DatasetSavedViewSortField
+} from "../types/datasetSavedView";
 import { buildDefaultPendingQueue, buildReviewQueue, readAnnotationQueue } from "../utils/annotationQueue";
 import {
   invalidateDatasetDetailCache,
@@ -108,6 +119,38 @@ function formatBytes(value: number): string {
     return `${(value / 1024 / 1024).toFixed(1)} MB`;
   }
   return `${(value / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+const SAVED_VIEW_SORT_FIELDS = new Set<DatasetSavedViewSortField>([
+  "created_at",
+  "updated_at",
+  "filename",
+  "relative_path",
+  "file_size",
+  "extension",
+  "file_type",
+  "file_status",
+  "split",
+  "review_status",
+  "annotation_progress"
+]);
+
+function savedViewSortField(value: string): DatasetSavedViewSortField {
+  return SAVED_VIEW_SORT_FIELDS.has(value as DatasetSavedViewSortField)
+    ? value as DatasetSavedViewSortField
+    : "created_at";
+}
+
+function savedViewReviewStatus(value: string): ReviewStatus | undefined {
+  return value === "not_reviewed" || value === "in_review" || value === "approved" || value === "rejected"
+    ? value
+    : undefined;
+}
+
+function savedViewAnnotationProgress(value: string): AnnotationProgress | undefined {
+  return value === "not_started" || value === "in_progress" || value === "completed_empty" || value === "completed_with_objects"
+    ? value
+    : undefined;
 }
 
 function scanResultFromJob(job: Job): ScanResult | null {
@@ -210,6 +253,8 @@ export default function DatasetDetailPage() {
   const [issueModal, setIssueModal] = useState<"missing" | "duplicate" | null>(null);
   const [exportPreview, setExportPreview] = useState<ExportPreview | null>(null);
   const [annotationExportOpen, setAnnotationExportOpen] = useState(false);
+  const [snapshotOpen, setSnapshotOpen] = useState(false);
+  const [savedViewOpen, setSavedViewOpen] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scanJobId, setScanJobId] = useState<number | null>(null);
   const [scanNotice, setScanNotice] = useState<string | null>(null);
@@ -247,7 +292,7 @@ export default function DatasetDetailPage() {
     const [nextDataset, nextStats, nextDuplicateReport, nextTags] = await Promise.all([
       getDataset(datasetId, signal),
       getDatasetStats(datasetId, signal),
-      getDuplicateReport(datasetId, signal),
+      getDuplicateReport(datasetId, { signal }),
       listTags(datasetId, signal)
     ]);
     if (signal?.aborted || requestId !== overviewRequestIdRef.current) {
@@ -550,10 +595,25 @@ export default function DatasetDetailPage() {
       tag: debouncedTag || undefined,
       split: split || undefined,
       review_status: reviewStatus || undefined,
+      annotation_progress: annotationProgress || undefined,
       sort_by: sortBy,
       sort_order: sortOrder
     }),
-    [debouncedSearch, debouncedTag, fileStatus, fileType, reviewStatus, sortBy, sortOrder, split]
+    [annotationProgress, debouncedSearch, debouncedTag, fileStatus, fileType, reviewStatus, sortBy, sortOrder, split]
+  );
+  const savedViewQuery = useMemo<DatasetSavedViewQuery>(
+    () => ({
+      search: debouncedSearch || undefined,
+      file_type: fileType || undefined,
+      file_status: fileStatus || undefined,
+      tag: debouncedTag || undefined,
+      split: split || undefined,
+      review_status: savedViewReviewStatus(reviewStatus),
+      annotation_progress: savedViewAnnotationProgress(annotationProgress),
+      sort_by: savedViewSortField(sortBy),
+      sort_order: sortOrder
+    }),
+    [annotationProgress, debouncedSearch, debouncedTag, fileStatus, fileType, reviewStatus, sortBy, sortOrder, split]
   );
   const annotationExportSelectedSampleIds = useMemo(
     () => Array.from(selectedSampleIds),
@@ -1072,6 +1132,46 @@ export default function DatasetDetailPage() {
     setPage(1);
   }
 
+  function applySavedView(savedView: DatasetSavedView) {
+    const query = savedView.sample_query;
+    setSearch(query.search ?? "");
+    setFileType(query.file_type ?? "");
+    setFileStatus(query.file_status ?? "");
+    setTag(query.tag ?? "");
+    setSplit(query.split ?? "");
+    setReviewStatus(query.review_status ?? "");
+    setAnnotationProgress(classificationTask ? "" : query.annotation_progress ?? "");
+    setSortBy(query.sort_by);
+    setSortOrder(query.sort_order);
+    setSelectedSampleIds(new Set());
+    setPage(1);
+    setSavedViewOpen(false);
+    window.requestAnimationFrame(() => {
+      samplesSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
+  function startSavedViewQueue(savedView: DatasetSavedView) {
+    const query = savedView.sample_query;
+    const params = new URLSearchParams({
+      queue: savedView.queue_scope,
+      resume: "1",
+      sortBy: query.sort_by,
+      sortOrder: query.sort_order
+    });
+    if (savedView.queue_scope === "current_filter") {
+      if (query.search) params.set("search", query.search);
+      if (query.file_status) params.set("fileStatus", query.file_status);
+      if (query.tag) params.set("tag", query.tag);
+      if (query.split) params.set("split", query.split);
+      if (query.review_status) params.set("reviewStatus", query.review_status);
+      if (query.annotation_progress) params.set("annotationProgress", query.annotation_progress);
+    } else if (savedView.queue_scope === "current_split" && query.split) {
+      params.set("queueSplit", query.split);
+    }
+    navigate(`/datasets/${datasetId}/annotate?${params.toString()}`);
+  }
+
   function filterFileType(nextFileType: string) {
     applyGlobalFilters({ fileType: nextFileType });
   }
@@ -1097,6 +1197,18 @@ export default function DatasetDetailPage() {
   function filterDuplicates() {
     applyGlobalFilters({ fileStatus: "duplicate" });
     setIssueModal(null);
+    window.requestAnimationFrame(() => {
+      samplesSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
+  function filterDuplicateHash(fileHash: string) {
+    applyGlobalFilters({ fileStatus: "duplicate" });
+    setSearch(fileHash);
+    setIssueModal(null);
+    window.requestAnimationFrame(() => {
+      samplesSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }
 
   function openMissingRepair() {
@@ -1164,6 +1276,9 @@ export default function DatasetDetailPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="rounded-md bg-gray-900 px-2.5 py-1 text-xs font-semibold text-white">
                     {dataset.task_capabilities.label}
+                  </span>
+                  <span className="rounded-md border border-line bg-gray-50 px-2.5 py-1 text-xs font-medium text-gray-600">
+                    Revision {dataset.revision}
                   </span>
                   <span className="text-xs text-gray-500">
                     {dataset.task_capabilities.supported ? "任务能力已启用" : "需要迁移任务类型"}
@@ -1362,6 +1477,14 @@ export default function DatasetDetailPage() {
                 <ShieldCheck size={17} />
                 准备训练
               </button>
+              <button
+                type="button"
+                onClick={() => setSnapshotOpen(true)}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                <Camera size={17} />
+                数据集快照
+              </button>
               <DatasetActionMenu
                 exportFormat={exportFormat}
                 onExportFormatChange={setExportFormat}
@@ -1392,6 +1515,14 @@ export default function DatasetDetailPage() {
               <p className="mt-1 text-xs text-gray-500">搜索、筛选、选择并处理当前数据集样本。</p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setSavedViewOpen(true)}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                <Bookmark size={16} />
+                保存视图
+              </button>
               {samples.length > 0 && (
                 <button
                   type="button"
@@ -1590,6 +1721,7 @@ export default function DatasetDetailPage() {
         onRepair={handleRepairMissing}
       />
       <DatasetIssueModal
+        datasetId={datasetId}
         issue={issueModal}
         missingCount={missingCount}
         permissionDeniedCount={permissionDeniedCount}
@@ -1600,6 +1732,7 @@ export default function DatasetDetailPage() {
         onFilterMissing={() => filterMissing("missing")}
         onFilterPermissionDenied={() => filterMissing("permission_denied")}
         onFilterDuplicates={filterDuplicates}
+        onFilterDuplicateHash={filterDuplicateHash}
         onRepairMissing={openMissingRepair}
       />
       <DatasetQualityModal
@@ -1699,6 +1832,24 @@ export default function DatasetDetailPage() {
         currentQuery={annotationExportQuery}
         selectedSampleIds={annotationExportSelectedSampleIds}
         onClose={() => setAnnotationExportOpen(false)}
+      />
+      <DatasetSnapshotModal
+        datasetId={datasetId}
+        datasetRevision={dataset?.revision ?? 1}
+        open={snapshotOpen}
+        sampleQuery={annotationExportQuery}
+        exportFormat={exportFormat === "csv" ? "csv" : "manifest"}
+        onClose={() => setSnapshotOpen(false)}
+      />
+      <DatasetSavedViewModal
+        datasetId={datasetId}
+        currentTaskType={dataset?.task_type ?? "detection"}
+        open={savedViewOpen}
+        currentQuery={savedViewQuery}
+        annotationQueueEnabled={geometryTask}
+        onApply={applySavedView}
+        onStartQueue={startSavedViewQueue}
+        onClose={() => setSavedViewOpen(false)}
       />
       </section>
     </main>

@@ -7,6 +7,7 @@ from app.models.annotation_class import AnnotationClass
 from app.models.dataset import utc_now
 from app.schemas.annotation_class import AnnotationClassCreate, AnnotationClassRead, AnnotationClassUpdate
 from app.services.dataset_service import get_dataset_or_404
+from app.services.dataset_revision_service import bump_dataset_revision
 
 
 def list_annotation_classes(session: Session, dataset_id: int) -> list[AnnotationClassRead]:
@@ -48,6 +49,7 @@ def create_annotation_class(
         description=payload.description,
     )
     session.add(item)
+    bump_dataset_revision(session, dataset_id)
     _commit_or_conflict(session)
     session.refresh(item)
     return AnnotationClassRead.model_validate(item)
@@ -75,6 +77,7 @@ def update_annotation_class(
             annotation.label = item.name
             annotation.updated_at = utc_now()
             session.add(annotation)
+    bump_dataset_revision(session, item.dataset_id)
     _commit_or_conflict(session)
     session.refresh(item)
     return AnnotationClassRead.model_validate(item)
@@ -82,11 +85,13 @@ def update_annotation_class(
 
 def delete_annotation_class(session: Session, class_id: int) -> None:
     item = _get_or_404(session, class_id)
+    dataset_id = item.dataset_id
     annotations = session.exec(select(Annotation).where(Annotation.class_id == item.id)).all()
     for annotation in annotations:
         annotation.class_id = None
         session.add(annotation)
     session.delete(item)
+    bump_dataset_revision(session, dataset_id)
     session.commit()
 
 

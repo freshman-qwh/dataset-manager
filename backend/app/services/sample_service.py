@@ -26,6 +26,7 @@ from app.schemas.sample import (
     SampleUpdate,
 )
 from app.services.dataset_service import get_dataset_or_404
+from app.services.dataset_revision_service import bump_dataset_revision
 from app.services.tag_service import find_tag_by_name_or_alias, tag_to_read
 from app.models.dataset import utc_now
 from app.utils.file_types import detect_file_type, detect_mime_type
@@ -675,6 +676,8 @@ def update_sample(session: Session, sample_id: int, payload: SampleUpdate) -> Sa
 
     sample.updated_at = utc_now().astimezone(timezone.utc)
     session.add(sample)
+    if updates:
+        bump_dataset_revision(session, sample.dataset_id)
     session.commit()
     session.refresh(sample)
     return to_sample_read(sample)
@@ -687,6 +690,14 @@ def batch_update_samples(
 ) -> BatchSampleUpdateResult:
     statement = select(Sample).where(Sample.dataset_id == dataset_id, Sample.id.in_(payload.sample_ids))
     samples = session.exec(statement).all()
+
+    if not samples:
+        return BatchSampleUpdateResult(
+            dataset_id=dataset_id,
+            requested=len(payload.sample_ids),
+            updated=0,
+            skipped=len(payload.sample_ids),
+        )
 
     add_tags = [_get_or_create_tag(session, dataset_id, name) for name in _clean_tag_names(payload.add_tags or [])]
     replace_tag_names = _clean_tag_names(payload.replace_tags or [])
@@ -707,6 +718,7 @@ def batch_update_samples(
         sample.updated_at = utc_now().astimezone(timezone.utc)
         session.add(sample)
 
+    bump_dataset_revision(session, dataset_id)
     session.commit()
     return BatchSampleUpdateResult(
         dataset_id=dataset_id,
@@ -744,6 +756,7 @@ def repair_sample_file(session: Session, sample_id: int, payload: SampleRepairRe
     _ensure_no_path_conflict(session, sample.dataset_id, path, sample.id)
     _apply_path_metadata(sample, path, dataset.root_path)
     session.add(sample)
+    bump_dataset_revision(session, sample.dataset_id)
     _commit_or_conflict(session)
     session.refresh(sample)
     return to_sample_read(sample)
@@ -783,11 +796,14 @@ def repair_missing_samples(
         except OSError as exc:
             errors.append(f"{sample.relative_path}: {exc}")
 
+    root_changed = payload.update_dataset_root and dataset.root_path != str(root)
     if payload.update_dataset_root:
         dataset.root_path = str(root)
         dataset.updated_at = utc_now()
         session.add(dataset)
 
+    if repaired or root_changed:
+        bump_dataset_revision(session, dataset_id)
     _commit_or_conflict(session)
     return MissingSampleRepairResult(
         dataset_id=dataset_id,
@@ -861,6 +877,8 @@ def _delete_samples(session: Session, samples: list[Sample]) -> None:
         sample.tags.clear()
         session.add(sample)
         session.delete(sample)
+    if samples:
+        bump_dataset_revision(session, samples[0].dataset_id)
     session.commit()
 
 
