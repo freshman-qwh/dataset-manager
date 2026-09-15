@@ -1,10 +1,11 @@
 from datetime import timezone
 
 from fastapi import HTTPException, status
-from sqlalchemy import func
+from sqlalchemy import delete, func
 from sqlmodel import Session, select
 
 from app.models.dataset import Dataset, utc_now
+from app.models.defect_type import DefectType, SampleDefectLink
 from app.models.annotation_class import AnnotationClass
 from app.models.sample import Sample
 from app.models.tag import Tag
@@ -77,6 +78,11 @@ def delete_dataset(session: Session, dataset_id: int) -> None:
     dataset_saved_view_service.delete_dataset_saved_views(session, dataset_id)
     samples = session.exec(select(Sample).where(Sample.dataset_id == dataset_id)).all()
     annotation_service.delete_sample_annotations(session, [sample.id for sample in samples if sample.id is not None])
+    sample_ids = [sample.id for sample in samples if sample.id is not None]
+    if sample_ids:
+        session.exec(
+            delete(SampleDefectLink).where(SampleDefectLink.sample_id.in_(sample_ids))
+        )
     for sample in samples:
         sample.tags.clear()
         session.add(sample)
@@ -85,6 +91,14 @@ def delete_dataset(session: Session, dataset_id: int) -> None:
     tags = session.exec(select(Tag).where(Tag.dataset_id == dataset_id)).all()
     for tag in tags:
         session.delete(tag)
+
+    defect_types = session.exec(
+        select(DefectType)
+        .where(DefectType.dataset_id == dataset_id)
+        .order_by(DefectType.parent_id.desc())
+    ).all()
+    for defect_type in defect_types:
+        session.delete(defect_type)
 
     annotation_classes = session.exec(
         select(AnnotationClass).where(AnnotationClass.dataset_id == dataset_id)

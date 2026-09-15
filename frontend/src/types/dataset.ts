@@ -8,6 +8,9 @@ export type DatasetTaskType = "detection" | "segmentation" | "classification";
 export type AnnotationProgress = "not_started" | "in_progress" | "completed_empty" | "completed_with_objects";
 export type ReviewStatus = "not_reviewed" | "in_review" | "approved" | "rejected";
 export type AnnotationQueueScope = "all_pending" | "current_filter" | "current_split";
+export type TriageStatus = "untriaged" | "pending" | "ok" | "ng";
+export type OkGrade = "clear" | "borderline";
+export type DefectSeverity = "mild" | "moderate" | "severe";
 
 export interface DatasetTaskCapabilities {
   label: string;
@@ -33,6 +36,7 @@ export interface Dataset {
   notes: string | null;
   auto_scan_on_open: boolean;
   revision: number;
+  triage_policy_version: number;
   sample_count: number;
   created_at: string;
   updated_at: string;
@@ -103,6 +107,16 @@ export interface Sample {
   split: string | null;
   annotation_progress: AnnotationProgress;
   review_status: ReviewStatus;
+  triage_status: TriageStatus;
+  ok_grade: OkGrade | null;
+  defect_severity: DefectSeverity | null;
+  primary_defect_type_id: number | null;
+  triage_note: string | null;
+  triage_version: number;
+  triaged_at: string | null;
+  triage_policy_version: number | null;
+  triaged_file_hash: string | null;
+  triage_outdated: boolean;
   notes: string | null;
   metadata: Record<string, unknown>;
   tags: Tag[];
@@ -235,6 +249,10 @@ export interface DatasetStats {
   by_split: Record<string, number>;
   by_annotation_progress: Record<AnnotationProgress | string, number>;
   by_review_status: Record<string, number>;
+  by_triage_status: Record<string, number>;
+  by_ok_grade: Record<string, number>;
+  by_defect_severity: Record<string, number>;
+  triage_outdated: number;
   tag_counts: Record<string, number>;
   duplicate_groups: number;
   duplicate_samples: number;
@@ -270,6 +288,11 @@ export interface SampleQuery {
   split?: string;
   reviewStatus?: string;
   annotationProgress?: AnnotationProgress;
+  triageStatus?: TriageStatus;
+  okGrade?: OkGrade;
+  defectSeverity?: DefectSeverity;
+  defectTypeId?: number;
+  triageOutdated?: boolean;
   page?: number;
   pageSize?: number;
   sortBy?: string;

@@ -65,6 +65,7 @@ class DatasetRead(BaseModel):
     project: str | None
     notes: str | None
     auto_scan_on_open: bool
+    triage_policy_version: int = Field(ge=1)
     revision: int = Field(ge=1)
     sample_count: int = 0
     created_at: datetime

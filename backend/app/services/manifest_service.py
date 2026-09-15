@@ -1,7 +1,7 @@
 from sqlmodel import Session
 
 from app.services.dataset_service import get_dataset_or_404
-from app.services import annotation_service
+from app.services import annotation_service, triage_service
 from app.services.sample_service import get_filtered_samples
 from app.services.stats_service import get_dataset_stats
 
@@ -36,6 +36,7 @@ def export_manifest(
     stats = get_dataset_stats(session, dataset_id)
     sample_ids = [sample.id for sample in samples if sample.id is not None]
     annotations = annotation_service.annotations_by_sample(session, sample_ids)
+    defect_types = triage_service.defect_types_by_sample(session, sample_ids)
 
     return {
         "dataset": {
@@ -82,6 +83,26 @@ def export_manifest(
                 "last_scanned_at": sample.last_scanned_at.isoformat() if sample.last_scanned_at else None,
                 "split": sample.split,
                 "review_status": sample.review_status,
+                "triage": {
+                    "status": sample.triage_status,
+                    "ok_grade": sample.ok_grade,
+                    "defect_severity": sample.defect_severity,
+                    "defect_types": [
+                        {
+                            "id": item.id,
+                            "name": item.name,
+                            "code": item.code,
+                            "parent_id": item.parent_id,
+                        }
+                        for item in defect_types.get(sample.id or 0, [])
+                    ],
+                    "primary_defect_type_id": sample.primary_defect_type_id,
+                    "note": sample.triage_note,
+                    "version": sample.triage_version,
+                    "triaged_at": sample.triaged_at.isoformat() if sample.triaged_at else None,
+                    "policy_version": sample.triage_policy_version,
+                    "triaged_file_hash": sample.triaged_file_hash,
+                },
                 "notes": sample.notes,
                 "metadata_json": sample.metadata_json,
                 "tags": [tag.name for tag in sample.tags],

@@ -14,6 +14,7 @@ import {
   FolderOpen,
   HardDrive,
   Image as ImageIcon,
+  ListChecks,
   Play,
   RefreshCw,
   Settings,
@@ -1247,15 +1248,24 @@ export default function DatasetDetailPage() {
               <ArrowLeft size={17} />
               数据集
             </Link>
-            <button
-              type="button"
-              title="数据集设置"
-              onClick={() => setSettingsOpen(true)}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
-            >
-              <Settings size={17} />
-              设置
-            </button>
+            <div className="flex items-center gap-2">
+              <Link
+                to={`/datasets/${datasetId}/triage?queue=untriaged`}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 text-sm font-semibold text-white hover:bg-gray-800"
+              >
+                <ListChecks size={17} />
+                快速分拣
+              </Link>
+              <button
+                type="button"
+                title="数据集设置"
+                onClick={() => setSettingsOpen(true)}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                <Settings size={17} />
+                设置
+              </button>
+            </div>
           </div>
           <div className="mt-3 flex flex-col justify-between gap-3 lg:flex-row lg:items-end">
             <div className="min-w-0">

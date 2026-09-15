@@ -4,11 +4,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import HTTPException, status
-from sqlalchemy import and_, asc, desc, exists, false, func, or_
+from sqlalchemy import and_, asc, delete, desc, exists, false, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
+from app.models.dataset import Dataset, utc_now
+from app.models.defect_type import SampleDefectLink
 from app.models.sample import Sample, SampleTagLink
 from app.models.tag import Tag
 from app.core.workflow import ANNOTATION_PROGRESS_VALUES, REVIEW_STATUS_VALUES
@@ -28,7 +30,6 @@ from app.schemas.sample import (
 from app.services.dataset_service import get_dataset_or_404
 from app.services.dataset_revision_service import bump_dataset_revision
 from app.services.tag_service import find_tag_by_name_or_alias, tag_to_read
-from app.models.dataset import utc_now
 from app.utils.file_types import detect_file_type, detect_mime_type
 from app.utils.hashing import sha256_file
 from app.utils.paths import relative_to_root, resolve_local_path
@@ -64,7 +65,10 @@ TEXT_SORT_FIELDS = {
 }
 
 
-def to_sample_read(sample: Sample) -> SampleRead:
+def to_sample_read(
+    sample: Sample,
+    current_triage_policy_version: int | None = None,
+) -> SampleRead:
     tags = [tag_to_read(tag) for tag in sorted(sample.tags, key=lambda item: item.name)]
     return SampleRead(
         id=sample.id or 0,
@@ -83,6 +87,25 @@ def to_sample_read(sample: Sample) -> SampleRead:
         split=sample.split,
         annotation_progress=_normalize_annotation_progress(sample.annotation_progress),
         review_status=sample.review_status or "not_reviewed",
+        triage_status=sample.triage_status or "untriaged",
+        ok_grade=sample.ok_grade,
+        defect_severity=sample.defect_severity,
+        primary_defect_type_id=sample.primary_defect_type_id,
+        triage_note=sample.triage_note,
+        triage_version=sample.triage_version or 0,
+        triaged_at=sample.triaged_at,
+        triage_policy_version=sample.triage_policy_version,
+        triaged_file_hash=sample.triaged_file_hash,
+        triage_outdated=(
+            (sample.triage_status or "untriaged") != "untriaged"
+            and (
+                sample.triaged_file_hash != sample.file_hash
+                or (
+                    current_triage_policy_version is not None
+                    and sample.triage_policy_version != current_triage_policy_version
+                )
+            )
+        ),
         notes=sample.notes,
         metadata=_metadata_from_json(sample.metadata_json),
         tags=tags,
@@ -104,6 +127,11 @@ def get_filtered_samples(
     sample_ids: list[int] | None = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
+    triage_status: str | None = None,
+    ok_grade: str | None = None,
+    defect_severity: str | None = None,
+    defect_type_id: int | None = None,
+    triage_outdated: bool | None = None,
 ) -> list[Sample]:
     safe_sort_by = sort_by if sort_by in SORTABLE_SAMPLE_FIELDS else "created_at"
     safe_sort_order = "asc" if sort_order.lower() == "asc" else "desc"
@@ -119,6 +147,11 @@ def get_filtered_samples(
         review_status=review_status,
         annotation_progress=annotation_progress,
         sample_ids=sample_ids,
+        triage_status=triage_status,
+        ok_grade=ok_grade,
+        defect_severity=defect_severity,
+        defect_type_id=defect_type_id,
+        triage_outdated=triage_outdated,
     )
     statement = statement.order_by(
         *_sample_order_clauses(
@@ -145,6 +178,11 @@ def list_samples(
     sort_by: str = "created_at",
     sort_order: str = "desc",
     thumbnail_prefetch: int = 0,
+    triage_status: str | None = None,
+    ok_grade: str | None = None,
+    defect_severity: str | None = None,
+    defect_type_id: int | None = None,
+    triage_outdated: bool | None = None,
 ) -> SampleListResponse:
     safe_page_size = min(max(page_size, 1), 200)
     safe_sort_by = sort_by if sort_by in SORTABLE_SAMPLE_FIELDS else "created_at"
@@ -160,12 +198,20 @@ def list_samples(
         split=split,
         review_status=review_status,
         annotation_progress=annotation_progress,
+        triage_status=triage_status,
+        ok_grade=ok_grade,
+        defect_severity=defect_severity,
+        defect_type_id=defect_type_id,
+        triage_outdated=triage_outdated,
     )
     total = int(session.exec(select(func.count()).select_from(filtered_ids.subquery())).one())
     page_count = max((total + safe_page_size - 1) // safe_page_size, 1)
     safe_page = min(max(page, 1), page_count)
     statement = _apply_sample_filters(
-        select(Sample),
+        select(Sample, Dataset.triage_policy_version).join(
+            Dataset,
+            Dataset.id == Sample.dataset_id,
+        ),
         session,
         dataset_id,
         search=search,
@@ -175,6 +221,11 @@ def list_samples(
         split=split,
         review_status=review_status,
         annotation_progress=annotation_progress,
+        triage_status=triage_status,
+        ok_grade=ok_grade,
+        defect_severity=defect_severity,
+        defect_type_id=defect_type_id,
+        triage_outdated=triage_outdated,
     )
     statement = (
         statement.order_by(
@@ -188,7 +239,8 @@ def list_samples(
         .limit(safe_page_size)
         .options(selectinload(Sample.tags))
     )
-    samples = list(session.exec(statement).all())
+    sample_rows = list(session.exec(statement).all())
+    samples = [row[0] for row in sample_rows]
     thumbnail_prefetch_sample_ids: list[int] = []
     safe_thumbnail_prefetch = min(max(thumbnail_prefetch, 0), 12)
     if safe_thumbnail_prefetch:
@@ -206,6 +258,11 @@ def list_samples(
             split=split,
             review_status=review_status,
             annotation_progress=annotation_progress,
+            triage_status=triage_status,
+            ok_grade=ok_grade,
+            defect_severity=defect_severity,
+            defect_type_id=defect_type_id,
+            triage_outdated=triage_outdated,
         )
         prefetch_statement = (
             prefetch_statement.order_by(
@@ -226,8 +283,9 @@ def list_samples(
             and row[1] == "image"
             and row[2] == "normal"
         ]
+    current_policy_version = int(sample_rows[0][1]) if sample_rows else None
     return SampleListResponse(
-        items=[to_sample_read(sample) for sample in samples],
+        items=[to_sample_read(sample, current_policy_version) for sample in samples],
         total=total,
         page=safe_page,
         page_size=safe_page_size,
@@ -349,26 +407,43 @@ def get_sample_navigation(
             total = int(session.exec(total_statement).one())
 
     samples_by_id: dict[int, Sample] = {}
+    current_policy_version: int | None = None
     neighbor_ids = [item_id for item_id in (current_id, previous_id, next_id) if item_id is not None]
     if neighbor_ids:
         neighbor_statement = (
-            select(Sample)
+            select(Sample, Dataset.triage_policy_version)
+            .join(Dataset, Dataset.id == Sample.dataset_id)
             .where(Sample.id.in_(neighbor_ids))
             .options(selectinload(Sample.tags))
         )
+        neighbor_rows = list(session.exec(neighbor_statement).all())
         samples_by_id = {
             sample.id: sample
-            for sample in session.exec(neighbor_statement).all()
+            for sample, _policy_version in neighbor_rows
             if sample.id is not None
         }
+        if neighbor_rows:
+            current_policy_version = int(neighbor_rows[0][1])
     current_sample = samples_by_id.get(current_id) if current_id is not None else None
     previous_sample = samples_by_id.get(previous_id) if previous_id is not None else None
     next_sample = samples_by_id.get(next_id) if next_id is not None else None
 
     return SampleNavigationResponse(
-        current_sample=to_sample_read(current_sample) if current_sample else None,
-        previous_sample=to_sample_read(previous_sample) if previous_sample else None,
-        next_sample=to_sample_read(next_sample) if next_sample else None,
+        current_sample=(
+            to_sample_read(current_sample, current_policy_version)
+            if current_sample
+            else None
+        ),
+        previous_sample=(
+            to_sample_read(previous_sample, current_policy_version)
+            if previous_sample
+            else None
+        ),
+        next_sample=(
+            to_sample_read(next_sample, current_policy_version)
+            if next_sample
+            else None
+        ),
         current_index=current_index,
         total=total,
         remaining=max(total - (1 if current_index is not None else 0), 0),
@@ -392,6 +467,11 @@ def _apply_sample_filters(
     annotation_progress: str | None = None,
     sample_ids: list[int] | None = None,
     pending_only: bool = False,
+    triage_status: str | None = None,
+    ok_grade: str | None = None,
+    defect_severity: str | None = None,
+    defect_type_id: int | None = None,
+    triage_outdated: bool | None = None,
 ):
     statement = statement.where(Sample.dataset_id == dataset_id)
     if file_type:
@@ -425,6 +505,39 @@ def _apply_sample_filters(
         )
     elif annotation_progress:
         statement = statement.where(Sample.annotation_progress == annotation_progress)
+    if triage_status:
+        statement = statement.where(Sample.triage_status == triage_status)
+    if ok_grade:
+        statement = statement.where(Sample.ok_grade == ok_grade)
+    if defect_severity:
+        statement = statement.where(Sample.defect_severity == defect_severity)
+    if defect_type_id:
+        statement = statement.where(
+            exists(
+                select(SampleDefectLink.sample_id).where(
+                    SampleDefectLink.sample_id == Sample.id,
+                    SampleDefectLink.defect_type_id == defect_type_id,
+                )
+            )
+        )
+    if triage_outdated is not None:
+        policy_version = (
+            select(Dataset.triage_policy_version)
+            .where(Dataset.id == dataset_id)
+            .scalar_subquery()
+        )
+        outdated_condition = and_(
+            Sample.triage_status != "untriaged",
+            or_(
+                Sample.triaged_file_hash.is_(None),
+                Sample.triaged_file_hash != Sample.file_hash,
+                Sample.triage_policy_version.is_(None),
+                Sample.triage_policy_version != policy_version,
+            ),
+        )
+        statement = statement.where(
+            outdated_condition if triage_outdated else ~outdated_condition
+        )
     if sample_ids:
         statement = statement.where(Sample.id.in_(sample_ids))
 
@@ -630,7 +743,12 @@ def get_sample_or_404(session: Session, sample_id: int) -> Sample:
 
 
 def get_sample(session: Session, sample_id: int) -> SampleRead:
-    return to_sample_read(get_sample_or_404(session, sample_id))
+    sample = get_sample_or_404(session, sample_id)
+    dataset = session.get(Dataset, sample.dataset_id)
+    return to_sample_read(
+        sample,
+        dataset.triage_policy_version if dataset is not None else None,
+    )
 
 
 def _get_or_create_tag(session: Session, dataset_id: int, name: str) -> Tag:
@@ -872,6 +990,11 @@ def _delete_samples(session: Session, samples: list[Sample]) -> None:
     from app.services import annotation_service
 
     annotation_service.delete_sample_annotations(session, [sample.id for sample in samples if sample.id is not None])
+    sample_ids = [sample.id for sample in samples if sample.id is not None]
+    if sample_ids:
+        session.exec(
+            delete(SampleDefectLink).where(SampleDefectLink.sample_id.in_(sample_ids))
+        )
     for sample in samples:
         # Metadata-only delete: detach tag links and remove the database record.
         sample.tags.clear()

@@ -90,6 +90,16 @@ class SampleRead(BaseModel):
     split: str | None
     annotation_progress: AnnotationProgress
     review_status: ReviewStatus
+    triage_status: str = "untriaged"
+    ok_grade: str | None = None
+    defect_severity: str | None = None
+    primary_defect_type_id: int | None = None
+    triage_note: str | None = None
+    triage_version: int = 0
+    triaged_at: datetime | None = None
+    triage_policy_version: int | None = None
+    triaged_file_hash: str | None = None
+    triage_outdated: bool = False
     notes: str | None
     metadata: dict[str, object] = Field(default_factory=dict)
     tags: list[TagRead] = Field(default_factory=list)

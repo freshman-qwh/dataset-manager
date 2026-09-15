@@ -28,6 +28,11 @@ class Dataset(SQLModel, table=True):
     project: str | None = Field(default=None, max_length=160)
     notes: str | None = Field(default=None, max_length=4000)
     auto_scan_on_open: bool = Field(default=False)
+    triage_policy_version: int = Field(
+        default=1,
+        sa_column=Column(Integer, nullable=False, server_default=text("1")),
+    )
+    triage_policy_json: str | None = Field(default=None)
     revision: int = Field(
         default=1,
         sa_column=Column(Integer, nullable=False, server_default=text("1")),

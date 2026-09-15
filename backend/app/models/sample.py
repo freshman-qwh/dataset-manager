@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Index, UniqueConstraint, func
+from sqlalchemy import Column, Index, Integer, String, UniqueConstraint, func, text
 from sqlmodel import Field, Relationship, SQLModel
 
 from app.models.dataset import utc_now
@@ -41,6 +41,13 @@ class Sample(SQLModel, table=True):
         Index("ix_samples_dataset_hash", "dataset_id", "file_hash"),
         Index("ix_samples_dataset_created", "dataset_id", "created_at"),
         Index("ix_samples_dataset_filename", "dataset_id", "filename"),
+        Index(
+            "ix_samples_dataset_triage",
+            "dataset_id",
+            "triage_status",
+            "ok_grade",
+            "defect_severity",
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -59,6 +66,25 @@ class Sample(SQLModel, table=True):
     split: str | None = Field(default=None, max_length=40)
     annotation_progress: str = Field(default="not_started", index=True, max_length=40)
     review_status: str = Field(default="not_reviewed", index=True, max_length=40)
+    triage_status: str = Field(
+        default="untriaged",
+        sa_column=Column(
+            String(40),
+            nullable=False,
+            server_default=text("'untriaged'"),
+        ),
+    )
+    ok_grade: str | None = Field(default=None, max_length=40)
+    defect_severity: str | None = Field(default=None, max_length=40)
+    primary_defect_type_id: int | None = Field(default=None, index=True)
+    triage_note: str | None = Field(default=None, max_length=4000)
+    triage_version: int = Field(
+        default=0,
+        sa_column=Column(Integer, nullable=False, server_default=text("0")),
+    )
+    triaged_at: datetime | None = Field(default=None)
+    triage_policy_version: int | None = Field(default=None)
+    triaged_file_hash: str | None = Field(default=None, max_length=128)
     notes: str | None = Field(default=None, max_length=4000)
     metadata_json: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=utc_now)

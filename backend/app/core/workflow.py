@@ -1,6 +1,9 @@
 from typing import Literal
 
 DatasetTaskType = Literal["detection", "segmentation", "classification"]
+TriageStatus = Literal["untriaged", "pending", "ok", "ng"]
+OkGrade = Literal["clear", "borderline"]
+DefectSeverity = Literal["mild", "moderate", "severe"]
 AnnotationProgress = Literal[
     "not_started",
     "in_progress",
@@ -25,6 +28,18 @@ REVIEW_STATUS_VALUES: tuple[ReviewStatus, ...] = (
     "in_review",
     "approved",
     "rejected",
+)
+TRIAGE_STATUS_VALUES: tuple[TriageStatus, ...] = (
+    "untriaged",
+    "pending",
+    "ok",
+    "ng",
+)
+OK_GRADE_VALUES: tuple[OkGrade, ...] = ("clear", "borderline")
+DEFECT_SEVERITY_VALUES: tuple[DefectSeverity, ...] = (
+    "mild",
+    "moderate",
+    "severe",
 )
 
 

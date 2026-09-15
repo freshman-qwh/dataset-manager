@@ -19,8 +19,10 @@ EXPECTED_TABLES = {
     "datasets",
     "dataset_snapshots",
     "dataset_saved_views",
+    "defect_types",
     "jobs",
     "sample_tag_links",
+    "sample_defect_links",
     "samples",
     "tags",
     "training_readiness_states",
@@ -81,9 +83,20 @@ def test_upgrade_creates_fresh_database_at_head(tmp_path: Path) -> None:
             str(row[1])
             for row in connection.execute("PRAGMA table_info(dataset_saved_views)").fetchall()
         }
+        sample_columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(samples)").fetchall()
+        }
     assert "revision" in columns
     assert {"dataset_revision", "content_sha256", "artifact_path"}.issubset(snapshot_columns)
     assert {"name", "task_type", "queue_scope", "query_json"}.issubset(saved_view_columns)
+    assert {
+        "triage_status",
+        "ok_grade",
+        "defect_severity",
+        "triage_version",
+        "triaged_file_hash",
+    }.issubset(sample_columns)
     assert migrations.migration_status(database_path).needs_upgrade is False
 
 

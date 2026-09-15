@@ -77,6 +77,17 @@ import type {
   DatasetSavedView,
   DatasetSavedViewCreate
 } from "../types/datasetSavedView";
+import type {
+  DefectType,
+  DefectTypeCreate,
+  SampleTriage,
+  SampleTriageWrite,
+  TriageNavigation,
+  TriagePolicy,
+  TriagePolicyValues,
+  TriageQueueScope,
+  TriageStats
+} from "../types/triage";
 
 export const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8000/api";
@@ -453,7 +464,11 @@ export async function createThumbnailMaintenanceJob(): Promise<ThumbnailMaintena
 }
 
 export async function listSamples(params: SampleQuery, signal?: AbortSignal): Promise<SampleListResponse> {
-  const { datasetId, search, fileType, fileStatus, tag, split, reviewStatus, annotationProgress, page, pageSize, sortBy, sortOrder, thumbnailPrefetch } = params;
+  const {
+    datasetId, search, fileType, fileStatus, tag, split, reviewStatus,
+    annotationProgress, triageStatus, okGrade, defectSeverity, defectTypeId,
+    triageOutdated, page, pageSize, sortBy, sortOrder, thumbnailPrefetch
+  } = params;
   const { data } = await client.get<SampleListResponse>(`/datasets/${datasetId}/samples`, {
     signal,
     params: {
@@ -464,6 +479,11 @@ export async function listSamples(params: SampleQuery, signal?: AbortSignal): Pr
       split: split || undefined,
       review_status: reviewStatus || undefined,
       annotation_progress: annotationProgress || undefined,
+      triage_status: triageStatus || undefined,
+      ok_grade: okGrade || undefined,
+      defect_severity: defectSeverity || undefined,
+      defect_type_id: defectTypeId || undefined,
+      triage_outdated: triageOutdated || undefined,
       page,
       page_size: pageSize,
       sort_by: sortBy,
@@ -500,6 +520,96 @@ export async function getSampleNavigation(
 
 export async function getSample(sampleId: number): Promise<Sample> {
   const { data } = await client.get<Sample>(`/samples/${sampleId}`);
+  return data;
+}
+
+export async function getTriagePolicy(datasetId: number): Promise<TriagePolicy> {
+  const { data } = await client.get<TriagePolicy>(`/datasets/${datasetId}/triage-policy`);
+  return data;
+}
+
+export async function updateTriagePolicy(
+  datasetId: number,
+  payload: TriagePolicyValues
+): Promise<TriagePolicy> {
+  const { data } = await client.put<TriagePolicy>(`/datasets/${datasetId}/triage-policy`, payload);
+  return data;
+}
+
+export async function listDefectTypes(
+  datasetId: number,
+  includeInactive = true
+): Promise<DefectType[]> {
+  const { data } = await client.get<DefectType[]>(`/datasets/${datasetId}/defect-types`, {
+    params: { include_inactive: includeInactive }
+  });
+  return data;
+}
+
+export async function createDefectType(
+  datasetId: number,
+  payload: DefectTypeCreate
+): Promise<DefectType> {
+  const { data } = await client.post<DefectType>(`/datasets/${datasetId}/defect-types`, payload);
+  return data;
+}
+
+export async function updateDefectType(
+  datasetId: number,
+  defectTypeId: number,
+  payload: Partial<DefectTypeCreate> & { is_active?: boolean }
+): Promise<DefectType> {
+  const { data } = await client.patch<DefectType>(
+    `/datasets/${datasetId}/defect-types/${defectTypeId}`,
+    payload
+  );
+  return data;
+}
+
+export async function getSampleTriage(sampleId: number): Promise<SampleTriage> {
+  const { data } = await client.get<SampleTriage>(`/samples/${sampleId}/triage`);
+  return data;
+}
+
+export async function replaceSampleTriage(
+  sampleId: number,
+  payload: SampleTriageWrite
+): Promise<SampleTriage> {
+  const { data } = await client.put<SampleTriage>(`/samples/${sampleId}/triage`, payload);
+  return data;
+}
+
+export async function getTriageNavigation(params: {
+  datasetId: number;
+  sampleId?: number | null;
+  queueScope?: TriageQueueScope;
+  search?: string;
+  split?: string;
+  triageStatus?: string;
+  okGrade?: string;
+  defectSeverity?: string;
+  defectTypeId?: number;
+}): Promise<TriageNavigation> {
+  const { data } = await client.get<TriageNavigation>(
+    `/datasets/${params.datasetId}/triage/navigation`,
+    {
+      params: {
+        sample_id: params.sampleId || undefined,
+        queue_scope: params.queueScope,
+        search: params.search || undefined,
+        split: params.split || undefined,
+        triage_status: params.triageStatus || undefined,
+        ok_grade: params.okGrade || undefined,
+        defect_severity: params.defectSeverity || undefined,
+        defect_type_id: params.defectTypeId || undefined
+      }
+    }
+  );
+  return data;
+}
+
+export async function getTriageStats(datasetId: number): Promise<TriageStats> {
+  const { data } = await client.get<TriageStats>(`/datasets/${datasetId}/triage/stats`);
   return data;
 }
 

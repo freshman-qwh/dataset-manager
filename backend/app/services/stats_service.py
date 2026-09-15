@@ -1,4 +1,4 @@
-from sqlalchemy import distinct, exists, func
+from sqlalchemy import case, distinct, exists, func, or_
 from sqlmodel import Session, select
 
 from app.models.annotation import Annotation
@@ -9,11 +9,48 @@ from app.services.dataset_service import get_dataset_or_404
 
 
 def get_dataset_stats(session: Session, dataset_id: int) -> DatasetStats:
-    get_dataset_or_404(session, dataset_id)
-    sample_count, total_size = session.exec(
+    dataset = get_dataset_or_404(session, dataset_id)
+    (
+        sample_count,
+        total_size,
+        triage_untriaged,
+        triage_pending,
+        triage_ok,
+        triage_ng,
+        ok_clear,
+        ok_borderline,
+        severity_mild,
+        severity_moderate,
+        severity_severe,
+        triage_outdated,
+    ) = session.exec(
         select(
             func.count(Sample.id),
             func.coalesce(func.sum(Sample.file_size), 0),
+            func.sum(case((func.coalesce(Sample.triage_status, "untriaged") == "untriaged", 1), else_=0)),
+            func.sum(case((Sample.triage_status == "pending", 1), else_=0)),
+            func.sum(case((Sample.triage_status == "ok", 1), else_=0)),
+            func.sum(case((Sample.triage_status == "ng", 1), else_=0)),
+            func.sum(case((Sample.ok_grade == "clear", 1), else_=0)),
+            func.sum(case((Sample.ok_grade == "borderline", 1), else_=0)),
+            func.sum(case((Sample.defect_severity == "mild", 1), else_=0)),
+            func.sum(case((Sample.defect_severity == "moderate", 1), else_=0)),
+            func.sum(case((Sample.defect_severity == "severe", 1), else_=0)),
+            func.sum(
+                case(
+                    (
+                        (Sample.triage_status != "untriaged")
+                        & or_(
+                            Sample.triaged_file_hash.is_(None),
+                            Sample.triaged_file_hash != Sample.file_hash,
+                            Sample.triage_policy_version.is_(None),
+                            Sample.triage_policy_version != dataset.triage_policy_version,
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ),
         ).where(Sample.dataset_id == dataset_id)
     ).one()
     by_file_type = _group_counts(session, dataset_id, Sample.file_type)
@@ -34,6 +71,21 @@ def get_dataset_stats(session: Session, dataset_id: int) -> DatasetStats:
         dataset_id,
         func.coalesce(Sample.review_status, "not_reviewed"),
     )
+    by_triage_status = {
+        "untriaged": int(triage_untriaged or 0),
+        "pending": int(triage_pending or 0),
+        "ok": int(triage_ok or 0),
+        "ng": int(triage_ng or 0),
+    }
+    by_ok_grade = {
+        "clear": int(ok_clear or 0),
+        "borderline": int(ok_borderline or 0),
+    }
+    by_defect_severity = {
+        "mild": int(severity_mild or 0),
+        "moderate": int(severity_moderate or 0),
+        "severe": int(severity_severe or 0),
+    }
     duplicate_counts = [
         int(count)
         for count in session.exec(
@@ -88,6 +140,10 @@ def get_dataset_stats(session: Session, dataset_id: int) -> DatasetStats:
         by_split=by_split,
         by_annotation_progress=by_annotation_progress,
         by_review_status=by_review_status,
+        by_triage_status=by_triage_status,
+        by_ok_grade=by_ok_grade,
+        by_defect_severity=by_defect_severity,
+        triage_outdated=int(triage_outdated),
         tag_counts=tag_counts,
         duplicate_groups=len(duplicate_counts),
         duplicate_samples=sum(duplicate_counts),

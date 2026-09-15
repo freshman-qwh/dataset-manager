@@ -1,0 +1,595 @@
+from __future__ import annotations
+
+import json
+import re
+from datetime import timezone
+from uuid import uuid4
+
+from sqlalchemy import delete, exists, func, inspect, or_, update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
+from sqlmodel import Session, select
+
+from app.models.dataset import Dataset, utc_now
+from app.models.defect_type import DefectType, SampleDefectLink
+from app.models.sample import Sample
+from app.schemas.triage import (
+    DefectTypeCreate,
+    DefectTypeRead,
+    DefectTypeUpdate,
+    SampleTriageRead,
+    SampleTriageWrite,
+    TriageNavigationResponse,
+    TriagePolicyRead,
+    TriagePolicyValues,
+    TriageQueueScope,
+    TriageStats,
+)
+from app.services.dataset_revision_service import bump_dataset_revision
+from app.services.dataset_service import get_dataset_or_404
+from app.services.sample_service import get_sample_or_404, to_sample_read
+
+
+class TriageError(RuntimeError):
+    pass
+
+
+class TriageSchemaUnavailableError(TriageError):
+    pass
+
+
+class TriageConflictError(TriageError):
+    pass
+
+
+class TriageValidationError(TriageError):
+    pass
+
+
+class TriageNotFoundError(TriageError):
+    pass
+
+
+def _ensure_schema(session: Session) -> None:
+    inspector = inspect(session.get_bind())
+    tables = set(inspector.get_table_names())
+    if not {"defect_types", "sample_defect_links"}.issubset(tables):
+        raise TriageSchemaUnavailableError(
+            "快速分拣数据结构尚未启用，请先停止服务并运行数据库迁移。"
+        )
+    sample_columns = {item["name"] for item in inspector.get_columns("samples")}
+    if "triage_status" not in sample_columns:
+        raise TriageSchemaUnavailableError(
+            "快速分拣数据结构尚未启用，请先停止服务并运行数据库迁移。"
+        )
+
+
+def _defect_type_read(item: DefectType) -> DefectTypeRead:
+    return DefectTypeRead(
+        id=item.id or 0,
+        dataset_id=item.dataset_id,
+        name=item.name,
+        code=item.code,
+        parent_id=item.parent_id,
+        description=item.description,
+        is_active=item.is_active,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )
+
+
+def _default_policy() -> TriagePolicyValues:
+    return TriagePolicyValues()
+
+
+def _policy_values(dataset: Dataset) -> TriagePolicyValues:
+    if not dataset.triage_policy_json:
+        return _default_policy()
+    try:
+        return TriagePolicyValues.model_validate_json(dataset.triage_policy_json)
+    except (ValueError, TypeError):
+        return _default_policy()
+
+
+def get_triage_policy(session: Session, dataset_id: int) -> TriagePolicyRead:
+    _ensure_schema(session)
+    dataset = get_dataset_or_404(session, dataset_id)
+    return TriagePolicyRead(
+        dataset_id=dataset_id,
+        version=dataset.triage_policy_version,
+        **_policy_values(dataset).model_dump(),
+    )
+
+
+def update_triage_policy(
+    session: Session,
+    dataset_id: int,
+    payload: TriagePolicyValues,
+) -> TriagePolicyRead:
+    _ensure_schema(session)
+    dataset = get_dataset_or_404(session, dataset_id)
+    current = _policy_values(dataset)
+    if current == payload:
+        return get_triage_policy(session, dataset_id)
+    dataset.triage_policy_json = json.dumps(
+        payload.model_dump(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    dataset.triage_policy_version += 1
+    session.add(dataset)
+    bump_dataset_revision(session, dataset_id)
+    session.commit()
+    session.refresh(dataset)
+    return get_triage_policy(session, dataset_id)
+
+
+def _normalized_code(value: str | None) -> str:
+    if value:
+        code = re.sub(r"[^a-z0-9_-]+", "-", value.casefold()).strip("-_")
+        if code:
+            return code[:80]
+    return f"defect-{uuid4().hex[:10]}"
+
+
+def _validate_parent(
+    session: Session,
+    dataset_id: int,
+    parent_id: int | None,
+    *,
+    current_id: int | None = None,
+) -> DefectType | None:
+    if parent_id is None:
+        return None
+    if current_id is not None and parent_id == current_id:
+        raise TriageValidationError("缺陷类型不能以自身作为父类型。")
+    parent = session.get(DefectType, parent_id)
+    if parent is None or parent.dataset_id != dataset_id:
+        raise TriageValidationError("父缺陷类型不属于当前数据集。")
+    if not parent.is_active:
+        raise TriageValidationError("不能在已停用的缺陷类型下新增或移动子类型。")
+    if parent.parent_id is not None:
+        raise TriageValidationError("缺陷类型最多支持两级。")
+    return parent
+
+
+def list_defect_types(
+    session: Session,
+    dataset_id: int,
+    *,
+    include_inactive: bool = True,
+) -> list[DefectTypeRead]:
+    _ensure_schema(session)
+    get_dataset_or_404(session, dataset_id)
+    statement = select(DefectType).where(DefectType.dataset_id == dataset_id)
+    if not include_inactive:
+        statement = statement.where(DefectType.is_active.is_(True))
+    items = session.exec(statement.order_by(DefectType.parent_id, DefectType.name, DefectType.id)).all()
+    return [_defect_type_read(item) for item in items]
+
+
+def create_defect_type(
+    session: Session,
+    dataset_id: int,
+    payload: DefectTypeCreate,
+) -> DefectTypeRead:
+    _ensure_schema(session)
+    get_dataset_or_404(session, dataset_id)
+    _validate_parent(session, dataset_id, payload.parent_id)
+    duplicate_name = session.exec(
+        select(DefectType.id).where(
+            DefectType.dataset_id == dataset_id,
+            func.lower(DefectType.name) == payload.name.casefold(),
+        )
+    ).first()
+    if duplicate_name is not None:
+        raise TriageConflictError(f'缺陷类型“{payload.name}”已存在。')
+    item = DefectType(
+        dataset_id=dataset_id,
+        name=payload.name,
+        code=_normalized_code(payload.code or payload.name),
+        parent_id=payload.parent_id,
+        description=payload.description,
+    )
+    session.add(item)
+    try:
+        session.flush()
+        bump_dataset_revision(session, dataset_id)
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise TriageConflictError("缺陷类型名称或目录代码已存在。") from exc
+    session.refresh(item)
+    return _defect_type_read(item)
+
+
+def update_defect_type(
+    session: Session,
+    dataset_id: int,
+    defect_type_id: int,
+    payload: DefectTypeUpdate,
+) -> DefectTypeRead:
+    _ensure_schema(session)
+    get_dataset_or_404(session, dataset_id)
+    item = session.get(DefectType, defect_type_id)
+    if item is None or item.dataset_id != dataset_id:
+        raise TriageNotFoundError("缺陷类型不存在。")
+    updates = payload.model_dump(exclude_unset=True)
+    if "name" in updates:
+        duplicate_name = session.exec(
+            select(DefectType.id).where(
+                DefectType.dataset_id == dataset_id,
+                DefectType.id != defect_type_id,
+                func.lower(DefectType.name) == updates["name"].casefold(),
+            )
+        ).first()
+        if duplicate_name is not None:
+            raise TriageConflictError(f'缺陷类型“{updates["name"]}”已存在。')
+    if "parent_id" in updates:
+        _validate_parent(
+            session,
+            dataset_id,
+            updates["parent_id"],
+            current_id=defect_type_id,
+        )
+        children_exist = session.exec(
+            select(DefectType.id).where(DefectType.parent_id == defect_type_id).limit(1)
+        ).first()
+        if children_exist is not None and updates["parent_id"] is not None:
+            raise TriageValidationError("已有子类型的缺陷类型不能再改为二级类型。")
+    changed = False
+    for key, value in updates.items():
+        normalized = _normalized_code(value) if key == "code" else value
+        if getattr(item, key) != normalized:
+            setattr(item, key, normalized)
+            changed = True
+    if not changed:
+        return _defect_type_read(item)
+    item.updated_at = utc_now().astimezone(timezone.utc)
+    session.add(item)
+    try:
+        bump_dataset_revision(session, dataset_id)
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise TriageConflictError("缺陷类型名称或目录代码已存在。") from exc
+    session.refresh(item)
+    return _defect_type_read(item)
+
+
+def _selected_defect_types(session: Session, sample_id: int) -> list[DefectType]:
+    return list(
+        session.exec(
+            select(DefectType)
+            .join(SampleDefectLink, SampleDefectLink.defect_type_id == DefectType.id)
+            .where(SampleDefectLink.sample_id == sample_id)
+            .order_by(DefectType.parent_id, DefectType.name, DefectType.id)
+        ).all()
+    )
+
+
+def defect_types_by_sample(
+    session: Session,
+    sample_ids: list[int],
+) -> dict[int, list[DefectType]]:
+    if not sample_ids:
+        return {}
+    rows = session.exec(
+        select(SampleDefectLink.sample_id, DefectType)
+        .join(DefectType, DefectType.id == SampleDefectLink.defect_type_id)
+        .where(SampleDefectLink.sample_id.in_(sample_ids))
+        .order_by(SampleDefectLink.sample_id, DefectType.parent_id, DefectType.name)
+    ).all()
+    result: dict[int, list[DefectType]] = {}
+    for sample_id, defect_type in rows:
+        result.setdefault(int(sample_id), []).append(defect_type)
+    return result
+
+
+def get_sample_triage(session: Session, sample_id: int) -> SampleTriageRead:
+    _ensure_schema(session)
+    sample = get_sample_or_404(session, sample_id)
+    dataset = get_dataset_or_404(session, sample.dataset_id)
+    defect_types = _selected_defect_types(session, sample_id)
+    outdated = sample.triage_status != "untriaged" and (
+        sample.triaged_file_hash != sample.file_hash
+        or sample.triage_policy_version != dataset.triage_policy_version
+    )
+    return SampleTriageRead(
+        sample_id=sample.id or 0,
+        dataset_id=sample.dataset_id,
+        file_hash=sample.file_hash,
+        triage_status=sample.triage_status,
+        ok_grade=sample.ok_grade,
+        defect_severity=sample.defect_severity,
+        defect_types=[_defect_type_read(item) for item in defect_types],
+        primary_defect_type_id=sample.primary_defect_type_id,
+        triage_note=sample.triage_note,
+        triage_version=sample.triage_version,
+        triaged_at=sample.triaged_at,
+        triage_policy_version=sample.triage_policy_version,
+        current_policy_version=dataset.triage_policy_version,
+        outdated=outdated,
+    )
+
+
+def replace_sample_triage(
+    session: Session,
+    sample_id: int,
+    payload: SampleTriageWrite,
+) -> SampleTriageRead:
+    _ensure_schema(session)
+    sample = get_sample_or_404(session, sample_id)
+    if sample.file_type != "image":
+        raise TriageValidationError("快速分拣只支持图片样本。")
+    dataset = get_dataset_or_404(session, sample.dataset_id)
+    if sample.triage_version != payload.expected_version:
+        raise TriageConflictError("分拣结果已被修改，请刷新后重试。")
+    if sample.file_hash != payload.expected_file_hash:
+        raise TriageConflictError("样本内容已变化，请查看最新图片后重新判定。")
+
+    selected: list[DefectType] = []
+    if payload.defect_type_ids:
+        selected = list(
+            session.exec(
+                select(DefectType).where(DefectType.id.in_(payload.defect_type_ids))
+            ).all()
+        )
+        if len(selected) != len(payload.defect_type_ids) or any(
+            item.dataset_id != sample.dataset_id or not item.is_active for item in selected
+        ):
+            raise TriageValidationError("所选缺陷类型不存在、已停用或不属于当前数据集。")
+
+    current_ids = sorted(item.id or 0 for item in _selected_defect_types(session, sample_id))
+    unchanged = (
+        sample.triage_status == payload.triage_status
+        and sample.ok_grade == payload.ok_grade
+        and sample.defect_severity == payload.defect_severity
+        and sample.primary_defect_type_id == payload.primary_defect_type_id
+        and sample.triage_note == payload.triage_note
+        and current_ids == payload.defect_type_ids
+        and (
+            payload.triage_status == "untriaged"
+            or (
+                sample.triaged_file_hash == sample.file_hash
+                and sample.triage_policy_version == dataset.triage_policy_version
+            )
+        )
+    )
+    if unchanged:
+        return get_sample_triage(session, sample_id)
+
+    now = utc_now().astimezone(timezone.utc)
+    is_reset = payload.triage_status == "untriaged"
+    result = session.connection().execute(
+        update(Sample)
+        .where(
+            Sample.id == sample_id,
+            Sample.triage_version == payload.expected_version,
+            Sample.file_hash == payload.expected_file_hash,
+        )
+        .values(
+            triage_status=payload.triage_status,
+            ok_grade=payload.ok_grade,
+            defect_severity=payload.defect_severity,
+            primary_defect_type_id=payload.primary_defect_type_id,
+            triage_note=payload.triage_note,
+            triage_version=Sample.triage_version + 1,
+            triaged_at=None if is_reset else now,
+            triage_policy_version=None if is_reset else dataset.triage_policy_version,
+            triaged_file_hash=None if is_reset else sample.file_hash,
+            updated_at=now,
+        )
+    )
+    if result.rowcount != 1:
+        session.rollback()
+        raise TriageConflictError("分拣结果已被修改，请刷新后重试。")
+    session.connection().execute(
+        delete(SampleDefectLink).where(SampleDefectLink.sample_id == sample_id)
+    )
+    for defect_type_id in payload.defect_type_ids:
+        session.add(
+            SampleDefectLink(sample_id=sample_id, defect_type_id=defect_type_id)
+        )
+    bump_dataset_revision(session, sample.dataset_id)
+    session.commit()
+    return get_sample_triage(session, sample_id)
+
+
+def _triage_filters(
+    statement,
+    dataset_id: int,
+    *,
+    search: str | None,
+    split: str | None,
+    triage_status: str | None,
+    ok_grade: str | None,
+    defect_severity: str | None,
+    defect_type_id: int | None,
+):
+    statement = statement.where(
+        Sample.dataset_id == dataset_id,
+        Sample.file_type == "image",
+        Sample.file_status == "normal",
+    )
+    if search:
+        pattern = f"%{search.strip().casefold()}%"
+        statement = statement.where(
+            or_(
+                func.lower(Sample.filename).like(pattern),
+                func.lower(Sample.relative_path).like(pattern),
+            )
+        )
+    if split:
+        statement = statement.where(
+            Sample.split.is_(None) if split == "unassigned" else Sample.split == split
+        )
+    if triage_status:
+        statement = statement.where(Sample.triage_status == triage_status)
+    if ok_grade:
+        statement = statement.where(Sample.ok_grade == ok_grade)
+    if defect_severity:
+        statement = statement.where(Sample.defect_severity == defect_severity)
+    if defect_type_id:
+        statement = statement.where(
+            exists(
+                select(SampleDefectLink.sample_id).where(
+                    SampleDefectLink.sample_id == Sample.id,
+                    SampleDefectLink.defect_type_id == defect_type_id,
+                )
+            )
+        )
+    return statement
+
+
+def get_triage_navigation(
+    session: Session,
+    dataset_id: int,
+    *,
+    sample_id: int | None = None,
+    queue_scope: TriageQueueScope = "untriaged",
+    search: str | None = None,
+    split: str | None = None,
+    triage_status: str | None = None,
+    ok_grade: str | None = None,
+    defect_severity: str | None = None,
+    defect_type_id: int | None = None,
+) -> TriageNavigationResponse:
+    _ensure_schema(session)
+    dataset = get_dataset_or_404(session, dataset_id)
+    effective_status = triage_status
+    effective_split = split
+    if queue_scope == "untriaged":
+        effective_status = "untriaged"
+    elif queue_scope == "pending":
+        effective_status = "pending"
+    elif queue_scope == "current_split" and not effective_split and sample_id is not None:
+        current = session.get(Sample, sample_id)
+        if current is not None and current.dataset_id == dataset_id:
+            effective_split = current.split or "unassigned"
+
+    def filtered(statement):
+        return _triage_filters(
+            statement,
+            dataset_id,
+            search=search if queue_scope == "current_filter" else None,
+            split=effective_split if queue_scope in {"current_filter", "current_split"} else None,
+            triage_status=effective_status,
+            ok_grade=ok_grade if queue_scope == "current_filter" else None,
+            defect_severity=defect_severity if queue_scope == "current_filter" else None,
+            defect_type_id=defect_type_id if queue_scope == "current_filter" else None,
+        )
+
+    total = int(
+        session.exec(select(func.count()).select_from(filtered(select(Sample.id)).subquery())).one()
+    )
+    current = None
+    if sample_id is not None:
+        current = session.exec(filtered(select(Sample)).where(Sample.id == sample_id)).first()
+    if current is None:
+        current = session.exec(
+            filtered(select(Sample)).order_by(func.lower(Sample.relative_path), Sample.id).limit(1)
+        ).first()
+    if current is None:
+        return TriageNavigationResponse(
+            total=total,
+            remaining=0,
+            queue_scope=queue_scope,
+        )
+
+    before = or_(
+        func.lower(Sample.relative_path) < current.relative_path.casefold(),
+        (
+            (func.lower(Sample.relative_path) == current.relative_path.casefold())
+            & (Sample.id < (current.id or 0))
+        ),
+    )
+    after = or_(
+        func.lower(Sample.relative_path) > current.relative_path.casefold(),
+        (
+            (func.lower(Sample.relative_path) == current.relative_path.casefold())
+            & (Sample.id > (current.id or 0))
+        ),
+    )
+    previous_id = session.exec(
+        filtered(select(Sample.id))
+        .where(before)
+        .order_by(func.lower(Sample.relative_path).desc(), Sample.id.desc())
+        .limit(1)
+    ).first()
+    next_id = session.exec(
+        filtered(select(Sample.id))
+        .where(after)
+        .order_by(func.lower(Sample.relative_path), Sample.id)
+        .limit(1)
+    ).first()
+    current_index = int(
+        session.exec(
+            select(func.count()).select_from(filtered(select(Sample.id)).where(before).subquery())
+        ).one()
+    )
+    ids = [item for item in (previous_id, current.id, next_id) if item is not None]
+    rows = session.exec(
+        select(Sample).where(Sample.id.in_(ids)).options(selectinload(Sample.tags))
+    ).all()
+    by_id = {item.id: item for item in rows}
+    return TriageNavigationResponse(
+        current_sample=to_sample_read(current, dataset.triage_policy_version),
+        previous_sample=(
+            to_sample_read(by_id[int(previous_id)], dataset.triage_policy_version)
+            if previous_id is not None
+            else None
+        ),
+        next_sample=(
+            to_sample_read(by_id[int(next_id)], dataset.triage_policy_version)
+            if next_id is not None
+            else None
+        ),
+        current_index=current_index,
+        total=total,
+        remaining=max(total - current_index - 1, 0),
+        queue_scope=queue_scope,
+    )
+
+
+def get_triage_stats(session: Session, dataset_id: int) -> TriageStats:
+    _ensure_schema(session)
+    dataset = get_dataset_or_404(session, dataset_id)
+    image_filter = (Sample.dataset_id == dataset_id, Sample.file_type == "image")
+    total_images = int(session.exec(select(func.count(Sample.id)).where(*image_filter)).one())
+
+    def group(expression, *, include_null: bool = False) -> dict[str, int]:
+        key = func.coalesce(expression, "ungraded") if include_null else expression
+        rows = session.exec(
+            select(key, func.count(Sample.id)).where(*image_filter).group_by(key)
+        ).all()
+        return {str(value): int(count) for value, count in rows if value is not None}
+
+    defect_rows = session.exec(
+        select(DefectType.name, func.count(func.distinct(SampleDefectLink.sample_id)))
+        .join(SampleDefectLink, SampleDefectLink.defect_type_id == DefectType.id)
+        .join(Sample, Sample.id == SampleDefectLink.sample_id)
+        .where(DefectType.dataset_id == dataset_id, Sample.file_type == "image")
+        .group_by(DefectType.id, DefectType.name)
+    ).all()
+    outdated = int(
+        session.exec(
+            select(func.count(Sample.id)).where(
+                *image_filter,
+                Sample.triage_status != "untriaged",
+                or_(
+                    Sample.triaged_file_hash.is_(None),
+                    Sample.triaged_file_hash != Sample.file_hash,
+                    Sample.triage_policy_version.is_(None),
+                    Sample.triage_policy_version != dataset.triage_policy_version,
+                ),
+            )
+        ).one()
+    )
+    return TriageStats(
+        dataset_id=dataset_id,
+        total_images=total_images,
+        by_status=group(Sample.triage_status),
+        by_ok_grade=group(Sample.ok_grade),
+        by_severity=group(Sample.defect_severity, include_null=True),
+        by_defect_type={name: int(count) for name, count in defect_rows},
+        outdated=outdated,
+    )
