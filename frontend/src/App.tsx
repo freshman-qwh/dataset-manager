@@ -5,6 +5,7 @@ import DatasetDetailPage from "./pages/DatasetDetailPage";
 import DatasetListPage from "./pages/DatasetListPage";
 import TriagePage from "./pages/TriagePage";
 import JobCenter from "./components/JobCenter";
+import PortableControls from "./components/PortableControls";
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <JobCenter />
+      <PortableControls />
     </>
   );
 }

@@ -212,6 +212,23 @@ def _remove_safe_sidecars(database_path: Path) -> None:
             sidecar_path.unlink()
 
 
+def recover_database_after_unclean_shutdown(database_path: Path) -> bool:
+    """Recover a SQLite WAL only after the launcher owns the process mutex.
+
+    Opening SQLite applies committed WAL records. A successful truncate
+    checkpoint and quick_check prove that no WAL data is discarded before
+    residual sidecar files are removed.
+    """
+    path = database_path.resolve()
+    if not path.exists() or not any(sidecar.exists() for sidecar in _sidecar_paths(path)):
+        return False
+    _ensure_database_is_offline(path, reject_sidecars=False)
+    _checkpoint_database(path)
+    _quick_check(path)
+    _remove_safe_sidecars(path)
+    return True
+
+
 def _cleanup_staging_files(staging_path: Path) -> None:
     for path in [staging_path, *_sidecar_paths(staging_path)]:
         try:

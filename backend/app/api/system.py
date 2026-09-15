@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlmodel import Session
 
 from app.core.config import get_settings
 from app.core.database import get_session
 from app.core.job_runtime import job_runner
+from app.core.portable import portable_controller
 from app.schemas.database_integrity import (
     DatabaseIntegrityReport,
     DatabaseRepairPreview,
@@ -22,6 +23,42 @@ from app.services import (
 
 
 router = APIRouter(prefix="/api/system", tags=["system"])
+
+
+@router.get("/portable-runtime")
+def portable_runtime() -> dict[str, str | int | bool | None]:
+    return portable_controller.describe()
+
+
+@router.post("/portable-runtime/open-data-directory", status_code=status.HTTP_204_NO_CONTENT)
+def open_portable_data_directory(
+    control_token: str | None = Header(default=None, alias="X-Dataset-Manager-Control-Token"),
+) -> Response:
+    try:
+        portable_controller.open_data_directory(control_token)
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="无法打开应用数据目录",
+        ) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/portable-runtime/shutdown", status_code=status.HTTP_202_ACCEPTED)
+def shutdown_portable_runtime(
+    control_token: str | None = Header(default=None, alias="X-Dataset-Manager-Control-Token"),
+) -> dict[str, str]:
+    try:
+        portable_controller.request_shutdown(control_token)
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return {"status": "shutting_down"}
 
 
 @router.post(

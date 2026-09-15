@@ -61,8 +61,12 @@ def _positive_int_env(name: str, default: int) -> int:
 @lru_cache
 def get_settings() -> Settings:
     root = _project_root()
-    load_dotenv(root / ".env")
-    load_dotenv(_backend_root() / ".env", override=True)
+    # A packaged launcher owns every path explicitly. Ignoring nearby .env files
+    # prevents an upgraded portable build from accidentally writing into its
+    # extracted program directory or a developer checkout.
+    if os.getenv("DATASET_MANAGER_PORTABLE") != "1":
+        load_dotenv(root / ".env")
+        load_dotenv(_backend_root() / ".env", override=True)
 
     storage_root = _resolve_local_path(
         os.getenv("STORAGE_ROOT"),

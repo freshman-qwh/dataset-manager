@@ -192,3 +192,29 @@ def test_upgrade_refuses_database_with_sidecar(tmp_path: Path) -> None:
         migrations.upgrade_database(database_path)
 
     assert migrations.current_revision(database_path) is None
+
+
+def test_unclean_shutdown_recovery_checkpoints_committed_wal(tmp_path: Path) -> None:
+    database_path = tmp_path / "crashed.db"
+    with closing(sqlite3.connect(database_path)) as connection:
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA wal_autocheckpoint=0")
+        connection.execute("CREATE TABLE retained (value TEXT NOT NULL)")
+        connection.execute("INSERT INTO retained VALUES ('keep me')")
+        connection.commit()
+        # A second reader keeps the sidecars present, matching a killed process.
+        reader = sqlite3.connect(database_path)
+        assert Path(f"{database_path}-wal").exists()
+        reader.close()
+
+    # If SQLite cleaned the files while closing, recreating empty remnants still
+    # exercises the stale-runtime path without inventing uncommitted data.
+    Path(f"{database_path}-wal").touch(exist_ok=True)
+    Path(f"{database_path}-shm").touch(exist_ok=True)
+    assert migrations.recover_database_after_unclean_shutdown(database_path) is True
+
+    with closing(sqlite3.connect(database_path)) as connection:
+        assert connection.execute("SELECT value FROM retained").fetchone()[0] == "keep me"
+        assert connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+    assert not Path(f"{database_path}-wal").exists()
+    assert not Path(f"{database_path}-shm").exists()

@@ -19,6 +19,8 @@ from app.api import (
 from app.core.config import get_settings
 from app.core.database import init_db
 from app.core.job_runtime import job_runner
+from app.core.portable import portable_controller
+from app.core.static_frontend import install_frontend
 
 
 @asynccontextmanager
@@ -34,7 +36,7 @@ async def lifespan(app: FastAPI):
 
 settings = get_settings()
 
-app = FastAPI(title=settings.app_name, version="0.4.1", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="0.5.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -58,5 +60,12 @@ app.include_router(triage_directory_mapping.router)
 
 
 @app.get("/health")
-def health_check() -> dict[str, str]:
-    return {"status": "ok"}
+def health_check() -> dict[str, str | bool]:
+    return {
+        "status": "ok",
+        "application": "dataset-manager",
+        "portable": bool(portable_controller.describe()["enabled"]),
+    }
+
+
+install_frontend(app)

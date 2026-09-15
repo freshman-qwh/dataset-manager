@@ -1,0 +1,25 @@
+Dataset Manager Windows x64 便携版
+===================================
+
+使用方法
+1. 将 ZIP 完整解压到任意文件夹，可使用中文和空格路径。
+2. 双击 DatasetManager\DatasetManager.exe。
+3. 程序就绪后会自动打开默认浏览器。若已在运行，再次双击只会打开现有页面。
+4. 页面左下角“便携版”菜单可打开数据目录或安全退出。
+
+数据位置
+数据库、配置、日志、缓存和导出文件统一保存在：
+%LOCALAPPDATA%\DatasetManager
+
+升级
+先在页面中安全退出，再用新版 DatasetManager 文件夹覆盖旧程序文件。
+请勿删除 %LOCALAPPDATA%\DatasetManager；新版首次启动会在需要时先备份并升级数据库。
+
+数据安全
+程序只登记用户导入文件的路径并读取内容，不会因为启动、升级或卸载而复制、移动、重命名或删除原始数据。
+删除程序时只删除解压出的 DatasetManager 程序文件夹。应用数据需由用户另行决定是否保留。
+
+故障排查
+启动日志：%LOCALAPPDATA%\DatasetManager\logs\dataset-manager.log
+若浏览器没有自动打开，可查看：%LOCALAPPDATA%\DatasetManager\config\runtime.json
+并访问其中的 url。

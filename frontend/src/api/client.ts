@@ -101,12 +101,38 @@ import type {
 } from "../types/triageDirectoryMapping";
 
 export const API_BASE_URL =
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8000/api";
+  (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api";
 
 const client = axios.create({
   baseURL: API_BASE_URL,
   timeout: 120000
 });
+
+export interface PortableRuntime {
+  enabled: boolean;
+  data_root: string | null;
+  url: string | null;
+  port: number | null;
+  pid: number | null;
+  control_token: string | null;
+}
+
+export async function getPortableRuntime(): Promise<PortableRuntime> {
+  const { data } = await client.get<PortableRuntime>("/system/portable-runtime");
+  return data;
+}
+
+export async function openPortableDataDirectory(controlToken: string): Promise<void> {
+  await client.post("/system/portable-runtime/open-data-directory", null, {
+    headers: { "X-Dataset-Manager-Control-Token": controlToken }
+  });
+}
+
+export async function shutdownPortableRuntime(controlToken: string): Promise<void> {
+  await client.post("/system/portable-runtime/shutdown", null, {
+    headers: { "X-Dataset-Manager-Control-Token": controlToken }
+  });
+}
 
 export async function listDatasets(): Promise<Dataset[]> {
   const { data } = await client.get<Dataset[]>("/datasets");
