@@ -7,6 +7,9 @@ from app.core.workflow import DefectSeverity, OkGrade, TriageStatus
 from app.schemas.sample import SampleRead
 
 
+NgGrouping = Literal["none", "defect_type", "severity", "defect_type_and_severity"]
+
+
 class DefectTypeCreate(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     code: str | None = Field(default=None, max_length=80)
@@ -57,6 +60,8 @@ class DefectTypeRead(BaseModel):
 
 
 class TriagePolicyValues(BaseModel):
+    split_ok: bool = True
+    ng_grouping: NgGrouping = "defect_type_and_severity"
     instructions: str = Field(default="", max_length=4000)
     clear_ok_definition: str = Field(
         default="无可见缺陷，可作为纯正常样本候选。",
@@ -106,8 +111,6 @@ class SampleTriageWrite(BaseModel):
 
     @model_validator(mode="after")
     def validate_semantics(self) -> "SampleTriageWrite":
-        if self.triage_status == "ok" and self.ok_grade is None:
-            raise ValueError("OK samples require an ok_grade")
         if self.triage_status != "ok" and self.ok_grade is not None:
             raise ValueError("Only OK samples may have an ok_grade")
         if self.ok_grade == "clear" and (
@@ -166,4 +169,5 @@ class TriageStats(BaseModel):
     by_ok_grade: dict[str, int]
     by_severity: dict[str, int]
     by_defect_type: dict[str, int]
+    by_export_bucket: dict[str, int]
     outdated: int

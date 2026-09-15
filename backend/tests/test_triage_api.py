@@ -7,6 +7,9 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app.core.database import get_session
 from app.main import app
+from app.models.defect_type import DefectType
+from app.schemas.triage import TriagePolicyValues
+from app.services.triage_service import configured_export_bucket
 
 
 PNG_1X1 = base64.b64decode(
@@ -280,3 +283,199 @@ def test_triage_rejects_cross_dataset_or_inactive_defect_types(tmp_path: Path) -
         assert rejected_inactive.status_code == 422
 
     app.dependency_overrides.clear()
+
+
+def test_triage_hierarchy_configuration_controls_validation_filters_and_export(
+    tmp_path: Path,
+) -> None:
+    with make_client() as client:
+        dataset, samples = create_image_dataset(client, tmp_path)
+        dataset_id = dataset["id"]
+        scratch = client.post(
+            f"/api/datasets/{dataset_id}/defect-types",
+            json={"name": "划痕", "code": "scratch"},
+        ).json()
+
+        policy = client.get(f"/api/datasets/{dataset_id}/triage-policy").json()
+        assert policy["split_ok"] is True
+        assert policy["ng_grouping"] == "defect_type_and_severity"
+
+        clear = client.put(
+            f"/api/samples/{samples['a.png']['id']}/triage",
+            json=triage_payload(
+                samples["a.png"],
+                triage_status="ok",
+                ok_grade="clear",
+            ),
+        )
+        assert clear.status_code == 200
+        detailed_ng = client.put(
+            f"/api/samples/{samples['b.png']['id']}/triage",
+            json=triage_payload(
+                samples["b.png"],
+                triage_status="ng",
+                defect_type_ids=[scratch["id"]],
+                primary_defect_type_id=scratch["id"],
+                defect_severity="mild",
+            ),
+        )
+        assert detailed_ng.status_code == 200
+
+        configured = client.put(
+            f"/api/datasets/{dataset_id}/triage-policy",
+            json={
+                **policy,
+                "split_ok": False,
+                "ng_grouping": "defect_type",
+            },
+        )
+        assert configured.status_code == 200
+        assert configured.json()["version"] == policy["version"] + 1
+
+        existing = client.get(
+            f"/api/samples/{samples['b.png']['id']}/triage"
+        ).json()
+        assert existing["defect_severity"] == "mild"
+        assert existing["defect_types"][0]["code"] == "scratch"
+        assert existing["outdated"] is True
+
+        graded_ok = client.put(
+            f"/api/samples/{samples['c.png']['id']}/triage",
+            json=triage_payload(
+                samples["c.png"],
+                triage_status="ok",
+                ok_grade="clear",
+            ),
+        )
+        assert graded_ok.status_code == 422
+        unified_ok = client.put(
+            f"/api/samples/{samples['c.png']['id']}/triage",
+            json=triage_payload(samples["c.png"], triage_status="ok"),
+        )
+        assert unified_ok.status_code == 200
+        assert unified_ok.json()["ok_grade"] is None
+
+        severity_not_enabled = client.put(
+            f"/api/samples/{samples['b.png']['id']}/triage",
+            json={
+                **triage_payload(
+                    samples["b.png"],
+                    triage_status="ng",
+                    defect_type_ids=[scratch["id"]],
+                    primary_defect_type_id=scratch["id"],
+                    defect_severity="severe",
+                ),
+                "expected_version": detailed_ng.json()["triage_version"],
+            },
+        )
+        assert severity_not_enabled.status_code == 422
+        category_only = client.put(
+            f"/api/samples/{samples['b.png']['id']}/triage",
+            json={
+                **triage_payload(
+                    samples["b.png"],
+                    triage_status="ng",
+                    defect_type_ids=[scratch["id"]],
+                    primary_defect_type_id=scratch["id"],
+                ),
+                "expected_version": detailed_ng.json()["triage_version"],
+            },
+        )
+        assert category_only.status_code == 200
+
+        assert client.get(
+            f"/api/datasets/{dataset_id}/samples",
+            params={"ok_grade": "clear"},
+        ).status_code == 422
+        assert client.get(
+            f"/api/datasets/{dataset_id}/samples",
+            params={"defect_severity": "mild"},
+        ).status_code == 422
+        category_filter = client.get(
+            f"/api/datasets/{dataset_id}/samples",
+            params={"defect_type_id": scratch["id"]},
+        )
+        assert category_filter.status_code == 200
+        assert category_filter.json()["total"] == 1
+
+        navigation_filter = client.get(
+            f"/api/datasets/{dataset_id}/triage/navigation",
+            params={
+                "queue_scope": "current_filter",
+                "defect_severity": "mild",
+            },
+        )
+        assert navigation_filter.status_code == 422
+
+        stats = client.get(f"/api/datasets/{dataset_id}/triage/stats").json()
+        assert stats["by_export_bucket"] == {"ng/scratch": 1, "ok": 2}
+        manifest = client.get(f"/api/datasets/{dataset_id}/export-manifest").json()
+        assert manifest["dataset"]["triage_policy"]["split_ok"] is False
+        by_filename = {item["filename"]: item for item in manifest["samples"]}
+        assert by_filename["a.png"]["triage"]["export_bucket"] == "ok"
+        assert by_filename["b.png"]["triage"]["export_bucket"] == "ng/scratch"
+
+    app.dependency_overrides.clear()
+
+
+def test_configured_export_bucket_covers_every_hierarchy_and_legacy_values() -> None:
+    scratch = DefectType(id=7, dataset_id=1, name="划痕", code="scratch")
+    dent = DefectType(id=8, dataset_id=1, name="凹陷", code="dent")
+
+    legacy_policy = TriagePolicyValues.model_validate(
+        {"instructions": "旧版策略没有层级字段"}
+    )
+    assert legacy_policy.split_ok is True
+    assert legacy_policy.ng_grouping == "defect_type_and_severity"
+
+    base = {
+        "triage_status": "ng",
+        "ok_grade": None,
+        "defect_severity": "mild",
+        "defect_types": [scratch],
+        "primary_defect_type_id": scratch.id,
+    }
+    assert configured_export_bucket(
+        legacy_policy.model_copy(update={"ng_grouping": "none"}), **base
+    ) == "ng"
+    assert configured_export_bucket(
+        legacy_policy.model_copy(update={"ng_grouping": "defect_type"}), **base
+    ) == "ng/scratch"
+    assert configured_export_bucket(
+        legacy_policy.model_copy(update={"ng_grouping": "severity"}), **base
+    ) == "ng/mild"
+    assert configured_export_bucket(legacy_policy, **base) == "ng/scratch/mild"
+    assert configured_export_bucket(
+        legacy_policy,
+        **{
+            **base,
+            "defect_types": [scratch, dent],
+            "primary_defect_type_id": None,
+            "defect_severity": None,
+        },
+    ) == "ng/multi_defect/ungraded"
+    assert configured_export_bucket(
+        legacy_policy,
+        **{
+            **base,
+            "defect_types": [],
+            "primary_defect_type_id": None,
+            "defect_severity": None,
+        },
+    ) == "ng/unknown/ungraded"
+    assert configured_export_bucket(
+        legacy_policy,
+        triage_status="ok",
+        ok_grade=None,
+        defect_severity=None,
+        defect_types=[],
+        primary_defect_type_id=None,
+    ) == "ok/ungraded"
+    assert configured_export_bucket(
+        legacy_policy.model_copy(update={"split_ok": False}),
+        triage_status="ok",
+        ok_grade="clear",
+        defect_severity=None,
+        defect_types=[],
+        primary_defect_type_id=None,
+    ) == "ok"

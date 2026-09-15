@@ -4,6 +4,7 @@ export type TriageStatus = "untriaged" | "pending" | "ok" | "ng";
 export type OkGrade = "clear" | "borderline";
 export type DefectSeverity = "mild" | "moderate" | "severe";
 export type TriageQueueScope = "untriaged" | "pending" | "current_filter" | "current_split";
+export type NgGrouping = "none" | "defect_type" | "severity" | "defect_type_and_severity";
 
 export interface DefectType {
   id: number;
@@ -25,6 +26,8 @@ export interface DefectTypeCreate {
 }
 
 export interface TriagePolicyValues {
+  split_ok: boolean;
+  ng_grouping: NgGrouping;
   instructions: string;
   clear_ok_definition: string;
   borderline_ok_definition: string;
@@ -83,5 +86,6 @@ export interface TriageStats {
   by_ok_grade: Record<string, number>;
   by_severity: Record<string, number>;
   by_defect_type: Record<string, number>;
+  by_export_bucket: Record<string, number>;
   outdated: number;
 }

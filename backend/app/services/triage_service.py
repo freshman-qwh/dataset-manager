@@ -5,7 +5,7 @@ import re
 from datetime import timezone
 from uuid import uuid4
 
-from sqlalchemy import delete, exists, func, inspect, or_, update
+from sqlalchemy import String, case, cast, delete, exists, func, inspect, literal, or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
@@ -89,6 +89,95 @@ def _policy_values(dataset: Dataset) -> TriagePolicyValues:
         return TriagePolicyValues.model_validate_json(dataset.triage_policy_json)
     except (ValueError, TypeError):
         return _default_policy()
+
+
+def configured_export_bucket(
+    policy: TriagePolicyValues,
+    *,
+    triage_status: str,
+    ok_grade: str | None,
+    defect_severity: str | None,
+    defect_types: list[DefectType],
+    primary_defect_type_id: int | None,
+) -> str | None:
+    """Return the canonical relative export directory for one triage result."""
+    if triage_status == "ok":
+        if not policy.split_ok:
+            return "ok"
+        return f"ok/{ok_grade or 'ungraded'}"
+    if triage_status != "ng":
+        return None
+
+    selected = list(defect_types)
+    primary = next(
+        (item for item in selected if item.id == primary_defect_type_id),
+        None,
+    )
+    if primary is not None:
+        defect_bucket = primary.code
+    elif len(selected) == 1:
+        defect_bucket = selected[0].code
+    elif len(selected) > 1:
+        defect_bucket = "multi_defect"
+    else:
+        defect_bucket = "unknown"
+    severity_bucket = defect_severity or "ungraded"
+
+    if policy.ng_grouping == "none":
+        return "ng"
+    if policy.ng_grouping == "defect_type":
+        return f"ng/{defect_bucket}"
+    if policy.ng_grouping == "severity":
+        return f"ng/{severity_bucket}"
+    return f"ng/{defect_bucket}/{severity_bucket}"
+
+
+def validate_triage_filters(
+    session: Session,
+    dataset_id: int,
+    *,
+    ok_grade: str | None = None,
+    defect_severity: str | None = None,
+    defect_type_id: int | None = None,
+) -> None:
+    dataset = get_dataset_or_404(session, dataset_id)
+    policy = _policy_values(dataset)
+    if ok_grade is not None and not policy.split_ok:
+        raise TriageValidationError("当前分拣层级未细分 OK，不能按 OK 等级筛选。")
+    if defect_type_id is not None and policy.ng_grouping not in {
+        "defect_type",
+        "defect_type_and_severity",
+    }:
+        raise TriageValidationError("当前 NG 分拣层级未启用缺陷类别筛选。")
+    if defect_severity is not None and policy.ng_grouping not in {
+        "severity",
+        "defect_type_and_severity",
+    }:
+        raise TriageValidationError("当前 NG 分拣层级未启用缺陷程度筛选。")
+
+
+def _validate_triage_payload(
+    policy: TriagePolicyValues,
+    payload: SampleTriageWrite,
+) -> None:
+    has_defect_types = bool(payload.defect_type_ids or payload.primary_defect_type_id)
+    if payload.triage_status == "ok":
+        if policy.split_ok and payload.ok_grade is None:
+            raise TriageValidationError("当前分拣层级要求 OK 选择“完全”或“勉强”。")
+        if not policy.split_ok and payload.ok_grade is not None:
+            raise TriageValidationError("当前分拣层级使用统一 OK，不能提交 OK 等级。")
+        if not policy.split_ok and (has_defect_types or payload.defect_severity is not None):
+            raise TriageValidationError("统一 OK 不记录缺陷类别或程度。")
+        return
+    if payload.triage_status != "ng":
+        return
+
+    allows_type = policy.ng_grouping in {"defect_type", "defect_type_and_severity"}
+    allows_severity = policy.ng_grouping in {"severity", "defect_type_and_severity"}
+    if has_defect_types and not allows_type:
+        raise TriageValidationError("当前 NG 分拣层级未启用缺陷类别。")
+    if payload.defect_severity is not None and not allows_severity:
+        raise TriageValidationError("当前 NG 分拣层级未启用缺陷程度。")
 
 
 def get_triage_policy(session: Session, dataset_id: int) -> TriagePolicyRead:
@@ -321,6 +410,7 @@ def replace_sample_triage(
     if sample.file_type != "image":
         raise TriageValidationError("快速分拣只支持图片样本。")
     dataset = get_dataset_or_404(session, sample.dataset_id)
+    _validate_triage_payload(_policy_values(dataset), payload)
     if sample.triage_version != payload.expected_version:
         raise TriageConflictError("分拣结果已被修改，请刷新后重试。")
     if sample.file_hash != payload.expected_file_hash:
@@ -455,6 +545,13 @@ def get_triage_navigation(
 ) -> TriageNavigationResponse:
     _ensure_schema(session)
     dataset = get_dataset_or_404(session, dataset_id)
+    validate_triage_filters(
+        session,
+        dataset_id,
+        ok_grade=ok_grade if queue_scope == "current_filter" else None,
+        defect_severity=defect_severity if queue_scope == "current_filter" else None,
+        defect_type_id=defect_type_id if queue_scope == "current_filter" else None,
+    )
     effective_status = triage_status
     effective_split = split
     if queue_scope == "untriaged":
@@ -553,6 +650,7 @@ def get_triage_navigation(
 def get_triage_stats(session: Session, dataset_id: int) -> TriageStats:
     _ensure_schema(session)
     dataset = get_dataset_or_404(session, dataset_id)
+    policy = _policy_values(dataset)
     image_filter = (Sample.dataset_id == dataset_id, Sample.file_type == "image")
     total_images = int(session.exec(select(func.count(Sample.id)).where(*image_filter)).one())
 
@@ -584,6 +682,15 @@ def get_triage_stats(session: Session, dataset_id: int) -> TriageStats:
             )
         ).one()
     )
+    export_bucket = _export_bucket_expression(policy)
+    export_rows = session.exec(
+        select(export_bucket, func.count(Sample.id))
+        .where(
+            *image_filter,
+            Sample.triage_status.in_(("ok", "ng")),
+        )
+        .group_by(export_bucket)
+    ).all()
     return TriageStats(
         dataset_id=dataset_id,
         total_images=total_images,
@@ -591,5 +698,62 @@ def get_triage_stats(session: Session, dataset_id: int) -> TriageStats:
         by_ok_grade=group(Sample.ok_grade),
         by_severity=group(Sample.defect_severity, include_null=True),
         by_defect_type={name: int(count) for name, count in defect_rows},
+        by_export_bucket={
+            str(bucket): int(count)
+            for bucket, count in export_rows
+            if bucket is not None
+        },
         outdated=outdated,
+    )
+
+
+def _export_bucket_expression(policy: TriagePolicyValues):
+    link_count = (
+        select(func.count(SampleDefectLink.defect_type_id))
+        .where(SampleDefectLink.sample_id == Sample.id)
+        .correlate(Sample)
+        .scalar_subquery()
+    )
+    single_code = (
+        select(func.min(DefectType.code))
+        .join(SampleDefectLink, SampleDefectLink.defect_type_id == DefectType.id)
+        .where(SampleDefectLink.sample_id == Sample.id)
+        .correlate(Sample)
+        .scalar_subquery()
+    )
+    primary_code = (
+        select(DefectType.code)
+        .where(DefectType.id == Sample.primary_defect_type_id)
+        .correlate(Sample)
+        .scalar_subquery()
+    )
+    defect_bucket = case(
+        (primary_code.is_not(None), primary_code),
+        (link_count == 0, literal("unknown")),
+        (link_count == 1, single_code),
+        else_=literal("multi_defect"),
+    )
+    severity_bucket = func.coalesce(Sample.defect_severity, "ungraded")
+    ok_bucket = (
+        literal("ok/") + cast(func.coalesce(Sample.ok_grade, "ungraded"), String)
+        if policy.split_ok
+        else literal("ok")
+    )
+    if policy.ng_grouping == "none":
+        ng_bucket = literal("ng")
+    elif policy.ng_grouping == "defect_type":
+        ng_bucket = literal("ng/") + cast(defect_bucket, String)
+    elif policy.ng_grouping == "severity":
+        ng_bucket = literal("ng/") + cast(severity_bucket, String)
+    else:
+        ng_bucket = (
+            literal("ng/")
+            + cast(defect_bucket, String)
+            + literal("/")
+            + cast(severity_bucket, String)
+        )
+    return case(
+        (Sample.triage_status == "ok", ok_bucket),
+        (Sample.triage_status == "ng", ng_bucket),
+        else_=None,
     )

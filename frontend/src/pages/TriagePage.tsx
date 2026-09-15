@@ -9,6 +9,7 @@ import {
   Loader2,
   Plus,
   RotateCcw,
+  Settings2,
   ZoomIn,
   ZoomOut
 } from "lucide-react";
@@ -24,17 +25,20 @@ import {
   getTriagePolicy,
   getTriageStats,
   listDefectTypes,
-  replaceSampleTriage
+  replaceSampleTriage,
+  updateTriagePolicy
 } from "../api/client";
 import type { Dataset, Sample } from "../types/dataset";
 import type {
   DefectSeverity,
   DefectType,
+  NgGrouping,
   OkGrade,
   SampleTriage,
   SampleTriageWrite,
   TriageNavigation,
   TriagePolicy,
+  TriagePolicyValues,
   TriageQueueScope,
   TriageStats,
   TriageStatus
@@ -58,6 +62,13 @@ const SEVERITY_LABELS: Record<DefectSeverity, string> = {
   mild: "轻微",
   moderate: "中等",
   severe: "严重"
+};
+
+const NG_GROUPING_LABELS: Record<NgGrouping, { title: string; description: string }> = {
+  none: { title: "不细分", description: "所有 NG 进入同一目录" },
+  defect_type: { title: "按缺陷类别", description: "例如 ng/scratch；无类别进入 unknown" },
+  severity: { title: "按缺陷程度", description: "按轻微、中等、严重分目录" },
+  defect_type_and_severity: { title: "类别＋程度", description: "例如 ng/scratch/mild" }
 };
 
 interface TriageDraft {
@@ -146,6 +157,10 @@ export default function TriagePage() {
       ? requestedQueue
       : "untriaged";
   const queueSplit = searchParams.get("split") || undefined;
+  const filterStatus = (searchParams.get("status") || undefined) as TriageStatus | undefined;
+  const filterOkGrade = (searchParams.get("okGrade") || undefined) as OkGrade | undefined;
+  const filterSeverity = (searchParams.get("severity") || undefined) as DefectSeverity | undefined;
+  const filterDefectTypeId = Number(searchParams.get("defectType")) || undefined;
   const navigationSampleId = useMemo(() => {
     if (requestedSampleId) return requestedSampleId;
     try {
@@ -162,6 +177,9 @@ export default function TriagePage() {
 
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [policy, setPolicy] = useState<TriagePolicy | null>(null);
+  const [policyDraft, setPolicyDraft] = useState<TriagePolicyValues | null>(null);
+  const [policyPanelOpen, setPolicyPanelOpen] = useState(false);
+  const [policySaving, setPolicySaving] = useState(false);
   const [stats, setStats] = useState<TriageStats | null>(null);
   const [defectTypes, setDefectTypes] = useState<DefectType[]>([]);
   const [navigation, setNavigation] = useState<TriageNavigation | null>(null);
@@ -180,7 +198,7 @@ export default function TriagePage() {
   const [creatingDefect, setCreatingDefect] = useState(false);
   const requestIdRef = useRef(0);
   const savingRef = useRef(false);
-  const actionRef = useRef<(action: "clear" | "borderline" | "ng" | "pending") => void>();
+  const actionRef = useRef<(action: "ok" | "clear" | "borderline" | "ng" | "pending") => void>();
   const undoRef = useRef<() => void>();
 
   const currentSample = navigation?.current_sample ?? null;
@@ -192,6 +210,16 @@ export default function TriagePage() {
     () => activeDefectTypes.filter((item) => item.parent_id === null),
     [activeDefectTypes]
   );
+  const splitOk = policy?.split_ok ?? true;
+  const ngGrouping = policy?.ng_grouping ?? "defect_type_and_severity";
+  const ngUsesDefectType = ngGrouping === "defect_type" || ngGrouping === "defect_type_and_severity";
+  const ngUsesSeverity = ngGrouping === "severity" || ngGrouping === "defect_type_and_severity";
+  const showDefectTypes =
+    (draft.status === "ng" && ngUsesDefectType)
+    || (draft.status === "ok" && splitOk && draft.okGrade === "borderline");
+  const showDefectSeverity =
+    (draft.status === "ng" && ngUsesSeverity)
+    || (draft.status === "ok" && splitOk && draft.okGrade === "borderline");
   const progressDone = stats
     ? (stats.by_status.ok ?? 0) + (stats.by_status.ng ?? 0) + (stats.by_status.pending ?? 0)
     : 0;
@@ -237,6 +265,16 @@ export default function TriagePage() {
         if (cancelled) return;
         setDataset(datasetValue);
         setPolicy(policyValue);
+        setPolicyDraft({
+          split_ok: policyValue.split_ok,
+          ng_grouping: policyValue.ng_grouping,
+          instructions: policyValue.instructions,
+          clear_ok_definition: policyValue.clear_ok_definition,
+          borderline_ok_definition: policyValue.borderline_ok_definition,
+          mild_definition: policyValue.mild_definition,
+          moderate_definition: policyValue.moderate_definition,
+          severe_definition: policyValue.severe_definition
+        });
         setStats(statsValue);
         setDefectTypes(defectTypeValues);
       })
@@ -250,6 +288,7 @@ export default function TriagePage() {
 
   useEffect(() => {
     if (!Number.isInteger(datasetId) || datasetId <= 0) return;
+    if (!policy) return;
     const requestId = ++requestIdRef.current;
     setLoading(true);
     setError(null);
@@ -257,7 +296,11 @@ export default function TriagePage() {
       datasetId,
       sampleId: navigationSampleId,
       queueScope,
-      split: queueSplit
+      split: queueSplit,
+      triageStatus: filterStatus,
+      okGrade: splitOk ? filterOkGrade : undefined,
+      defectSeverity: ngUsesSeverity ? filterSeverity : undefined,
+      defectTypeId: ngUsesDefectType ? filterDefectTypeId : undefined
     })
       .then(async (navigationValue) => {
         if (requestId !== requestIdRef.current) return;
@@ -293,7 +336,43 @@ export default function TriagePage() {
       .finally(() => {
         if (requestId === requestIdRef.current) setLoading(false);
       });
-  }, [datasetId, navigationSampleId, queueScope, queueSplit, replaceSearchParams, requestedSampleId]);
+  }, [
+    datasetId,
+    filterDefectTypeId,
+    filterOkGrade,
+    filterSeverity,
+    filterStatus,
+    navigationSampleId,
+    ngUsesDefectType,
+    ngUsesSeverity,
+    policy,
+    queueScope,
+    queueSplit,
+    replaceSearchParams,
+    requestedSampleId,
+    splitOk
+  ]);
+
+  useEffect(() => {
+    if (!policy) return;
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      let changed = false;
+      if (!splitOk && next.has("okGrade")) {
+        next.delete("okGrade");
+        changed = true;
+      }
+      if (!ngUsesDefectType && next.has("defectType")) {
+        next.delete("defectType");
+        changed = true;
+      }
+      if (!ngUsesSeverity && next.has("severity")) {
+        next.delete("severity");
+        changed = true;
+      }
+      return changed ? next : current;
+    }, { replace: true });
+  }, [ngUsesDefectType, ngUsesSeverity, policy, setSearchParams, splitOk]);
 
   useEffect(() => {
     const nextSample = navigation?.next_sample;
@@ -339,14 +418,19 @@ export default function TriagePage() {
     }
   }, [advanceAfterSave, currentSample, datasetId, navigation?.next_sample?.id, saving, triage]);
 
-  const quickAction = useCallback((action: "clear" | "borderline" | "ng" | "pending") => {
+  const quickAction = useCallback((action: "ok" | "clear" | "borderline" | "ng" | "pending") => {
     const common = {
       defect_type_ids: [] as number[],
       primary_defect_type_id: null,
       triage_note: null,
       defect_severity: null
     };
-    if (action === "clear") {
+    if (action === "ok") {
+      void savePayload(
+        { ...common, triage_status: "ok", ok_grade: null },
+        { advance: true, message: "已标记为 OK。" }
+      );
+    } else if (action === "clear") {
       void savePayload(
         { ...common, triage_status: "ok", ok_grade: "clear" },
         { advance: true, message: "已标记为完全 OK。" }
@@ -374,10 +458,34 @@ export default function TriagePage() {
     let nextDraft = draft;
     if (draft.status === "untriaged") {
       nextDraft = blankDraft();
+    } else if (draft.status === "ok" && !splitOk) {
+      nextDraft = {
+        ...draft,
+        okGrade: null,
+        severity: null,
+        defectTypeIds: [],
+        primaryDefectTypeId: null
+      };
     } else if (draft.status === "ok" && draft.okGrade === "clear") {
       nextDraft = { ...draft, severity: null, defectTypeIds: [], primaryDefectTypeId: null };
+    } else if (draft.status === "ng") {
+      nextDraft = {
+        ...draft,
+        okGrade: null,
+        severity: ngUsesSeverity ? draft.severity : null,
+        defectTypeIds: ngUsesDefectType ? draft.defectTypeIds : [],
+        primaryDefectTypeId: ngUsesDefectType ? draft.primaryDefectTypeId : null
+      };
+    } else if (draft.status === "pending") {
+      nextDraft = {
+        ...draft,
+        okGrade: null,
+        severity: null,
+        defectTypeIds: [],
+        primaryDefectTypeId: null
+      };
     }
-    if (nextDraft.status === "ok" && !nextDraft.okGrade) {
+    if (nextDraft.status === "ok" && splitOk && !nextDraft.okGrade) {
       setError("请选择完全 OK 或勉强 OK。");
       return;
     }
@@ -392,7 +500,7 @@ export default function TriagePage() {
       },
       { advance: true, message: "分拣结果与缺陷细节已保存。" }
     );
-  }, [draft, savePayload]);
+  }, [draft, ngUsesDefectType, ngUsesSeverity, savePayload, splitOk]);
 
   const undoLast = useCallback(async () => {
     if (!undoRecord || savingRef.current) return;
@@ -427,21 +535,29 @@ export default function TriagePage() {
       }
       if (savingRef.current || loading || !imageReady || mode !== "quick") return;
       const actions = actionRef.current;
-      if (event.key === "1") actions?.("clear");
-      else if (event.key === "2") actions?.("borderline");
-      else if (event.key === "3") actions?.("ng");
-      else if (event.key === "4") actions?.("pending");
-      else if (event.key === " " && navigation?.next_sample) {
+      if (splitOk) {
+        if (event.key === "1") actions?.("clear");
+        else if (event.key === "2") actions?.("borderline");
+        else if (event.key === "3") actions?.("ng");
+        else if (event.key === "4") actions?.("pending");
+        else if (event.key !== " ") return;
+      } else {
+        if (event.key === "1") actions?.("ok");
+        else if (event.key === "2") actions?.("ng");
+        else if (event.key === "3") actions?.("pending");
+        else if (event.key !== " ") return;
+      }
+      if (event.key === " " && navigation?.next_sample) {
         event.preventDefault();
         replaceSearchParams({ sample: navigation.next_sample.id });
-      } else {
+      } else if (event.key === " ") {
         return;
       }
       event.preventDefault();
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [imageReady, loading, mode, navigation?.next_sample, replaceSearchParams]);
+  }, [imageReady, loading, mode, navigation?.next_sample, replaceSearchParams, splitOk]);
 
   function toggleDefectType(id: number) {
     setDraft((current) => {
@@ -484,6 +600,60 @@ export default function TriagePage() {
     }
   }
 
+  function setTriageFilter(name: string, value: string) {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (value) next.set(name, value);
+      else next.delete(name);
+      next.delete("sample");
+      return next;
+    }, { replace: true });
+  }
+
+  async function savePolicy() {
+    if (!policyDraft || policySaving) return;
+    setPolicySaving(true);
+    setError(null);
+    try {
+      const saved = await updateTriagePolicy(datasetId, policyDraft);
+      setPolicy(saved);
+      setPolicyDraft({
+        split_ok: saved.split_ok,
+        ng_grouping: saved.ng_grouping,
+        instructions: saved.instructions,
+        clear_ok_definition: saved.clear_ok_definition,
+        borderline_ok_definition: saved.borderline_ok_definition,
+        mild_definition: saved.mild_definition,
+        moderate_definition: saved.moderate_definition,
+        severe_definition: saved.severe_definition
+      });
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        if (!saved.split_ok) next.delete("okGrade");
+        if (saved.ng_grouping !== "defect_type" && saved.ng_grouping !== "defect_type_and_severity") {
+          next.delete("defectType");
+        }
+        if (saved.ng_grouping !== "severity" && saved.ng_grouping !== "defect_type_and_severity") {
+          next.delete("severity");
+        }
+        return next;
+      }, { replace: true });
+      const statsValue = await getTriageStats(datasetId);
+      setStats(statsValue);
+      if (currentSample) {
+        const triageValue = await getSampleTriage(currentSample.id);
+        setTriage(triageValue);
+        setDraft(draftFromTriage(triageValue));
+      }
+      setNotice("分拣层级已更新，已有判定保留并按新规则标记待复核。");
+      setPolicyPanelOpen(false);
+    } catch (saveError) {
+      setError(errorMessage(saveError));
+    } finally {
+      setPolicySaving(false);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-canvas text-ink">
       <header className="border-b border-line bg-white/95 backdrop-blur">
@@ -502,6 +672,13 @@ export default function TriagePage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPolicyPanelOpen((value) => !value)}
+              className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <Settings2 size={16} /> 分拣层级
+            </button>
             <button
               type="button"
               onClick={() => void undoLast()}
@@ -534,19 +711,118 @@ export default function TriagePage() {
       </header>
 
       <section className="mx-auto max-w-[1600px] px-5 py-4">
+        {policyPanelOpen && policyDraft && (
+          <section className="mb-4 rounded-2xl border border-line bg-white p-5 shadow-sm" aria-labelledby="triage-policy-heading">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 id="triage-policy-heading" className="text-lg font-semibold">配置分拣层级</h2>
+                <p className="mt-1 text-sm text-gray-500">配置同时决定分拣输入、可用筛选和目录/ZIP 的文件夹层级。</p>
+              </div>
+              <span className="rounded-md bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800">
+                保存后已有判定会进入待复核
+              </span>
+            </div>
+            <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
+              <div className="space-y-5">
+                <fieldset>
+                  <legend className="text-sm font-semibold">OK 是否细分</legend>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    <label className={`cursor-pointer rounded-xl border p-3 ${policyDraft.split_ok ? "border-gray-900 bg-gray-50" : "border-line"}`}>
+                      <input
+                        type="radio"
+                        name="ok-granularity"
+                        checked={policyDraft.split_ok}
+                        onChange={() => setPolicyDraft((current) => current ? { ...current, split_ok: true } : current)}
+                      />
+                      <span className="ml-2 text-sm font-semibold">细分完全 / 勉强 OK</span>
+                      <span className="mt-1 block pl-6 text-xs leading-5 text-gray-500">导出为 ok/clear 与 ok/borderline</span>
+                    </label>
+                    <label className={`cursor-pointer rounded-xl border p-3 ${!policyDraft.split_ok ? "border-gray-900 bg-gray-50" : "border-line"}`}>
+                      <input
+                        type="radio"
+                        name="ok-granularity"
+                        checked={!policyDraft.split_ok}
+                        onChange={() => setPolicyDraft((current) => current ? { ...current, split_ok: false } : current)}
+                      />
+                      <span className="ml-2 text-sm font-semibold">统一 OK</span>
+                      <span className="mt-1 block pl-6 text-xs leading-5 text-gray-500">只判定 OK，导出到单一 ok 目录</span>
+                    </label>
+                  </div>
+                </fieldset>
+
+                <fieldset>
+                  <legend className="text-sm font-semibold">NG 细分方式</legend>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    {(Object.entries(NG_GROUPING_LABELS) as Array<[NgGrouping, { title: string; description: string }]>).map(([value, copy]) => (
+                      <label key={value} className={`cursor-pointer rounded-xl border p-3 ${policyDraft.ng_grouping === value ? "border-gray-900 bg-gray-50" : "border-line"}`}>
+                        <input
+                          type="radio"
+                          name="ng-granularity"
+                          checked={policyDraft.ng_grouping === value}
+                          onChange={() => setPolicyDraft((current) => current ? { ...current, ng_grouping: value } : current)}
+                        />
+                        <span className="ml-2 text-sm font-semibold">{copy.title}</span>
+                        <span className="mt-1 block pl-6 text-xs leading-5 text-gray-500">{copy.description}</span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              </div>
+
+              <div className="rounded-xl border border-line bg-gray-950 p-4 text-gray-200">
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-gray-400">目录 / ZIP 结构预览</div>
+                <div className="mt-3 space-y-1 font-mono text-sm leading-6">
+                  {policyDraft.split_ok ? (
+                    <><div>ok/clear/</div><div>ok/borderline/</div><div className="text-gray-500">ok/ungraded/（兼容旧数据）</div></>
+                  ) : <div>ok/</div>}
+                  {policyDraft.ng_grouping === "none" && <div>ng/</div>}
+                  {policyDraft.ng_grouping === "defect_type" && <><div>ng/&#123;defect_type&#125;/</div><div className="text-gray-500">ng/unknown/</div></>}
+                  {policyDraft.ng_grouping === "severity" && <><div>ng/&#123;mild|moderate|severe&#125;/</div><div className="text-gray-500">ng/ungraded/</div></>}
+                  {policyDraft.ng_grouping === "defect_type_and_severity" && <><div>ng/&#123;defect_type&#125;/&#123;severity&#125;/</div><div className="text-gray-500">unknown 与 ungraded 作为兼容目录</div></>}
+                </div>
+                {stats && Object.keys(stats.by_export_bucket).length > 0 && (
+                  <div className="mt-4 border-t border-white/10 pt-3">
+                    <div className="text-xs text-gray-400">当前数据按已保存规则的目录计数</div>
+                    <div className="mt-2 space-y-1 text-xs">
+                      {Object.entries(stats.by_export_bucket).map(([bucket, count]) => (
+                        <div key={bucket} className="flex justify-between gap-3"><span className="truncate">{bucket}/</span><span>{count} 张</span></div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setPolicyPanelOpen(false)} className="min-h-10 rounded-lg border border-line px-4 text-sm font-medium">取消</button>
+              <button type="button" onClick={() => void savePolicy()} disabled={policySaving} className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-gray-900 px-4 text-sm font-semibold text-white disabled:opacity-50">
+                {policySaving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} 保存层级配置
+              </button>
+            </div>
+          </section>
+        )}
+
         <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <div className="rounded-xl border border-line bg-white px-4 py-3">
             <div className="text-xs text-gray-500">已处理 / 图片</div>
             <div className="mt-1 text-xl font-semibold">{progressDone} / {stats?.total_images ?? 0}</div>
           </div>
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-            <div className="text-xs text-emerald-700">完全 OK</div>
-            <div className="mt-1 text-xl font-semibold text-emerald-900">{stats?.by_ok_grade.clear ?? 0}</div>
-          </div>
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-            <div className="text-xs text-amber-700">勉强 OK</div>
-            <div className="mt-1 text-xl font-semibold text-amber-900">{stats?.by_ok_grade.borderline ?? 0}</div>
-          </div>
+          {splitOk ? (
+            <>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                <div className="text-xs text-emerald-700">完全 OK</div>
+                <div className="mt-1 text-xl font-semibold text-emerald-900">{stats?.by_ok_grade.clear ?? 0}</div>
+              </div>
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                <div className="text-xs text-amber-700">勉强 OK</div>
+                <div className="mt-1 text-xl font-semibold text-amber-900">{stats?.by_ok_grade.borderline ?? 0}</div>
+              </div>
+            </>
+          ) : (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 lg:col-span-2">
+              <div className="text-xs text-emerald-700">OK</div>
+              <div className="mt-1 text-xl font-semibold text-emerald-900">{stats?.by_status.ok ?? 0}</div>
+            </div>
+          )}
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
             <div className="text-xs text-red-700">NG</div>
             <div className="mt-1 text-xl font-semibold text-red-900">{stats?.by_status.ng ?? 0}</div>
@@ -568,6 +844,55 @@ export default function TriagePage() {
           <div aria-live="polite" className="mb-4 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
             <Check size={18} /> {notice}
           </div>
+        )}
+
+        {queueScope === "current_filter" && (
+          <section className="mb-4 rounded-xl border border-line bg-white p-4 shadow-sm" aria-label="分拣统计筛选">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-40 flex-1">
+                <label htmlFor="filter-status" className="text-xs font-medium text-gray-600">判定状态</label>
+                <select id="filter-status" value={filterStatus ?? ""} onChange={(event) => setTriageFilter("status", event.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-line bg-white px-3 text-sm">
+                  <option value="">全部状态</option>
+                  {Object.entries(STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
+              </div>
+              {splitOk && (
+                <div className="min-w-40 flex-1">
+                  <label htmlFor="filter-ok-grade" className="text-xs font-medium text-gray-600">OK 等级</label>
+                  <select id="filter-ok-grade" value={filterOkGrade ?? ""} onChange={(event) => setTriageFilter("okGrade", event.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-line bg-white px-3 text-sm">
+                    <option value="">全部 OK 等级</option>
+                    <option value="clear">完全 OK</option>
+                    <option value="borderline">勉强 OK</option>
+                  </select>
+                </div>
+              )}
+              {ngUsesDefectType && (
+                <div className="min-w-40 flex-1">
+                  <label htmlFor="filter-defect-type" className="text-xs font-medium text-gray-600">缺陷类别</label>
+                  <select id="filter-defect-type" value={filterDefectTypeId ?? ""} onChange={(event) => setTriageFilter("defectType", event.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-line bg-white px-3 text-sm">
+                    <option value="">全部缺陷类别</option>
+                    {activeDefectTypes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                  </select>
+                </div>
+              )}
+              {ngUsesSeverity && (
+                <div className="min-w-40 flex-1">
+                  <label htmlFor="filter-severity" className="text-xs font-medium text-gray-600">缺陷程度</label>
+                  <select id="filter-severity" value={filterSeverity ?? ""} onChange={(event) => setTriageFilter("severity", event.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-line bg-white px-3 text-sm">
+                    <option value="">全部程度</option>
+                    {Object.entries(SEVERITY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </select>
+                </div>
+              )}
+              <button type="button" onClick={() => {
+                setSearchParams((current) => {
+                  const next = new URLSearchParams(current);
+                  ["status", "okGrade", "defectType", "severity", "sample"].forEach((key) => next.delete(key));
+                  return next;
+                }, { replace: true });
+              }} className="min-h-10 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50">清除筛选</button>
+            </div>
+          </section>
         )}
 
         <div className="grid min-h-[680px] gap-4 xl:grid-cols-[minmax(0,1fr)_390px]">
@@ -670,22 +995,30 @@ export default function TriagePage() {
                   <p className="mt-1 text-xs leading-5 text-gray-500">按数字键立即保存并进入下一张；空格仅跳过。</p>
                 </div>
                 <div className="grid gap-3">
-                  <button type="button" disabled={!triage || saving || !imageReady} onClick={() => quickAction("clear")} className="flex min-h-16 items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 text-left hover:bg-emerald-100 disabled:opacity-40">
-                    <span><span className="block font-semibold text-emerald-950">完全 OK</span><span className="mt-1 block text-xs text-emerald-700">{policy?.clear_ok_definition}</span></span><kbd className="rounded bg-emerald-900 px-2 py-1 text-sm font-bold text-white">1</kbd>
-                  </button>
-                  <button type="button" disabled={!triage || saving || !imageReady} onClick={() => quickAction("borderline")} className="flex min-h-16 items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 text-left hover:bg-amber-100 disabled:opacity-40">
-                    <span><span className="block font-semibold text-amber-950">勉强 OK</span><span className="mt-1 block text-xs text-amber-700">可在详细模式记录轻微缺陷</span></span><kbd className="rounded bg-amber-900 px-2 py-1 text-sm font-bold text-white">2</kbd>
-                  </button>
+                  {splitOk ? (
+                    <>
+                      <button type="button" disabled={!triage || saving || !imageReady} onClick={() => quickAction("clear")} className="flex min-h-16 items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 text-left hover:bg-emerald-100 disabled:opacity-40">
+                        <span><span className="block font-semibold text-emerald-950">完全 OK</span><span className="mt-1 block text-xs text-emerald-700">{policy?.clear_ok_definition}</span></span><kbd className="rounded bg-emerald-900 px-2 py-1 text-sm font-bold text-white">1</kbd>
+                      </button>
+                      <button type="button" disabled={!triage || saving || !imageReady} onClick={() => quickAction("borderline")} className="flex min-h-16 items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 text-left hover:bg-amber-100 disabled:opacity-40">
+                        <span><span className="block font-semibold text-amber-950">勉强 OK</span><span className="mt-1 block text-xs text-amber-700">可在详细模式记录轻微缺陷</span></span><kbd className="rounded bg-amber-900 px-2 py-1 text-sm font-bold text-white">2</kbd>
+                      </button>
+                    </>
+                  ) : (
+                    <button type="button" disabled={!triage || saving || !imageReady} onClick={() => quickAction("ok")} className="flex min-h-16 items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 text-left hover:bg-emerald-100 disabled:opacity-40">
+                      <span><span className="block font-semibold text-emerald-950">OK</span><span className="mt-1 block text-xs text-emerald-700">统一判为合格，不再区分等级</span></span><kbd className="rounded bg-emerald-900 px-2 py-1 text-sm font-bold text-white">1</kbd>
+                    </button>
+                  )}
                   <button type="button" disabled={!triage || saving || !imageReady} onClick={() => quickAction("ng")} className="flex min-h-16 items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 text-left hover:bg-red-100 disabled:opacity-40">
-                    <span><span className="block font-semibold text-red-950">NG</span><span className="mt-1 block text-xs text-red-700">先判缺陷，后续可补类型与程度</span></span><kbd className="rounded bg-red-900 px-2 py-1 text-sm font-bold text-white">3</kbd>
+                    <span><span className="block font-semibold text-red-950">NG</span><span className="mt-1 block text-xs text-red-700">{NG_GROUPING_LABELS[ngGrouping].description}</span></span><kbd className="rounded bg-red-900 px-2 py-1 text-sm font-bold text-white">{splitOk ? "3" : "2"}</kbd>
                   </button>
                   <button type="button" disabled={!triage || saving || !imageReady} onClick={() => quickAction("pending")} className="flex min-h-16 items-center justify-between rounded-xl border border-violet-200 bg-violet-50 px-4 text-left hover:bg-violet-100 disabled:opacity-40">
-                    <span><span className="block font-semibold text-violet-950">待定复看</span><span className="mt-1 block text-xs text-violet-700">信息不足或边界不清时暂存</span></span><kbd className="rounded bg-violet-900 px-2 py-1 text-sm font-bold text-white">4</kbd>
+                    <span><span className="block font-semibold text-violet-950">待定复看</span><span className="mt-1 block text-xs text-violet-700">信息不足或边界不清时暂存</span></span><kbd className="rounded bg-violet-900 px-2 py-1 text-sm font-bold text-white">{splitOk ? "4" : "3"}</kbd>
                   </button>
                 </div>
                 <div className="rounded-lg bg-gray-50 px-3 py-2 text-xs leading-5 text-gray-600">
                   当前结果：{triage ? STATUS_LABELS[triage.triage_status] : "-"}
-                  {triage?.ok_grade === "clear" ? " · 完全 OK" : triage?.ok_grade === "borderline" ? " · 勉强 OK" : ""}
+                  {splitOk && triage?.ok_grade === "clear" ? " · 完全 OK" : splitOk && triage?.ok_grade === "borderline" ? " · 勉强 OK" : ""}
                 </div>
               </div>
             ) : (
@@ -698,7 +1031,7 @@ export default function TriagePage() {
                     onChange={(event) => setDraft((current) => ({
                       ...current,
                       status: event.target.value as TriageStatus,
-                      okGrade: event.target.value === "ok" ? current.okGrade ?? "borderline" : null
+                      okGrade: event.target.value === "ok" && splitOk ? current.okGrade ?? "borderline" : null
                     }))}
                     className="mt-2 min-h-11 w-full rounded-lg border border-line bg-white px-3 text-sm"
                   >
@@ -706,7 +1039,7 @@ export default function TriagePage() {
                   </select>
                 </div>
 
-                {draft.status === "ok" && (
+                {draft.status === "ok" && splitOk && (
                   <fieldset>
                     <legend className="text-sm font-semibold">OK 等级</legend>
                     <div className="mt-2 grid grid-cols-2 gap-2">
@@ -722,57 +1055,63 @@ export default function TriagePage() {
                   </fieldset>
                 )}
 
-                {!(draft.status === "ok" && draft.okGrade === "clear") && draft.status !== "untriaged" && (
+                {(showDefectTypes || showDefectSeverity) && (
                   <>
-                    <fieldset>
-                      <legend className="text-sm font-semibold">缺陷程度</legend>
-                      <div className="mt-2 grid grid-cols-3 gap-2">
-                        {(["mild", "moderate", "severe"] as DefectSeverity[]).map((severity) => (
-                          <button
-                            key={severity}
-                            type="button"
-                            onClick={() => setDraft((current) => ({ ...current, severity: current.severity === severity ? null : severity }))}
-                            className={`min-h-10 rounded-lg border text-sm ${draft.severity === severity ? "border-red-700 bg-red-50 font-semibold text-red-800" : "border-line text-gray-700"}`}
-                          >{SEVERITY_LABELS[severity]}</button>
-                        ))}
-                      </div>
-                    </fieldset>
-
-                    <fieldset>
-                      <legend className="text-sm font-semibold">缺陷类型（可多选）</legend>
-                      <div className="mt-2 max-h-44 space-y-1 overflow-auto rounded-lg border border-line p-2">
-                        {activeDefectTypes.length === 0 && <p className="px-2 py-3 text-xs text-gray-500">还没有缺陷类型，可在下方快速新建。</p>}
-                        {activeDefectTypes.map((item) => (
-                          <label key={item.id} className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md px-2 text-sm hover:bg-gray-50" style={{ paddingLeft: item.parent_id ? 28 : 8 }}>
-                            <input type="checkbox" checked={draft.defectTypeIds.includes(item.id)} onChange={() => toggleDefectType(item.id)} />
-                            <span className={item.parent_id ? "text-gray-600" : "font-medium"}>{item.name}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </fieldset>
-
-                    {draft.defectTypeIds.length > 1 && (
-                      <div>
-                        <label htmlFor="primary-defect" className="text-sm font-semibold">主要缺陷</label>
-                        <select id="primary-defect" value={draft.primaryDefectTypeId ?? ""} onChange={(event) => setDraft((current) => ({ ...current, primaryDefectTypeId: Number(event.target.value) || null }))} className="mt-2 min-h-10 w-full rounded-lg border border-line bg-white px-3 text-sm">
-                          {activeDefectTypes.filter((item) => draft.defectTypeIds.includes(item.id)).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-                        </select>
-                      </div>
+                    {showDefectSeverity && (
+                      <fieldset>
+                        <legend className="text-sm font-semibold">缺陷程度</legend>
+                        <div className="mt-2 grid grid-cols-3 gap-2">
+                          {(["mild", "moderate", "severe"] as DefectSeverity[]).map((severity) => (
+                            <button
+                              key={severity}
+                              type="button"
+                              onClick={() => setDraft((current) => ({ ...current, severity: current.severity === severity ? null : severity }))}
+                              className={`min-h-10 rounded-lg border text-sm ${draft.severity === severity ? "border-red-700 bg-red-50 font-semibold text-red-800" : "border-line text-gray-700"}`}
+                            >{SEVERITY_LABELS[severity]}</button>
+                          ))}
+                        </div>
+                      </fieldset>
                     )}
 
-                    <div className="rounded-lg bg-gray-50 p-3">
-                      <div className="text-xs font-semibold text-gray-700">快速新增缺陷类型</div>
-                      <div className="mt-2 grid gap-2">
-                        <input value={newDefectName} onChange={(event) => setNewDefectName(event.target.value)} placeholder="例如：划痕、脏污" className="min-h-10 rounded-lg border border-line bg-white px-3 text-sm" />
-                        <select value={newDefectParent ?? ""} onChange={(event) => setNewDefectParent(Number(event.target.value) || null)} className="min-h-10 rounded-lg border border-line bg-white px-3 text-sm">
-                          <option value="">作为一级类型</option>
-                          {rootDefectTypes.map((item) => <option key={item.id} value={item.id}>作为“{item.name}”的子类型</option>)}
-                        </select>
-                        <button type="button" onClick={() => void addDefectType()} disabled={!newDefectName.trim() || creatingDefect} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-line bg-white text-sm font-medium hover:bg-gray-100 disabled:opacity-40">
-                          {creatingDefect ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />} 新建并选中
-                        </button>
-                      </div>
-                    </div>
+                    {showDefectTypes && (
+                      <>
+                        <fieldset>
+                          <legend className="text-sm font-semibold">缺陷类型（可多选）</legend>
+                          <div className="mt-2 max-h-44 space-y-1 overflow-auto rounded-lg border border-line p-2">
+                            {activeDefectTypes.length === 0 && <p className="px-2 py-3 text-xs text-gray-500">还没有缺陷类型，可在下方快速新建。</p>}
+                            {activeDefectTypes.map((item) => (
+                              <label key={item.id} className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md px-2 text-sm hover:bg-gray-50" style={{ paddingLeft: item.parent_id ? 28 : 8 }}>
+                                <input type="checkbox" checked={draft.defectTypeIds.includes(item.id)} onChange={() => toggleDefectType(item.id)} />
+                                <span className={item.parent_id ? "text-gray-600" : "font-medium"}>{item.name}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </fieldset>
+
+                        {draft.defectTypeIds.length > 1 && (
+                          <div>
+                            <label htmlFor="primary-defect" className="text-sm font-semibold">主要缺陷</label>
+                            <select id="primary-defect" value={draft.primaryDefectTypeId ?? ""} onChange={(event) => setDraft((current) => ({ ...current, primaryDefectTypeId: Number(event.target.value) || null }))} className="mt-2 min-h-10 w-full rounded-lg border border-line bg-white px-3 text-sm">
+                              {activeDefectTypes.filter((item) => draft.defectTypeIds.includes(item.id)).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                            </select>
+                          </div>
+                        )}
+
+                        <div className="rounded-lg bg-gray-50 p-3">
+                          <div className="text-xs font-semibold text-gray-700">快速新增缺陷类型</div>
+                          <div className="mt-2 grid gap-2">
+                            <input value={newDefectName} onChange={(event) => setNewDefectName(event.target.value)} placeholder="例如：划痕、脏污" className="min-h-10 rounded-lg border border-line bg-white px-3 text-sm" />
+                            <select value={newDefectParent ?? ""} onChange={(event) => setNewDefectParent(Number(event.target.value) || null)} className="min-h-10 rounded-lg border border-line bg-white px-3 text-sm">
+                              <option value="">作为一级类型</option>
+                              {rootDefectTypes.map((item) => <option key={item.id} value={item.id}>作为“{item.name}”的子类型</option>)}
+                            </select>
+                            <button type="button" onClick={() => void addDefectType()} disabled={!newDefectName.trim() || creatingDefect} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-line bg-white text-sm font-medium hover:bg-gray-100 disabled:opacity-40">
+                              {creatingDefect ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />} 新建并选中
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </>
                 )}
 

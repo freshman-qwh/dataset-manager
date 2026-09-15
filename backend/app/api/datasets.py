@@ -65,6 +65,7 @@ from app.services import (
     tag_service,
     thumbnail_job_service,
     training_readiness_service,
+    triage_service,
 )
 
 router = APIRouter(prefix="/api", tags=["datasets"])
@@ -278,6 +279,19 @@ def list_dataset_samples(
     session: Session = Depends(get_session),
 ) -> SampleListResponse:
     dataset_service.get_dataset_or_404(session, dataset_id)
+    try:
+        triage_service.validate_triage_filters(
+            session,
+            dataset_id,
+            ok_grade=ok_grade,
+            defect_severity=defect_severity,
+            defect_type_id=defect_type_id,
+        )
+    except triage_service.TriageValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
     return sample_service.list_samples(
         session,
         dataset_id,
