@@ -24,7 +24,7 @@ import {
   Video
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import {
   applySplitPlan,
@@ -57,6 +57,7 @@ import {
 import AnnotationExportModal from "../components/AnnotationExportModal";
 import BatchActionBar from "../components/BatchActionBar";
 import DatasetActionMenu from "../components/DatasetActionMenu";
+import DirectoryExportModal from "../components/DirectoryExportModal";
 import DatasetIssueModal from "../components/DatasetIssueModal";
 import DatasetQualityModal from "../components/DatasetQualityModal";
 import DatasetSettingsModal from "../components/DatasetSettingsModal";
@@ -217,6 +218,7 @@ export default function DatasetDetailPage() {
   const params = useParams();
   const navigate = useNavigate();
   const datasetId = Number(params.datasetId);
+  const [pageSearchParams, setPageSearchParams] = useSearchParams();
   const [initialCache] = useState(() => readDatasetDetailCache(datasetId));
   const [dataset, setDataset] = useState<Dataset | null>(initialCache?.dataset ?? null);
   const [stats, setStats] = useState<DatasetStats | null>(initialCache?.stats ?? null);
@@ -254,6 +256,7 @@ export default function DatasetDetailPage() {
   const [issueModal, setIssueModal] = useState<"missing" | "duplicate" | null>(null);
   const [exportPreview, setExportPreview] = useState<ExportPreview | null>(null);
   const [annotationExportOpen, setAnnotationExportOpen] = useState(false);
+  const [directoryExportOpen, setDirectoryExportOpen] = useState(false);
   const [snapshotOpen, setSnapshotOpen] = useState(false);
   const [savedViewOpen, setSavedViewOpen] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -278,6 +281,16 @@ export default function DatasetDetailPage() {
   const [qualityError, setQualityError] = useState<string | null>(null);
   const [trainingReadiness, setTrainingReadiness] = useState<TrainingReadinessReport | null>(null);
   const [trainingReadinessError, setTrainingReadinessError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (pageSearchParams.get("directoryExport") !== "1") return;
+    setDirectoryExportOpen(true);
+    setPageSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("directoryExport");
+      return next;
+    }, { replace: true });
+  }, [pageSearchParams, setPageSearchParams]);
   const autoScannedDatasetIds = useRef<Set<number>>(new Set());
   const samplesSectionRef = useRef<HTMLElement | null>(null);
   const overviewRequestIdRef = useRef(0);
@@ -1495,6 +1508,14 @@ export default function DatasetDetailPage() {
                 <Camera size={17} />
                 数据集快照
               </button>
+              <button
+                type="button"
+                onClick={() => setDirectoryExportOpen(true)}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                <FolderOpen size={17} />
+                导出分拣目录
+              </button>
               <DatasetActionMenu
                 exportFormat={exportFormat}
                 onExportFormatChange={setExportFormat}
@@ -1503,6 +1524,7 @@ export default function DatasetDetailPage() {
                 onImportMetadata={() => setMetadataImportOpen(true)}
                 onImportLabelme={() => setLabelmeImportOpen(true)}
                 onExport={() => void handleExport()}
+                onDirectoryExport={() => setDirectoryExportOpen(true)}
                 onAnnotationExport={() => setAnnotationExportOpen(true)}
                 annotationExportEnabled={geometryTask}
                 annotationImportEnabled={geometryTask}
@@ -1842,6 +1864,13 @@ export default function DatasetDetailPage() {
         currentQuery={annotationExportQuery}
         selectedSampleIds={annotationExportSelectedSampleIds}
         onClose={() => setAnnotationExportOpen(false)}
+      />
+      <DirectoryExportModal
+        datasetId={datasetId}
+        open={directoryExportOpen}
+        currentQuery={annotationExportQuery}
+        selectedSampleIds={annotationExportSelectedSampleIds}
+        onClose={() => setDirectoryExportOpen(false)}
       />
       <DatasetSnapshotModal
         datasetId={datasetId}

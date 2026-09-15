@@ -2,7 +2,7 @@
 
 日期：2026-09-15
 基线：v0.4.1；下一阶段候选版本：v0.5.0
-状态：快速分拣主流程与可配置层级已实现，真实目录/ZIP 导出仍在实施计划中。开发顺序与完成状态以 [TODO](../TODO.md) 为准。
+状态：快速分拣主流程、可配置层级与普通目录/ZIP 导出已实现，Q1/Q2 补齐项和异常检测训练模板继续按 [TODO](../TODO.md) 推进。
 
 ## 1. 产品目标与范围
 
@@ -111,10 +111,10 @@
 
 ### 4.1 范围和两种交付方式
 
-独立“导出分拣目录”向导：选范围 → 选目录模板 → 处理映射与问题 → 查看目录/数量/容量预览 → 创建任务。
+独立“导出分拣目录”向导：选范围与交付方式 → 选择是否纳入待定/未分拣/过期判定 → 查看目录、数量、容量、排除原因及文件映射 → 创建后台任务。目录模板直接来自数据集分拣层级，用户无需重复配置。
 
 - 范围为全数据集、当前筛选、当前 split 或明确已选样本；在任务开始前冻结具体样本集合和元数据。
-- 首版同时明确两种交付：本机/服务器新目录，以及包含相同目录结构的 ZIP 下载。目录模式是核心验收项，不能只交付 ZIP。
+- 首版同时提供两种交付：服务器托管新目录，以及包含相同目录结构的 ZIP 下载。
 - 目录路径属于后端所在机器。远程访问时明确“写入服务器目录”，不能把浏览器电脑的路径直接传给服务器解释；需要带回本机时下载 ZIP。
 - 默认新建唯一命名的运行目录，不合并、不覆盖已有目录；仅复制图片，不提供移动、硬链接或软链接。
 
@@ -129,7 +129,7 @@
 | 按程度 | 同上 | `ng/mild`、`ng/moderate`、`ng/severe`、`ng/ungraded` | 只看缺陷轻重 |
 | 类型 + 程度 | 同上 | `ng/<primary_defect>/<severity>` | 两个维度都有需求 |
 
-OK 下缺陷类型仍保存在 manifest，不把勉强 OK 的瑕疵混入 NG。关闭 `split_ok` 后导出到统一 `ok/`；开启后使用 `ok/clear`、`ok/borderline`，历史无等级 OK 进入 `ok/ungraded`。每张样本的 manifest 已提供规范 `export_bucket`，统计接口使用同一算法返回 `by_export_bucket`；后续目录与 ZIP 任务必须直接消费这一契约。
+OK 下缺陷类型仍保存在 manifest，不把勉强 OK 的瑕疵混入 NG。关闭 `split_ok` 后导出到统一 `ok/`；开启后使用 `ok/clear`、`ok/borderline`，历史无等级 OK 进入 `ok/ungraded`。每张样本的 manifest 提供规范 `export_bucket`，统计、预检、目录和 ZIP 使用同一个 `configured_export_bucket` 算法。
 
 ```text
 customer_batch_export_<run-id>/
@@ -150,7 +150,7 @@ customer_batch_export_<run-id>/
 
 - 无类型的 NG 放 `unknown`；程度为空放 `ungraded`。
 - 多类型有主缺陷，按主缺陷落目录，清单保留所有类型。
-- 多类型无主缺陷：只对需要类型路径的模板阻断；用户补主缺陷、显式选“统一放 multi_defect”，或改选不按类型的模板。
+- 多类型无主缺陷进入 `multi_defect`；用户后续补主缺陷再预检时会进入该主类型目录。
 - 本阶段不支持复制到每一个 defect 目录，避免重复计数和训练泄漏。
 - 目录名使用稳定类型 ID 加安全别名，报告提供 ID、显示名称、父类映射；类型重命名不破坏历史导出。
 
@@ -176,7 +176,7 @@ customer_batch_export_<run-id>/
 - 类型目录及显示名称、模板版本、排除规则、主缺陷策略、目标相对路径、输出介质与目标根目录。
 - 配置/计划内容 hash、创建时间、失效时间和计划 ID；作业小参数只引用计划，不把十万样本塞入 jobs JSON。
 
-预览计划在服务端应用存储生成，创建过程中检测元数据变化；Q3 在允许列表/目录导出前禁止分拣大批量跨事务写入，Q4 另补多批任务一致性门槛。现有 revision tracker 一次分批任务只增一次，不能把 revision 首尾相等当成所有并发数据都未改变的唯一证据。冻结计划必须使用一致性数据库读快照，并串行化冲突的导入/扫描任务或检测其运行区间，发现重叠就拒绝发布。
+预览计划在服务端应用存储生成，不写入 jobs JSON。当前实现冻结创建时读取到的具体样本及其源 hash；用户确认时重新核对 dataset revision、分拣配置版本和计划内容 hash，复制每个文件时再重算 SHA-256。扫描、导入或分拣与预检重叠而导致 revision 或源字节变化时，任务不会发布并要求重新预检。后续跨事务批量分拣仍需增加更强的运行区间冲突门槛。
 
 用户确认时重新核对 revision、计划 hash、源身份和目标；计划过期或内容改变要求重新预览。任务创建后仅依冻结计划运行，后续人工改判不影响本次目录；重试仍使用同一计划，源 hash 不符则失败并要求重建计划。
 
@@ -195,24 +195,21 @@ customer_batch_export_<run-id>/
 
 ## 5. 现有代码上的实现方式
 
-### 5.1 当前可复用与必须补齐的边界
+### 5.1 实际落地位置
 
-| 现有位置 | 可复用内容 | 需要新增/调整 |
+| 位置 | 实际职责 | 状态 |
 |---|---|---|
-| `backend/app/models/sample.py` | 样本 ID、hash、路径、split、索引 | 分拣字段及独立版本 |
-| `backend/app/core/workflow.py` | 任务能力和状态定义 | 增加分拣独立维度，不能将分拣塞进 AnnotationProgress |
-| `backend/app/services/sample_service.py` | SQL 筛选、排序、索引导航 | 新分拣过滤；抽取通用导航构件，独立分拣待处理语义 |
-| `backend/app/services/dataset_revision_service.py` | 事务内 revision 更新 | 单次分拣/撤销/批量各增一次，无变化不增 |
-| `backend/app/services/dataset_saved_view_service.py` | 保存与恢复筛选 | 分拣模式与新查询字段，兼容旧视图 |
-| `backend/app/services/dataset_snapshot_service.py` | 不可变快照、内容 hash | 新字段、类型目录、标准版本，旧格式兼容及分拣差异 |
-| `backend/app/services/annotation_export_job_service.py` | 创建任务、进度与取消模式 | 复用基础设施，新增独立目录导出服务 |
-| `backend/app/services/job_artifact_service.py` | 单文件原子产物 | 当前仅支持文件；新增有归属校验的目录产物实现 |
-| `backend/app/core/job_runtime.py` | 现有本地 runner 注册 | 注册 `dataset.directory_export` 处理器 |
-| `frontend/src/pages/DatasetDetailPage.tsx` | 数据集入口、筛选、样本网格 | 分拣入口/统计和导出向导 |
-| `frontend/src/pages/AnnotationPage.tsx` | 成熟连续操作设计 | 只抽取必要公共逻辑，不绑定分拣到绘制模式 |
-| `frontend/src/components/JobCenter.tsx` | 全局任务进度/错误/下载 | 增加目录路径、复制数量和失败文件说明 |
+| `backend/app/schemas/directory_export.py` | 预检查询、分页明细、任务引用和响应 schema | 已实现 |
+| `backend/app/services/directory_export_service.py` | 选择样本、目录映射、冻结计划、hash/有效期/revision 校验 | 已实现 |
+| `backend/app/services/directory_export_job_service.py` | ZIP/目录流式复制、源 hash 校验、清单、原子发布与恢复 | 已实现 |
+| `backend/app/api/directory_exports.py` | 预检创建/读取与任务创建三个接口 | 已实现 |
+| `backend/app/core/job_runtime.py` | 注册 `dataset.directory_export` 处理器 | 已实现 |
+| `backend/app/services/job_artifact_service.py` | ZIP 单文件临时产物与原子发布 | 已复用 |
+| `frontend/src/components/DirectoryExportModal.tsx` | 范围、交付、纳入规则、预检、分页映射、任务状态与下载 | 已实现 |
+| `frontend/src/components/JobCenter.tsx` | 目录导出进度、ZIP 下载与服务器路径 | 已实现 |
+| `frontend/src/pages/DatasetDetailPage.tsx` | 导出入口并传递当前筛选/选择 | 已实现 |
 
-新增文件建议：
+当前新增文件：
 
 ```text
 backend/app/
@@ -223,22 +220,15 @@ backend/app/
   api/directory_exports.py
   services/triage_service.py
   services/triage_navigation_service.py
-  services/directory_export_precheck_service.py
-  services/directory_export_plan_service.py
+  services/directory_export_service.py
   services/directory_export_job_service.py
-  services/directory_artifact_service.py
 frontend/src/
   pages/TriagePage.tsx
-  components/triage/TriageActions.tsx
-  components/triage/DefectSelector.tsx
   components/DirectoryExportModal.tsx
-  hooks/useTriageSession.ts
-  api/triage.ts
-  api/directoryExports.ts
-  types/triage.ts
+  types/directoryExport.ts
 ```
 
-这些是拟新增路径，不代表文件已经存在；实现时按最小职责拆分，不为凑目录建空模块。
+目录任务复用现有 runner、取消/重试和 ZIP artifact 基础设施；服务器目录的临时工作区、完成标记和安全清理由目录任务服务负责。
 
 ### 5.2 数据结构与迁移
 
@@ -254,7 +244,7 @@ frontend/src/
 - 使用正式 Alembic 增量迁移，旧样本回填未分拣；不重建实际库、不执行启动时静默迁移。旧 tags、审核和标注字段保持原意。
 - 删除样本/数据集的服务、完整性检测和备份校验需纳入新表与外键；外部导出目录不参与级联删除。
 
-### 5.3 API 草案
+### 5.3 API（目录导出接口已实现）
 
 | 接口 | 职责 |
 |---|---|
@@ -299,7 +289,7 @@ frontend/src/
 | Q0 | 冻结设计与整理文档 | 本文、新 TODO、README 已规划/已实现分开 |
 | Q1 | 分拣数据闭环 | 迁移、类型/标准、API、版本校验、筛选、统计、快照兼容 |
 | Q2 | 单人连续分拣 | 页面、快捷键、队列、失败重试、单步撤销、批量预览、细标入口 |
-| Q3 | 普通目录导出 | 冻结计划、四模板、真实目录与 ZIP、清单、安全发布与恢复 |
+| Q3 | 普通目录导出 | 冻结计划、四模板、真实目录与 ZIP、清单、安全发布与恢复（已实现） |
 | Q4 | 异常检测训练链路 | 完全 OK 训练规则、分组划分、固定版本读取验证 |
 | Q5 | 真实用户试用 | 同批图片与资源管理器对照、记录失败路径、据数据决定扩展 |
 

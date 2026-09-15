@@ -11,6 +11,7 @@ interface DatasetActionMenuProps {
   onImportMetadata: () => void;
   onImportLabelme: () => void;
   onExport: () => void;
+  onDirectoryExport: () => void;
   onAnnotationExport: () => void;
   annotationExportEnabled?: boolean;
   annotationImportEnabled?: boolean;
@@ -26,6 +27,7 @@ export default function DatasetActionMenu({
   onImportMetadata,
   onImportLabelme,
   onExport,
+  onDirectoryExport,
   onAnnotationExport,
   annotationExportEnabled = true,
   annotationImportEnabled = true,
@@ -102,6 +104,14 @@ export default function DatasetActionMenu({
           >
             <Download size={16} />
             导出
+          </button>
+          <button
+            type="button"
+            onClick={() => closeAfter(onDirectoryExport)}
+            className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            <Download size={16} />
+            分拣目录 / ZIP
           </button>
           <button
             type="button"

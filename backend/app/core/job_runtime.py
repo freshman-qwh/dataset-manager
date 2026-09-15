@@ -3,6 +3,10 @@ from app.services.annotation_export_job_service import (
     ANNOTATION_EXPORT_JOB_TYPE,
     run_annotation_export_job,
 )
+from app.services.directory_export_job_service import (
+    DIRECTORY_EXPORT_JOB_TYPE,
+    run_directory_export_job,
+)
 from app.services.annotation_import_job_service import (
     LABELME_IMPORT_JOB_TYPE,
     LABELME_IMPORT_ROLLBACK_JOB_TYPE,
@@ -36,6 +40,7 @@ job_runner.register_handler(
     run_metadata_import_rollback_job,
 )
 job_runner.register_handler(ANNOTATION_EXPORT_JOB_TYPE, run_annotation_export_job)
+job_runner.register_handler(DIRECTORY_EXPORT_JOB_TYPE, run_directory_export_job)
 job_runner.register_handler(LABELME_IMPORT_JOB_TYPE, run_labelme_import_job)
 job_runner.register_handler(
     LABELME_IMPORT_ROLLBACK_JOB_TYPE,

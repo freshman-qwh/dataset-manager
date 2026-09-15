@@ -88,6 +88,11 @@ import type {
   TriageQueueScope,
   TriageStats
 } from "../types/triage";
+import type {
+  DirectoryExportJobCreateResponse,
+  DirectoryExportPreviewRequest,
+  DirectoryExportPreviewResponse
+} from "../types/directoryExport";
 
 export const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8000/api";
@@ -758,6 +763,45 @@ export async function createAnnotationExportJob(
   const { data } = await client.post<AnnotationExportJobCreateResponse>(
     `/datasets/${datasetId}/annotation-export-jobs`,
     payload
+  );
+  return data;
+}
+
+export async function createDirectoryExportPreview(
+  datasetId: number,
+  payload: DirectoryExportPreviewRequest,
+  page = 1,
+  pageSize = 100
+): Promise<DirectoryExportPreviewResponse> {
+  const { data } = await client.post<DirectoryExportPreviewResponse>(
+    `/datasets/${datasetId}/directory-export-previews`,
+    payload,
+    { params: { page, page_size: pageSize } }
+  );
+  return data;
+}
+
+export async function getDirectoryExportPreview(
+  datasetId: number,
+  planId: string,
+  page: number,
+  pageSize = 100
+): Promise<DirectoryExportPreviewResponse> {
+  const { data } = await client.get<DirectoryExportPreviewResponse>(
+    `/datasets/${datasetId}/directory-export-previews/${planId}`,
+    { params: { page, page_size: pageSize } }
+  );
+  return data;
+}
+
+export async function createDirectoryExportJob(
+  datasetId: number,
+  planId: string,
+  planHash: string
+): Promise<DirectoryExportJobCreateResponse> {
+  const { data } = await client.post<DirectoryExportJobCreateResponse>(
+    `/datasets/${datasetId}/directory-export-jobs`,
+    { plan_id: planId, plan_hash: planHash }
   );
   return data;
 }

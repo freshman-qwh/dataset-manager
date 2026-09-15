@@ -37,6 +37,8 @@ const stageCopy: Record<string, string> = {
   copying_database: "复制 SQLite 快照",
   verifying_backup: "检查备份完整性",
   hashing_backup: "计算备份校验值",
+  copying_files: "复制并校验图片",
+  publishing_directory: "发布服务器目录",
   finalizing: "校验导出产物",
   completed: "已完成",
   failed: "失败",
@@ -104,6 +106,17 @@ function annotationExportSummary(job: Job): string | null {
     voc: "Pascal VOC"
   };
   return `${formatCopy[format] ?? format} · ${sampleCount} 个样本${typeof size === "number" ? ` · ${Math.ceil(size / 1024)} KiB` : ""}`;
+}
+
+function directoryExportSummary(job: Job): string | null {
+  if (job.job_type !== "dataset.directory_export" || !job.result) return null;
+  const delivery = job.result.delivery;
+  const count = job.result.exported_sample_count;
+  const copiedBytes = job.result.copied_bytes;
+  const outputPath = job.result.output_path;
+  if (typeof delivery !== "string" || typeof count !== "number") return null;
+  const summary = `分拣${delivery === "zip" ? " ZIP" : "目录"} · ${count} 张图片${typeof copiedBytes === "number" && copiedBytes > 0 ? ` · ${Math.ceil(copiedBytes / 1024)} KiB` : ""}`;
+  return typeof outputPath === "string" ? `${summary} · ${outputPath}` : summary;
 }
 
 function thumbnailSummary(job: Job): string | null {
@@ -380,7 +393,11 @@ export default function JobCenter() {
                       : null;
                     const canCancel = job.status === "queued" || job.status === "running";
                     const canRetry = terminalRetryStatuses.has(job.status);
-                    const canDownload = (job.job_type === "annotation.export" || job.job_type === "database.backup") && job.status === "succeeded";
+                    const canDownload = (
+                      job.job_type === "annotation.export"
+                      || job.job_type === "database.backup"
+                      || (job.job_type === "dataset.directory_export" && job.result?.delivery === "zip")
+                    ) && job.status === "succeeded";
                     const canRollback = (job.job_type === "metadata.import" || job.job_type === "annotation.import.labelme")
                       && (job.result?.rollback_available === true || job.status === "interrupted");
                     return (
@@ -404,6 +421,7 @@ export default function JobCenter() {
                         {errorMessage(job) ? <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">{errorMessage(job)}</p> : null}
                         {scanResultSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{scanResultSummary(job)}</p> : null}
                         {annotationExportSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{annotationExportSummary(job)}</p> : null}
+                        {directoryExportSummary(job) ? <p className="mt-3 break-all rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{directoryExportSummary(job)}</p> : null}
                         {thumbnailSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{thumbnailSummary(job)}</p> : null}
                         {thumbnailMaintenanceSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{thumbnailMaintenanceSummary(job)}</p> : null}
                         {metadataImportSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{metadataImportSummary(job)}</p> : null}

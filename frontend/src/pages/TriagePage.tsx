@@ -932,6 +932,9 @@ export default function TriagePage() {
                   <ListChecks size={42} className="mx-auto mb-3 text-gray-500" />
                   <h2 className="text-lg font-semibold text-white">这个队列已经处理完了</h2>
                   <p className="mt-2 text-sm leading-6 text-gray-400">可切换到“待定复看”或“全部图片”检查已有结果。</p>
+                  <Link to={`/datasets/${datasetId}?directoryExport=1`} className="mt-4 inline-flex min-h-10 items-center rounded-lg bg-white px-4 text-sm font-semibold text-gray-950 hover:bg-gray-100">
+                    导出分拣目录 / ZIP
+                  </Link>
                 </div>
               )}
             </div>
