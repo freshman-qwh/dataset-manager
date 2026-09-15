@@ -1,4 +1,4 @@
-import { Download, MoreHorizontal, RefreshCw, Tags, Upload } from "lucide-react";
+import { Download, FolderInput, MoreHorizontal, RefreshCw, Tags, Upload } from "lucide-react";
 import { useState } from "react";
 
 import { uiCopy } from "../utils/uiCopy";
@@ -12,6 +12,7 @@ interface DatasetActionMenuProps {
   onImportLabelme: () => void;
   onExport: () => void;
   onDirectoryExport: () => void;
+  onDirectoryMapping: () => void;
   onAnnotationExport: () => void;
   annotationExportEnabled?: boolean;
   annotationImportEnabled?: boolean;
@@ -28,6 +29,7 @@ export default function DatasetActionMenu({
   onImportLabelme,
   onExport,
   onDirectoryExport,
+  onDirectoryMapping,
   onAnnotationExport,
   annotationExportEnabled = true,
   annotationImportEnabled = true,
@@ -112,6 +114,14 @@ export default function DatasetActionMenu({
           >
             <Download size={16} />
             分拣目录 / ZIP
+          </button>
+          <button
+            type="button"
+            onClick={() => closeAfter(onDirectoryMapping)}
+            className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            <FolderInput size={16} />
+            从旧目录导入分拣
           </button>
           <button
             type="button"

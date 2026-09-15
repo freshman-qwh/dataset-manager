@@ -93,6 +93,12 @@ import type {
   DirectoryExportPreviewRequest,
   DirectoryExportPreviewResponse
 } from "../types/directoryExport";
+import type {
+  TriageDirectoryMappingJobCreateResponse,
+  TriageDirectoryMappingPreviewRequest,
+  TriageDirectoryMappingPreviewResponse,
+  TriageDirectorySourceResponse
+} from "../types/triageDirectoryMapping";
 
 export const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8000/api";
@@ -801,6 +807,58 @@ export async function createDirectoryExportJob(
 ): Promise<DirectoryExportJobCreateResponse> {
   const { data } = await client.post<DirectoryExportJobCreateResponse>(
     `/datasets/${datasetId}/directory-export-jobs`,
+    { plan_id: planId, plan_hash: planHash }
+  );
+  return data;
+}
+
+export async function getTriageDirectorySources(
+  datasetId: number,
+  search = "",
+  page = 1,
+  pageSize = 100
+): Promise<TriageDirectorySourceResponse> {
+  const { data } = await client.get<TriageDirectorySourceResponse>(
+    `/datasets/${datasetId}/triage-directory-sources`,
+    { params: { search: search || undefined, page, page_size: pageSize } }
+  );
+  return data;
+}
+
+export async function createTriageDirectoryMappingPreview(
+  datasetId: number,
+  payload: TriageDirectoryMappingPreviewRequest,
+  page = 1,
+  pageSize = 100
+): Promise<TriageDirectoryMappingPreviewResponse> {
+  const { data } = await client.post<TriageDirectoryMappingPreviewResponse>(
+    `/datasets/${datasetId}/triage-directory-mapping-previews`,
+    payload,
+    { params: { page, page_size: pageSize } }
+  );
+  return data;
+}
+
+export async function getTriageDirectoryMappingPreview(
+  datasetId: number,
+  planId: string,
+  page: number,
+  pageSize = 100
+): Promise<TriageDirectoryMappingPreviewResponse> {
+  const { data } = await client.get<TriageDirectoryMappingPreviewResponse>(
+    `/datasets/${datasetId}/triage-directory-mapping-previews/${planId}`,
+    { params: { page, page_size: pageSize } }
+  );
+  return data;
+}
+
+export async function createTriageDirectoryMappingJob(
+  datasetId: number,
+  planId: string,
+  planHash: string
+): Promise<TriageDirectoryMappingJobCreateResponse> {
+  const { data } = await client.post<TriageDirectoryMappingJobCreateResponse>(
+    `/datasets/${datasetId}/triage-directory-mapping-jobs`,
     { plan_id: planId, plan_hash: planHash }
   );
   return data;

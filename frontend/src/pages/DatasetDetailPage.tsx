@@ -11,6 +11,7 @@ import {
   Camera,
   Database,
   FileText,
+  FolderInput,
   FolderOpen,
   HardDrive,
   Image as ImageIcon,
@@ -58,6 +59,7 @@ import AnnotationExportModal from "../components/AnnotationExportModal";
 import BatchActionBar from "../components/BatchActionBar";
 import DatasetActionMenu from "../components/DatasetActionMenu";
 import DirectoryExportModal from "../components/DirectoryExportModal";
+import TriageDirectoryMappingModal from "../components/TriageDirectoryMappingModal";
 import DatasetIssueModal from "../components/DatasetIssueModal";
 import DatasetQualityModal from "../components/DatasetQualityModal";
 import DatasetSettingsModal from "../components/DatasetSettingsModal";
@@ -257,6 +259,7 @@ export default function DatasetDetailPage() {
   const [exportPreview, setExportPreview] = useState<ExportPreview | null>(null);
   const [annotationExportOpen, setAnnotationExportOpen] = useState(false);
   const [directoryExportOpen, setDirectoryExportOpen] = useState(false);
+  const [directoryMappingOpen, setDirectoryMappingOpen] = useState(false);
   const [snapshotOpen, setSnapshotOpen] = useState(false);
   const [savedViewOpen, setSavedViewOpen] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -283,11 +286,15 @@ export default function DatasetDetailPage() {
   const [trainingReadinessError, setTrainingReadinessError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (pageSearchParams.get("directoryExport") !== "1") return;
-    setDirectoryExportOpen(true);
+    const openDirectoryExport = pageSearchParams.get("directoryExport") === "1";
+    const openDirectoryMapping = pageSearchParams.get("directoryMapping") === "1";
+    if (!openDirectoryExport && !openDirectoryMapping) return;
+    if (openDirectoryExport) setDirectoryExportOpen(true);
+    if (openDirectoryMapping) setDirectoryMappingOpen(true);
     setPageSearchParams((current) => {
       const next = new URLSearchParams(current);
       next.delete("directoryExport");
+      next.delete("directoryMapping");
       return next;
     }, { replace: true });
   }, [pageSearchParams, setPageSearchParams]);
@@ -1516,6 +1523,14 @@ export default function DatasetDetailPage() {
                 <FolderOpen size={17} />
                 导出分拣目录
               </button>
+              <button
+                type="button"
+                onClick={() => setDirectoryMappingOpen(true)}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                <FolderInput size={17} />
+                映射旧目录
+              </button>
               <DatasetActionMenu
                 exportFormat={exportFormat}
                 onExportFormatChange={setExportFormat}
@@ -1525,6 +1540,7 @@ export default function DatasetDetailPage() {
                 onImportLabelme={() => setLabelmeImportOpen(true)}
                 onExport={() => void handleExport()}
                 onDirectoryExport={() => setDirectoryExportOpen(true)}
+                onDirectoryMapping={() => setDirectoryMappingOpen(true)}
                 onAnnotationExport={() => setAnnotationExportOpen(true)}
                 annotationExportEnabled={geometryTask}
                 annotationImportEnabled={geometryTask}
@@ -1871,6 +1887,14 @@ export default function DatasetDetailPage() {
         currentQuery={annotationExportQuery}
         selectedSampleIds={annotationExportSelectedSampleIds}
         onClose={() => setDirectoryExportOpen(false)}
+      />
+      <TriageDirectoryMappingModal
+        datasetId={datasetId}
+        open={directoryMappingOpen}
+        onClose={() => setDirectoryMappingOpen(false)}
+        onCompleted={() => {
+          void Promise.all([loadOverview(), loadSamples()]);
+        }}
       />
       <DatasetSnapshotModal
         datasetId={datasetId}

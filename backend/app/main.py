@@ -14,6 +14,7 @@ from app.api import (
     samples,
     system,
     triage,
+    triage_directory_mapping,
 )
 from app.core.config import get_settings
 from app.core.database import init_db
@@ -53,6 +54,7 @@ app.include_router(annotation_exports.router)
 app.include_router(system.router)
 app.include_router(jobs.router)
 app.include_router(triage.router)
+app.include_router(triage_directory_mapping.router)
 
 
 @app.get("/health")

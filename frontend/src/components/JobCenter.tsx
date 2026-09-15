@@ -39,6 +39,8 @@ const stageCopy: Record<string, string> = {
   hashing_backup: "计算备份校验值",
   copying_files: "复制并校验图片",
   publishing_directory: "发布服务器目录",
+  validating_mapping: "核对旧目录映射",
+  applying_mapping: "写入分拣结果",
   finalizing: "校验导出产物",
   completed: "已完成",
   failed: "失败",
@@ -117,6 +119,15 @@ function directoryExportSummary(job: Job): string | null {
   if (typeof delivery !== "string" || typeof count !== "number") return null;
   const summary = `分拣${delivery === "zip" ? " ZIP" : "目录"} · ${count} 张图片${typeof copiedBytes === "number" && copiedBytes > 0 ? ` · ${Math.ceil(copiedBytes / 1024)} KiB` : ""}`;
   return typeof outputPath === "string" ? `${summary} · ${outputPath}` : summary;
+}
+
+function directoryMappingSummary(job: Job): string | null {
+  if (job.job_type !== "triage.directory_mapping_import" || !job.result) return null;
+  const changed = job.result.changed_sample_count;
+  const skipped = job.result.skipped_existing_count;
+  const unmapped = job.result.unmapped_count;
+  if (typeof changed !== "number" || typeof skipped !== "number" || typeof unmapped !== "number") return null;
+  return `旧目录映射 · 写入 ${changed} 张 · 保留已有 ${skipped} 张 · 未映射 ${unmapped} 张`;
 }
 
 function thumbnailSummary(job: Job): string | null {
@@ -422,6 +433,7 @@ export default function JobCenter() {
                         {scanResultSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{scanResultSummary(job)}</p> : null}
                         {annotationExportSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{annotationExportSummary(job)}</p> : null}
                         {directoryExportSummary(job) ? <p className="mt-3 break-all rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{directoryExportSummary(job)}</p> : null}
+                        {directoryMappingSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{directoryMappingSummary(job)}</p> : null}
                         {thumbnailSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{thumbnailSummary(job)}</p> : null}
                         {thumbnailMaintenanceSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{thumbnailMaintenanceSummary(job)}</p> : null}
                         {metadataImportSummary(job) ? <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">{metadataImportSummary(job)}</p> : null}
