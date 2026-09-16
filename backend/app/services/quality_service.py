@@ -3,6 +3,7 @@ from pathlib import Path
 
 from sqlmodel import Session, select
 
+from app.core.workflow import TASK_CAPABILITIES
 from app.models.annotation import Annotation
 from app.models.dataset import utc_now
 from app.models.sample import Sample
@@ -21,11 +22,13 @@ from app.utils.image_size import read_image_size
 
 DEFAULT_ISSUE_LIMIT = 500
 TRAINING_SPLITS = {"train", "val", "test"}
-STANDARD_REVIEW_STATUSES = ("unlabeled", "in_review", "approved", "rejected")
+STANDARD_REVIEW_STATUSES = ("not_reviewed", "in_review", "approved", "rejected")
 
 ISSUE_COPY: dict[str, tuple[str, str]] = {
     "FILE_UNAVAILABLE": ("文件不可用", "样本文件缺失或当前进程没有读取权限。"),
-    "EMPTY_ANNOTATIONS": ("图片没有标注对象", "该图片还没有任何几何标注。"),
+    "ANNOTATION_NOT_STARTED": ("标注尚未开始", "该图片尚未进入标注流程。"),
+    "ANNOTATION_INCOMPLETE": ("标注仍在处理中", "该图片已开始处理，但还没有标注对象或完成确认。"),
+    "ANNOTATION_PROGRESS_CONFLICT": ("标注进度与对象冲突", "完成状态与当前对象数量不一致，请重新保存或确认。"),
     "IMAGE_SIZE_UNAVAILABLE": ("无法读取图片尺寸", "无法读取图片宽高，不能验证标注边界。"),
     "INVALID_ANNOTATION_GEOMETRY": ("标注几何无效", "对象坐标数量、形状或面积不符合要求。"),
     "COORDINATES_OUT_OF_BOUNDS": ("标注坐标越界", "对象坐标超出图片宽高范围。"),
@@ -36,6 +39,9 @@ ISSUE_COPY: dict[str, tuple[str, str]] = {
     "CLASS_SPLIT_IMBALANCE": ("类别在划分间分布偏移", "该类别在各 split 的占比明显偏离数据集整体分布。"),
     "REJECTED_SAMPLE": ("存在已拒绝样本", "该样本的审查状态为已拒绝，不应直接进入训练导出。"),
     "REVIEW_PENDING": ("存在待审核样本", "该样本已有标注，但仍处于待审核状态。"),
+    "SAMPLE_TAG_MISSING": ("样本尚未分类", "该样本还没有样本标签，无法计入分类整理完成范围。"),
+    "TASK_SHAPE_MISMATCH": ("对象形状与任务不匹配", "当前对象形状不属于数据集任务允许的标注工具。"),
+    "TASK_TYPE_UNSUPPORTED": ("任务类型需要迁移", "当前旧任务类型不能驱动质量规则，请先在数据集设置中修改。"),
 }
 
 
@@ -94,7 +100,7 @@ def build_quality_report(
     *,
     issue_limit: int = DEFAULT_ISSUE_LIMIT,
 ) -> DatasetQualityReport:
-    dataset_service.get_dataset_or_404(session, dataset_id)
+    dataset = dataset_service.get_dataset_or_404(session, dataset_id)
     samples = session.exec(
         select(Sample).where(Sample.dataset_id == dataset_id).order_by(Sample.relative_path, Sample.id)
     ).all()
@@ -111,7 +117,10 @@ def build_quality_report(
             annotations_by_sample[annotation.sample_id].append(annotation_service.to_annotation_read(annotation))
 
     issues = _IssueCollector(max(1, min(issue_limit, 1000)))
-    review_status_counts = Counter((sample.review_status or "unlabeled") for sample in image_samples)
+    task_capabilities = TASK_CAPABILITIES.get(dataset.task_type)
+    quality_samples = samples if dataset.task_type == "classification" else image_samples
+    review_status_counts = Counter((sample.review_status or "not_reviewed") for sample in quality_samples)
+    annotation_progress_counts = Counter((sample.annotation_progress or "not_started") for sample in quality_samples)
     for status in STANDARD_REVIEW_STATUSES:
         if review_status_counts[status] == 0:
             del review_status_counts[status]
@@ -120,38 +129,59 @@ def build_quality_report(
     split_class_counts: dict[str, Counter[str]] = defaultdict(Counter)
     annotated_sample_count = 0
 
-    for sample in image_samples:
-        sample_id = sample.id or 0
-        sample_annotations = annotations_by_sample.get(sample_id, [])
-        if sample.file_status in {"missing", "permission_denied"}:
-            issues.add("error", "FILE_UNAVAILABLE", sample=sample)
-            continue
-        if not sample_annotations:
-            issues.add("warning", "EMPTY_ANNOTATIONS", sample=sample)
-            if sample.review_status == "rejected":
-                issues.add("info", "REJECTED_SAMPLE", sample=sample)
-            continue
-
-        annotated_sample_count += 1
-        if sample.review_status == "rejected":
-            issues.add("warning", "REJECTED_SAMPLE", sample=sample)
-        elif sample.review_status in {"unlabeled", "in_review"}:
-            issues.add("info", "REVIEW_PENDING", sample=sample)
-
-        image_size = read_image_size(Path(sample.absolute_path))
-        if image_size is None:
-            issues.add("error", "IMAGE_SIZE_UNAVAILABLE", sample=sample)
-
-        for annotation in sample_annotations:
-            label = annotation.label.strip()
-            if label:
-                class_counts[label] += 1
+    if task_capabilities is None:
+        issues.add(
+            "error",
+            "TASK_TYPE_UNSUPPORTED",
+            message=f"任务类型“{dataset.task_type or '未设置'}”不受支持，请在数据集设置中迁移。",
+        )
+    elif dataset.task_type == "classification":
+        for sample in quality_samples:
+            sample_id = sample.id or 0
+            if sample.file_status in {"missing", "permission_denied"}:
+                issues.add("error", "FILE_UNAVAILABLE", sample=sample)
+                continue
+            sample_annotations = annotations_by_sample.get(sample_id, [])
+            if sample_annotations:
+                issues.add(
+                    "error",
+                    "TASK_SHAPE_MISMATCH",
+                    sample=sample,
+                    annotation_id=sample_annotations[0].id,
+                    related_annotation_ids=[item.id for item in sample_annotations if item.id],
+                    message="分类整理使用样本标签，不支持几何标注对象；如需处理历史对象，请先切回对应几何任务。",
+                )
+            tag_names = sorted({tag.name.strip() for tag in sample.tags if tag.name.strip()})
+            if not tag_names:
+                issues.add("warning", "SAMPLE_TAG_MISSING", sample=sample)
+            else:
+                annotated_sample_count += 1
                 split_name = (sample.split or "unassigned").strip() or "unassigned"
-                split_class_counts[split_name][label] += 1
-            _check_geometry(annotation, sample, image_size, issues)
-        _check_duplicate_annotations(sample, sample_annotations, issues)
+                for tag_name in tag_names:
+                    class_counts[tag_name] += 1
+                    split_class_counts[split_name][tag_name] += 1
+            if sample.review_status == "rejected":
+                issues.add("warning", "REJECTED_SAMPLE", sample=sample)
+            elif tag_names and sample.review_status in {"not_reviewed", "in_review"}:
+                issues.add("info", "REVIEW_PENDING", sample=sample)
 
-    _check_split_leakage(image_samples, issues)
+    elif task_capabilities is not None:
+        allowed_shape_types = set(task_capabilities["allowed_shape_types"])
+        _check_geometry_task(
+            image_samples,
+            annotations_by_sample,
+            allowed_shape_types,
+            issues,
+        )
+        annotated_sample_count = _check_geometry_samples(
+            image_samples,
+            annotations_by_sample,
+            class_counts,
+            split_class_counts,
+            issues,
+        )
+
+    _check_split_leakage(quality_samples, issues)
     _check_class_distribution(class_counts, split_class_counts, issues)
 
     visible_issues = issues.visible()
@@ -160,7 +190,13 @@ def build_quality_report(
         generated_at=utc_now(),
         sample_count=len(samples),
         image_sample_count=len(image_samples),
-        annotated_sample_count=annotated_sample_count,
+        samples_with_objects_count=annotated_sample_count,
+        confirmed_empty_sample_count=(
+            annotation_progress_counts["completed_empty"]
+            if task_capabilities is not None and dataset.task_type != "classification"
+            else 0
+        ),
+        annotation_progress_counts=dict(sorted(annotation_progress_counts.items())),
         annotation_count=sum(len(items) for items in annotations_by_sample.values()),
         issue_count=issues.total,
         error_count=issues.severity_counts["error"],
@@ -176,6 +212,78 @@ def build_quality_report(
         },
         issues=visible_issues,
     )
+
+
+def _check_geometry_task(
+    image_samples: list[Sample],
+    annotations_by_sample: dict[int, list[AnnotationRead]],
+    allowed_shape_types: set[str],
+    issues: _IssueCollector,
+) -> None:
+    allowed_copy = "、".join(sorted(allowed_shape_types)) or "无"
+    for sample in image_samples:
+        for annotation in annotations_by_sample.get(sample.id or 0, []):
+            if annotation.shape_type not in allowed_shape_types:
+                issues.add(
+                    "error",
+                    "TASK_SHAPE_MISMATCH",
+                    sample=sample,
+                    annotation_id=annotation.id,
+                    related_annotation_ids=[annotation.id],
+                    message=f"当前任务只允许 {allowed_copy}，该对象为 {annotation.shape_type}。",
+                )
+
+
+def _check_geometry_samples(
+    image_samples: list[Sample],
+    annotations_by_sample: dict[int, list[AnnotationRead]],
+    class_counts: Counter[str],
+    split_class_counts: dict[str, Counter[str]],
+    issues: _IssueCollector,
+) -> int:
+    annotated_sample_count = 0
+    for sample in image_samples:
+        sample_id = sample.id or 0
+        sample_annotations = annotations_by_sample.get(sample_id, [])
+        if sample.file_status in {"missing", "permission_denied"}:
+            issues.add("error", "FILE_UNAVAILABLE", sample=sample)
+            continue
+        if not sample_annotations:
+            if sample.annotation_progress == "completed_empty":
+                if sample.review_status == "rejected":
+                    issues.add("info", "REJECTED_SAMPLE", sample=sample)
+                continue
+            if sample.annotation_progress == "completed_with_objects":
+                issues.add("error", "ANNOTATION_PROGRESS_CONFLICT", sample=sample)
+            elif sample.annotation_progress == "in_progress":
+                issues.add("warning", "ANNOTATION_INCOMPLETE", sample=sample)
+            else:
+                issues.add("warning", "ANNOTATION_NOT_STARTED", sample=sample)
+            if sample.review_status == "rejected":
+                issues.add("info", "REJECTED_SAMPLE", sample=sample)
+            continue
+
+        annotated_sample_count += 1
+        if sample.annotation_progress == "completed_empty":
+            issues.add("error", "ANNOTATION_PROGRESS_CONFLICT", sample=sample)
+        if sample.review_status == "rejected":
+            issues.add("warning", "REJECTED_SAMPLE", sample=sample)
+        elif sample.review_status in {"not_reviewed", "in_review"}:
+            issues.add("info", "REVIEW_PENDING", sample=sample)
+
+        image_size = read_image_size(Path(sample.absolute_path))
+        if image_size is None:
+            issues.add("error", "IMAGE_SIZE_UNAVAILABLE", sample=sample)
+
+        for annotation in sample_annotations:
+            label = annotation.label.strip()
+            if label:
+                class_counts[label] += 1
+                split_name = (sample.split or "unassigned").strip() or "unassigned"
+                split_class_counts[split_name][label] += 1
+            _check_geometry(annotation, sample, image_size, issues)
+        _check_duplicate_annotations(sample, sample_annotations, issues)
+    return annotated_sample_count
 
 
 def _check_geometry(

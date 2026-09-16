@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.job import JobRead
+
 
 AnnotationExportFormat = Literal[
     "labelme",
@@ -22,6 +24,7 @@ class AnnotationExportSampleQuery(BaseModel):
     tag: str | None = None
     split: str | None = None
     review_status: str | None = None
+    annotation_progress: str | None = None
     sample_ids: list[int] | None = None
     sort_by: str = "relative_path"
     sort_order: Literal["asc", "desc"] = "asc"
@@ -63,3 +66,27 @@ class AnnotationExportPrecheckResponse(BaseModel):
     info_count: int = 0
     truncated_issue_count: int = 0
     blocked: bool
+
+
+class AnnotationExportJobCreateRequest(BaseModel):
+    format: Literal[
+        "labelme",
+        "coco_detection",
+        "coco_segmentation",
+        "yolo_detection",
+        "yolo_segmentation",
+        "voc",
+    ] = "labelme"
+    sample_query: AnnotationExportSampleQuery = Field(default_factory=AnnotationExportSampleQuery)
+    include_empty: bool = False
+
+
+class AnnotationExportJobParameters(AnnotationExportJobCreateRequest):
+    class_map: list[AnnotationClassMapItem] = Field(default_factory=list)
+    precheck_summary: dict[str, int] = Field(default_factory=dict)
+    request_fingerprint: str
+
+
+class AnnotationExportJobCreateResponse(BaseModel):
+    job: JobRead
+    created: bool

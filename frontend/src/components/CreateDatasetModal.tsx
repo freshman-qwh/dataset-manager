@@ -3,6 +3,7 @@ import { FormEvent, useState } from "react";
 import type { DatasetCreate } from "../types/dataset";
 import DirectoryPickerModal from "./DirectoryPickerModal";
 import Modal from "./Modal";
+import { datasetTaskOptions } from "../utils/workflow";
 
 interface CreateDatasetModalProps {
   open: boolean;
@@ -13,7 +14,7 @@ interface CreateDatasetModalProps {
 export default function CreateDatasetModal({ open, onClose, onCreate }: CreateDatasetModalProps) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [taskType, setTaskType] = useState("classification");
+  const [taskType, setTaskType] = useState<DatasetCreate["task_type"]>("detection");
   const [rootPath, setRootPath] = useState("");
   const [source, setSource] = useState("");
   const [modality, setModality] = useState("");
@@ -33,7 +34,7 @@ export default function CreateDatasetModal({ open, onClose, onCreate }: CreateDa
       await onCreate({
         name: name.trim(),
         description: description.trim() || null,
-        task_type: taskType.trim() || null,
+        task_type: taskType,
         root_path: rootPath.trim() || null,
         source: source.trim() || null,
         modality: modality.trim() || null,
@@ -49,7 +50,7 @@ export default function CreateDatasetModal({ open, onClose, onCreate }: CreateDa
       setLicense("");
       setOwner("");
       setProject("");
-      setTaskType("classification");
+      setTaskType("detection");
       onClose();
     } finally {
       setSaving(false);
@@ -73,15 +74,12 @@ export default function CreateDatasetModal({ open, onClose, onCreate }: CreateDa
           <span className="text-sm font-medium text-gray-700">任务类型</span>
           <select
             value={taskType}
-            onChange={(event) => setTaskType(event.target.value)}
+            onChange={(event) => setTaskType(event.target.value as DatasetCreate["task_type"])}
             className="mt-2 w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm outline-none transition focus:border-gray-900"
           >
-            <option value="classification">分类</option>
-            <option value="detection">检测</option>
-            <option value="segmentation">分割</option>
-            <option value="tabular">表格</option>
-            <option value="other">其他</option>
+            {datasetTaskOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
+          <span className="mt-1 block text-xs text-gray-500">{datasetTaskOptions.find((option) => option.value === taskType)?.description}</span>
         </label>
         <label className="block">
           <span className="text-sm font-medium text-gray-700">扫描目录</span>

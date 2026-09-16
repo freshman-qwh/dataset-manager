@@ -55,8 +55,16 @@ frontend/.vite/
 # Database
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
 *.sqlite
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
 *.sqlite3
+*.sqlite3-journal
+*.sqlite3-shm
+*.sqlite3-wal
 database/*.db
 database/*.sqlite
 database/*.sqlite3
@@ -66,6 +74,7 @@ storage/datasets/
 storage/thumbnails/
 storage/cache/
 storage/tmp/
+storage/job-artifacts/
 
 # Large dataset files and archives
 *.zip

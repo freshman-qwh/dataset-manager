@@ -9,7 +9,7 @@ import {
   type WheelEvent
 } from "react";
 
-import type { AnnotationObject, AnnotationShapeType, Tag } from "../../types/dataset";
+import type { AnnotationClass, AnnotationObject, AnnotationShapeType } from "../../types/dataset";
 import type { AnnotationTool } from "./AnnotationToolbar";
 
 interface Point {
@@ -82,8 +82,8 @@ interface AnnotationCanvasProps {
   activeObjectId: string | null;
   tool: AnnotationTool;
   activeLabel: string;
-  activeTagId: number | null;
-  tags: Tag[];
+  activeClassId: number | null;
+  annotationClasses: AnnotationClass[];
   onObjectsPreview: (objects: AnnotationObject[]) => void;
   onObjectsCommit: (objects: AnnotationObject[], previousObjects?: AnnotationObject[]) => void;
   onActiveObjectChange: (clientId: string | null) => void;
@@ -222,8 +222,8 @@ export default function AnnotationCanvas({
   activeObjectId,
   tool,
   activeLabel,
-  activeTagId,
-  tags,
+  activeClassId,
+  annotationClasses,
   onObjectsPreview,
   onObjectsCommit,
   onActiveObjectChange,
@@ -300,8 +300,14 @@ export default function AnnotationCanvas({
     return () => observer.disconnect();
   }, []);
 
-  const tagById = useMemo(() => new Map(tags.map((tag) => [tag.id, tag])), [tags]);
-  const tagByName = useMemo(() => new Map(tags.map((tag) => [tag.name.toLowerCase(), tag])), [tags]);
+  const classById = useMemo(
+    () => new Map(annotationClasses.map((annotationClass) => [annotationClass.id, annotationClass])),
+    [annotationClasses]
+  );
+  const classByName = useMemo(
+    () => new Map(annotationClasses.map((annotationClass) => [annotationClass.name.toLowerCase(), annotationClass])),
+    [annotationClasses]
+  );
 
   const fitImage = useCallback(() => {
     if (!imageSize || viewport.width <= 0 || viewport.height <= 0) {
@@ -437,8 +443,8 @@ export default function AnnotationCanvas({
 
   function objectColor(object: AnnotationObject, index: number): string {
     return (
-      (object.tag_id ? tagById.get(object.tag_id)?.color : undefined) ||
-      tagByName.get(object.label.toLowerCase())?.color ||
+      (object.class_id ? classById.get(object.class_id)?.color : undefined) ||
+      classByName.get(object.label.toLowerCase())?.color ||
       fallbackColors[index % fallbackColors.length]
     );
   }
@@ -467,7 +473,7 @@ export default function AnnotationCanvas({
     const nextObject: AnnotationObject = {
       client_id: makeClientId(),
       label,
-      tag_id: activeTagId,
+      class_id: activeClassId,
       shape_type: shapeType,
       points: shapeType === "rectangle" ? normalizeRectangle(points) : points,
       flags: {},

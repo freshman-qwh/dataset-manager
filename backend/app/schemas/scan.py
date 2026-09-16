@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field
 
+from app.schemas.job import JobRead
+
 
 class ScanRequest(BaseModel):
     folder_path: str | None = Field(
@@ -18,4 +20,13 @@ class ScanResult(BaseModel):
     missing: int
     skipped_existing: int
     skipped_unsupported: int
+    hashed: int
+    hash_skipped_unchanged: int
+    batches_committed: int
+    error_count: int
     errors: list[str] = Field(default_factory=list)
+
+
+class ScanJobCreateResponse(BaseModel):
+    job: JobRead
+    created: bool

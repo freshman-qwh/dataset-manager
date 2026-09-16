@@ -1,7 +1,7 @@
 from sqlmodel import Session
 
 from app.services.dataset_service import get_dataset_or_404
-from app.services import annotation_service
+from app.services import annotation_service, triage_service
 from app.services.sample_service import get_filtered_samples
 from app.services.stats_service import get_dataset_stats
 
@@ -36,6 +36,8 @@ def export_manifest(
     stats = get_dataset_stats(session, dataset_id)
     sample_ids = [sample.id for sample in samples if sample.id is not None]
     annotations = annotation_service.annotations_by_sample(session, sample_ids)
+    defect_types = triage_service.defect_types_by_sample(session, sample_ids)
+    triage_policy = triage_service.get_triage_policy(session, dataset_id)
 
     return {
         "dataset": {
@@ -52,6 +54,7 @@ def export_manifest(
             "notes": dataset.notes,
             "created_at": dataset.created_at.isoformat(),
             "updated_at": dataset.updated_at.isoformat(),
+            "triage_policy": triage_policy.model_dump(),
         },
         "filters": {
             "search": search,
@@ -82,6 +85,34 @@ def export_manifest(
                 "last_scanned_at": sample.last_scanned_at.isoformat() if sample.last_scanned_at else None,
                 "split": sample.split,
                 "review_status": sample.review_status,
+                "triage": {
+                    "status": sample.triage_status,
+                    "ok_grade": sample.ok_grade,
+                    "defect_severity": sample.defect_severity,
+                    "defect_types": [
+                        {
+                            "id": item.id,
+                            "name": item.name,
+                            "code": item.code,
+                            "parent_id": item.parent_id,
+                        }
+                        for item in defect_types.get(sample.id or 0, [])
+                    ],
+                    "primary_defect_type_id": sample.primary_defect_type_id,
+                    "note": sample.triage_note,
+                    "version": sample.triage_version,
+                    "triaged_at": sample.triaged_at.isoformat() if sample.triaged_at else None,
+                    "policy_version": sample.triage_policy_version,
+                    "triaged_file_hash": sample.triaged_file_hash,
+                    "export_bucket": triage_service.configured_export_bucket(
+                        triage_policy,
+                        triage_status=sample.triage_status,
+                        ok_grade=sample.ok_grade,
+                        defect_severity=sample.defect_severity,
+                        defect_types=defect_types.get(sample.id or 0, []),
+                        primary_defect_type_id=sample.primary_defect_type_id,
+                    ),
+                },
                 "notes": sample.notes,
                 "metadata_json": sample.metadata_json,
                 "tags": [tag.name for tag in sample.tags],
@@ -89,7 +120,7 @@ def export_manifest(
                     {
                         "id": annotation.id,
                         "label": annotation.label,
-                        "tag_id": annotation.tag_id,
+                        "class_id": annotation.class_id,
                         "shape_type": annotation.shape_type,
                         "points": annotation.points,
                         "flags": annotation.flags,

@@ -1,8 +1,32 @@
+import type {
+  AnnotationClassMapItem,
+  AnnotationExportFormat,
+  AnnotationExportSampleQuery
+} from "./annotationExport";
+
+export type DatasetTaskType = "detection" | "segmentation" | "classification";
+export type AnnotationProgress = "not_started" | "in_progress" | "completed_empty" | "completed_with_objects";
+export type ReviewStatus = "not_reviewed" | "in_review" | "approved" | "rejected";
+export type AnnotationQueueScope = "all_pending" | "current_filter" | "current_split";
+export type TriageStatus = "untriaged" | "pending" | "ok" | "ng";
+export type OkGrade = "clear" | "borderline";
+export type DefectSeverity = "mild" | "moderate" | "severe";
+
+export interface DatasetTaskCapabilities {
+  label: string;
+  annotation_mode: "geometry" | "sample_tags" | "unsupported" | string;
+  allowed_shape_types: AnnotationShapeType[];
+  default_export_format: string;
+  supported: boolean;
+  unsupported_reason: string | null;
+}
+
 export interface Dataset {
   id: number;
   name: string;
   description: string | null;
-  task_type: string | null;
+  task_type: DatasetTaskType | string;
+  task_capabilities: DatasetTaskCapabilities;
   root_path: string | null;
   source: string | null;
   modality: string | null;
@@ -11,6 +35,8 @@ export interface Dataset {
   project: string | null;
   notes: string | null;
   auto_scan_on_open: boolean;
+  revision: number;
+  triage_policy_version: number;
   sample_count: number;
   created_at: string;
   updated_at: string;
@@ -19,7 +45,7 @@ export interface Dataset {
 export interface DatasetCreate {
   name: string;
   description?: string | null;
-  task_type?: string | null;
+  task_type?: DatasetTaskType;
   root_path?: string | null;
   source?: string | null;
   modality?: string | null;
@@ -48,6 +74,22 @@ export interface TagCreate {
   aliases?: string[];
 }
 
+export interface AnnotationClass {
+  id: number;
+  dataset_id: number;
+  name: string;
+  color: string | null;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AnnotationClassCreate {
+  name: string;
+  color?: string | null;
+  description?: string | null;
+}
+
 export interface Sample {
   id: number;
   dataset_id: number;
@@ -63,7 +105,18 @@ export interface Sample {
   file_modified_at: string | null;
   last_scanned_at: string | null;
   split: string | null;
-  review_status: string;
+  annotation_progress: AnnotationProgress;
+  review_status: ReviewStatus;
+  triage_status: TriageStatus;
+  ok_grade: OkGrade | null;
+  defect_severity: DefectSeverity | null;
+  primary_defect_type_id: number | null;
+  triage_note: string | null;
+  triage_version: number;
+  triaged_at: string | null;
+  triage_policy_version: number | null;
+  triaged_file_hash: string | null;
+  triage_outdated: boolean;
   notes: string | null;
   metadata: Record<string, unknown>;
   tags: Tag[];
@@ -78,6 +131,7 @@ export interface SampleListResponse {
   page_size: number;
   sort_by: string;
   sort_order: "asc" | "desc" | string;
+  thumbnail_prefetch_sample_ids: number[];
 }
 
 export interface SampleNavigationResponse {
@@ -86,13 +140,16 @@ export interface SampleNavigationResponse {
   next_sample: Sample | null;
   current_index: number | null;
   total: number;
+  remaining: number;
+  queue_scope: AnnotationQueueScope;
   sort_by: string;
   sort_order: "asc" | "desc" | string;
 }
 
 export interface SampleUpdate {
   split?: string | null;
-  review_status?: string | null;
+  annotation_progress?: AnnotationProgress;
+  review_status?: ReviewStatus;
   notes?: string | null;
   tags?: string[];
 }
@@ -100,6 +157,8 @@ export interface SampleUpdate {
 export interface BatchSampleUpdate {
   sample_ids: number[];
   split?: string | null;
+  annotation_progress?: AnnotationProgress;
+  review_status?: ReviewStatus;
   add_tags?: string[];
   replace_tags?: string[];
 }
@@ -137,7 +196,7 @@ export interface AnnotationObject {
   dataset_id?: number;
   client_id: string;
   label: string;
-  tag_id: number | null;
+  class_id: number | null;
   shape_type: AnnotationShapeType;
   points: number[];
   flags: Record<string, boolean>;
@@ -154,7 +213,7 @@ export interface AnnotationObject {
 
 export interface AnnotationReplaceItem {
   label: string;
-  tag_id?: number | null;
+  class_id?: number | null;
   shape_type: AnnotationShapeType;
   points: number[];
   flags?: Record<string, boolean>;
@@ -170,7 +229,14 @@ export interface AnnotationReplaceItem {
 export interface AnnotationReplaceRequest {
   annotations: AnnotationReplaceItem[];
   review_status?: string | null;
-  sync_sample_tags?: boolean;
+  save_mode?: "draft" | "complete" | "confirm_empty";
+}
+
+export interface AnnotationTagSyncResult {
+  sample_id: number;
+  source: "annotation_classes";
+  added_tags: string[];
+  existing_tags: string[];
 }
 
 export interface DatasetStats {
@@ -181,12 +247,17 @@ export interface DatasetStats {
   by_extension: Record<string, number>;
   by_status: Record<string, number>;
   by_split: Record<string, number>;
+  by_annotation_progress: Record<AnnotationProgress | string, number>;
   by_review_status: Record<string, number>;
+  by_triage_status: Record<string, number>;
+  by_ok_grade: Record<string, number>;
+  by_defect_severity: Record<string, number>;
+  triage_outdated: number;
   tag_counts: Record<string, number>;
   duplicate_groups: number;
   duplicate_samples: number;
-  unlabeled_samples: number;
-  annotated_samples: number;
+  untagged_samples: number;
+  samples_with_objects: number;
   annotation_count: number;
   by_annotation_label: Record<string, number>;
 }
@@ -201,6 +272,10 @@ export interface ScanResult {
   missing: number;
   skipped_existing: number;
   skipped_unsupported: number;
+  hashed: number;
+  hash_skipped_unchanged: number;
+  batches_committed: number;
+  error_count: number;
   errors: string[];
 }
 
@@ -212,11 +287,17 @@ export interface SampleQuery {
   tag?: string;
   split?: string;
   reviewStatus?: string;
-  annotationStatus?: "empty" | "annotated" | string;
+  annotationProgress?: AnnotationProgress;
+  triageStatus?: TriageStatus;
+  okGrade?: OkGrade;
+  defectSeverity?: DefectSeverity;
+  defectTypeId?: number;
+  triageOutdated?: boolean;
   page?: number;
   pageSize?: number;
   sortBy?: string;
   sortOrder?: "asc" | "desc";
+  thumbnailPrefetch?: number;
 }
 
 export type QualityIssueSeverity = "error" | "warning" | "info";
@@ -238,7 +319,9 @@ export interface DatasetQualityReport {
   generated_at: string;
   sample_count: number;
   image_sample_count: number;
-  annotated_sample_count: number;
+  samples_with_objects_count: number;
+  confirmed_empty_sample_count: number;
+  annotation_progress_counts: Record<AnnotationProgress | string, number>;
   annotation_count: number;
   issue_count: number;
   error_count: number;
@@ -250,6 +333,52 @@ export interface DatasetQualityReport {
   class_counts: Record<string, number>;
   split_class_counts: Record<string, Record<string, number>>;
   issues: QualityIssue[];
+}
+
+export type TrainingReadinessStatus = "blocked" | "needs_attention" | "ready";
+export type TrainingReadinessScope = "filtered" | "all" | "split" | "selected";
+export type TrainingReadinessExportFormat = AnnotationExportFormat | "csv" | "manifest";
+
+export interface TrainingReadinessConfigInput {
+  format: TrainingReadinessExportFormat;
+  scope: TrainingReadinessScope;
+  split?: string | null;
+  include_empty: boolean;
+  sample_query: AnnotationExportSampleQuery;
+  class_map: AnnotationClassMapItem[];
+}
+
+export interface TrainingReadinessConfig extends TrainingReadinessConfigInput {
+  task_type: string;
+  saved_at: string;
+  last_export_at: string | null;
+}
+
+export interface TrainingReadinessReport {
+  dataset_id: number;
+  generated_at: string;
+  task_type: string;
+  task_label: string;
+  status: TrainingReadinessStatus;
+  recommended_export_format: string;
+  compatible_export_formats: string[];
+  advanced_export_formats: string[];
+  scoped_sample_count: number;
+  completed_sample_count: number;
+  confirmed_empty_sample_count: number;
+  pending_sample_count: number;
+  pending_review_count: number;
+  rejected_sample_count: number;
+  blocking_issue_count: number;
+  suggested_fix_count: number;
+  notice_count: number;
+  truncated_issue_count?: number;
+  issues?: QualityIssue[];
+  split_counts: Record<string, number>;
+  split_covered_sample_count: number;
+  split_coverage_percent: number;
+  last_export_at: string | null;
+  last_config: TrainingReadinessConfig | null;
 }
 
 export interface DirectoryEntry {
@@ -266,13 +395,36 @@ export interface DirectoryListResponse {
 export interface DuplicateGroup {
   file_hash: string;
   count: number;
-  samples: Sample[];
+  cross_split: boolean;
+  training_splits: string[];
+  split_counts: Record<string, number>;
+  samples_truncated: boolean;
+  samples: DuplicateSample[];
+}
+
+export interface DuplicateSample {
+  id: number;
+  filename: string;
+  relative_path: string;
+  file_size: number;
+  file_status: string;
+  split: string | null;
+  annotation_progress: string;
+  review_status: string;
 }
 
 export interface DuplicateReport {
   dataset_id: number;
   group_count: number;
   duplicate_sample_count: number;
+  cross_split_group_count: number;
+  cross_split_sample_count: number;
+  filtered_group_count: number;
+  leakage_only: boolean;
+  page: number;
+  page_size: number;
+  has_previous: boolean;
+  has_next: boolean;
   groups: DuplicateGroup[];
 }
 
@@ -281,17 +433,107 @@ export interface MetadataImportRequest {
   match_by: string;
   tag_column: string;
   replace_tags: boolean;
+  dry_run?: boolean;
+  expected_source_sha256?: string;
+}
+
+export interface MetadataImportJobCreateRequest {
+  file_path: string;
+  match_by: string;
+  tag_column: string;
+  replace_tags: boolean;
+  expected_source_sha256: string;
+}
+
+export interface MetadataImportIssue {
+  severity: "warning" | "error";
+  code: string;
+  message: string;
+  row_number: number | null;
+  match_value: string | null;
 }
 
 export interface MetadataImportResult {
   dataset_id: number;
   source_path: string;
+  source_size_bytes: number;
+  source_sha256: string;
+  dry_run: boolean;
   total_rows: number;
   matched: number;
+  planned_updates: number;
   updated: number;
   skipped: number;
+  error_count: number;
+  issues: MetadataImportIssue[];
   errors: string[];
 }
+
+export type LabelmeImportMode = "file" | "directory";
+export type LabelmeImportStrategy = "replace" | "append";
+export type AnnotationImportFormat = "labelme" | "yolo_detection" | "yolo_segmentation" | "coco";
+export type AnnotationImportMode = LabelmeImportMode;
+export type AnnotationImportStrategy = LabelmeImportStrategy;
+
+export interface AnnotationImportRequest extends LabelmeImportRequest {
+  format: AnnotationImportFormat;
+}
+
+export interface AnnotationImportJobCreateRequest extends LabelmeImportJobCreateRequest {
+  format: AnnotationImportFormat;
+}
+
+export interface LabelmeImportRequest {
+  path: string;
+  mode: LabelmeImportMode;
+  sample_id?: number;
+  strategy: LabelmeImportStrategy;
+  dry_run?: boolean;
+  sync_sample_tags: boolean;
+  expected_source_sha256?: string;
+  expected_plan_fingerprint?: string;
+}
+
+export interface LabelmeImportJobCreateRequest {
+  path: string;
+  mode: LabelmeImportMode;
+  sample_id?: number;
+  strategy: LabelmeImportStrategy;
+  sync_sample_tags: boolean;
+  expected_source_sha256: string;
+  expected_plan_fingerprint: string;
+}
+
+export interface LabelmeImportIssue {
+  severity: "warning" | "error";
+  code: string;
+  message: string;
+  file_path: string | null;
+  sample_id: number | null;
+  sample_path: string | null;
+}
+
+export interface LabelmeImportResult {
+  format?: AnnotationImportFormat;
+  dataset_id: number;
+  source_path: string;
+  mode: LabelmeImportMode;
+  strategy: LabelmeImportStrategy;
+  dry_run: boolean;
+  source_size_bytes: number;
+  source_sha256: string;
+  plan_fingerprint: string;
+  checked_files: number;
+  matched_files: number;
+  imported_samples: number;
+  created_annotations: number;
+  skipped_shapes: number;
+  warnings: LabelmeImportIssue[];
+  errors: LabelmeImportIssue[];
+}
+
+export type AnnotationImportIssue = LabelmeImportIssue;
+export type AnnotationImportResult = LabelmeImportResult & { format: AnnotationImportFormat };
 
 export interface ExportTemplateResponse {
   dataset_id: number;

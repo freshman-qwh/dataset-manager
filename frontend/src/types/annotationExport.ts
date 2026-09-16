@@ -13,6 +13,7 @@ export interface AnnotationExportSampleQuery {
   tag?: string;
   split?: string;
   review_status?: string;
+  annotation_progress?: string;
   sample_ids?: number[];
   sort_by?: string;
   sort_order?: "asc" | "desc";
@@ -59,4 +60,16 @@ export interface AnnotationExportPrecheckResponse {
 export interface AnnotationExportDownload {
   blob: Blob;
   filename: string;
+}
+
+export interface AnnotationExportJobCreateRequest {
+  format:
+    | "labelme"
+    | "coco_detection"
+    | "coco_segmentation"
+    | "yolo_detection"
+    | "yolo_segmentation"
+    | "voc";
+  sample_query: AnnotationExportSampleQuery;
+  include_empty: boolean;
 }

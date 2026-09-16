@@ -113,7 +113,8 @@ def test_quality_report_unifies_annotation_split_distribution_and_review_checks(
 
         assert payload["dataset_id"] == dataset_id
         assert payload["image_sample_count"] == 3
-        assert payload["annotated_sample_count"] == 2
+        assert payload["samples_with_objects_count"] == 2
+        assert payload["confirmed_empty_sample_count"] == 0
         assert payload["annotation_count"] == 3
         assert payload["review_status_counts"] == {
             "approved": 1,
@@ -124,15 +125,16 @@ def test_quality_report_unifies_annotation_split_distribution_and_review_checks(
 
         issue_codes = {issue["code"] for issue in payload["issues"]}
         assert {
-            "EMPTY_ANNOTATIONS",
+            "ANNOTATION_NOT_STARTED",
             "DUPLICATE_ANNOTATION",
             "SPLIT_LEAKAGE",
             "RARE_CLASS",
             "CLASS_SINGLE_SPLIT",
             "REJECTED_SAMPLE",
+            "TASK_SHAPE_MISMATCH",
         }.issubset(issue_codes)
 
-        empty_issue = next(issue for issue in payload["issues"] if issue["code"] == "EMPTY_ANNOTATIONS")
+        empty_issue = next(issue for issue in payload["issues"] if issue["code"] == "ANNOTATION_NOT_STARTED")
         assert empty_issue["sample_id"] == samples["empty.png"]["id"]
         assert empty_issue["sample_path"] == "empty.png"
         duplicate_issue = next(issue for issue in payload["issues"] if issue["code"] == "DUPLICATE_ANNOTATION")
@@ -144,7 +146,8 @@ def test_quality_report_unifies_annotation_split_distribution_and_review_checks(
             samples["val.png"]["id"],
         }
 
-        assert payload["check_counts"]["EMPTY_ANNOTATIONS"] == 1
+        assert payload["check_counts"]["ANNOTATION_NOT_STARTED"] == 1
+        assert payload["check_counts"]["TASK_SHAPE_MISMATCH"] == 1
         assert payload["error_count"] >= 1
         assert payload["warning_count"] >= 1
         assert payload["info_count"] >= 1
@@ -152,23 +155,338 @@ def test_quality_report_unifies_annotation_split_distribution_and_review_checks(
     app.dependency_overrides.clear()
 
 
-def test_annotation_status_filter_lists_empty_and_annotated_images(tmp_path: Path):
+def test_classification_quality_uses_sample_tags_instead_of_geometry_progress(tmp_path: Path):
+    data_root = tmp_path / "classification-quality"
+    data_root.mkdir()
+    (data_root / "labeled.png").write_bytes(png_bytes(10, 10))
+    (data_root / "pending.png").write_bytes(png_bytes(12, 10))
+
+    with make_client() as client:
+        dataset = client.post(
+            "/api/datasets",
+            json={
+                "name": "Classification Quality",
+                "root_path": str(data_root),
+                "task_type": "classification",
+            },
+        ).json()
+        assert client.post(
+            f"/api/datasets/{dataset['id']}/scan",
+            json={"folder_path": str(data_root)},
+        ).status_code == 200
+        samples = client.get(
+            f"/api/datasets/{dataset['id']}/samples",
+            params={"sort_by": "filename", "sort_order": "asc", "page_size": 20},
+        ).json()["items"]
+        assert client.patch(
+            f"/api/samples/{samples[0]['id']}",
+            json={"tags": ["accepted"]},
+        ).status_code == 200
+
+        response = client.get(f"/api/datasets/{dataset['id']}/quality-report")
+        assert response.status_code == 200
+        payload = response.json()
+
+        assert payload["samples_with_objects_count"] == 1
+        assert payload["confirmed_empty_sample_count"] == 0
+        assert payload["class_counts"] == {"accepted": 1}
+        assert payload["check_counts"]["SAMPLE_TAG_MISSING"] == 1
+        assert "ANNOTATION_NOT_STARTED" not in payload["check_counts"]
+
+    app.dependency_overrides.clear()
+
+
+def test_training_readiness_summarizes_completion_review_split_and_format(tmp_path: Path):
+    with make_client() as client:
+        dataset_id, samples = create_quality_dataset(client, tmp_path)
+        train_sample_id = samples["train.png"]["id"]
+        empty_sample_id = samples["empty.png"]["id"]
+
+        assert client.put(
+            f"/api/samples/{train_sample_id}/annotations",
+            json={
+                "annotations": [
+                    {"label": "defect", "shape_type": "rectangle", "points": [1, 1, 6, 6]}
+                ],
+                "save_mode": "complete",
+            },
+        ).status_code == 200
+        assert client.put(
+            f"/api/samples/{empty_sample_id}/annotations",
+            json={"annotations": [], "save_mode": "confirm_empty"},
+        ).status_code == 200
+
+        response = client.get(f"/api/datasets/{dataset_id}/training-readiness")
+        assert response.status_code == 200
+        payload = response.json()
+
+        assert payload["dataset_id"] == dataset_id
+        assert payload["task_type"] == "detection"
+        assert payload["status"] == "blocked"
+        assert payload["recommended_export_format"] == "coco_detection"
+        assert payload["compatible_export_formats"] == [
+            "coco_detection",
+            "yolo_detection",
+            "voc",
+        ]
+        assert payload["scoped_sample_count"] == 3
+        assert payload["completed_sample_count"] == 2
+        assert payload["confirmed_empty_sample_count"] == 1
+        assert payload["pending_sample_count"] == 1
+        assert payload["pending_review_count"] == 1
+        assert payload["rejected_sample_count"] == 1
+        assert payload["blocking_issue_count"] >= 1
+        assert payload["suggested_fix_count"] >= 1
+        assert payload["notice_count"] >= 1
+        assert payload["truncated_issue_count"] == 0
+        assert len(payload["issues"]) == (
+            payload["blocking_issue_count"]
+            + payload["suggested_fix_count"]
+            + payload["notice_count"]
+        )
+        assert payload["issues"][0]["severity"] == "error"
+        assert payload["issues"][0]["code"]
+        assert payload["issues"][0]["title"]
+        assert payload["issues"][0]["message"]
+        assert payload["split_counts"] == {"test": 1, "train": 1, "val": 1}
+        assert payload["split_covered_sample_count"] == 3
+        assert payload["split_coverage_percent"] == 100.0
+        assert payload["last_export_at"] is None
+        assert payload["last_config"] is None
+
+    app.dependency_overrides.clear()
+
+
+def test_training_readiness_persists_config_and_last_export(tmp_path: Path):
+    with make_client() as client:
+        dataset_id, samples = create_quality_dataset(client, tmp_path)
+        selected_sample_id = samples["train.png"]["id"]
+        config = {
+            "format": "coco_detection",
+            "scope": "selected",
+            "split": None,
+            "include_empty": True,
+            "sample_query": {
+                "sample_ids": [selected_sample_id],
+                "sort_by": "relative_path",
+                "sort_order": "asc",
+            },
+            "class_map": [
+                {"name": "defect", "id": 1, "coco_id": 1, "yolo_id": 0},
+            ],
+        }
+
+        saved_response = client.put(
+            f"/api/datasets/{dataset_id}/training-readiness/config",
+            json=config,
+        )
+        assert saved_response.status_code == 200
+        saved = saved_response.json()
+        assert saved["task_type"] == "detection"
+        assert saved["format"] == "coco_detection"
+        assert saved["scope"] == "selected"
+        assert saved["sample_query"]["sample_ids"] == [selected_sample_id]
+        assert saved["class_map"][0]["name"] == "defect"
+        assert saved["last_export_at"] is None
+        assert saved["saved_at"].endswith("Z") or saved["saved_at"].endswith("+00:00")
+
+        readiness = client.get(
+            f"/api/datasets/{dataset_id}/training-readiness"
+        ).json()
+        assert readiness["last_config"] == saved
+        assert readiness["last_export_at"] is None
+
+        exported_response = client.post(
+            f"/api/datasets/{dataset_id}/training-readiness/exports",
+            json=config,
+        )
+        assert exported_response.status_code == 200
+        exported = exported_response.json()
+        assert exported["last_export_at"] is not None
+        assert exported["last_export_at"].endswith("Z") or exported[
+            "last_export_at"
+        ].endswith("+00:00")
+
+        updated_config = {
+            **config,
+            "format": "yolo_detection",
+            "scope": "split",
+            "split": "train",
+            "sample_query": {
+                "split": "val",
+                "sort_by": "relative_path",
+                "sort_order": "asc",
+            },
+        }
+        updated_response = client.put(
+            f"/api/datasets/{dataset_id}/training-readiness/config",
+            json=updated_config,
+        )
+        assert updated_response.status_code == 200
+        updated = updated_response.json()
+        assert updated["format"] == "yolo_detection"
+        assert updated["split"] == "train"
+        assert updated["sample_query"]["split"] == "train"
+        assert updated["last_export_at"] == exported["last_export_at"]
+
+        refreshed = client.get(
+            f"/api/datasets/{dataset_id}/training-readiness"
+        ).json()
+        assert refreshed["last_config"] == updated
+        assert refreshed["last_export_at"] == exported["last_export_at"]
+
+    app.dependency_overrides.clear()
+
+
+def test_training_readiness_rejects_incompatible_or_incomplete_config(tmp_path: Path):
+    with make_client() as client:
+        dataset_id, _ = create_quality_dataset(client, tmp_path)
+        base_config = {
+            "format": "coco_detection",
+            "scope": "all",
+            "include_empty": False,
+            "sample_query": {},
+            "class_map": [],
+        }
+
+        incompatible = client.put(
+            f"/api/datasets/{dataset_id}/training-readiness/config",
+            json={**base_config, "format": "csv"},
+        )
+        assert incompatible.status_code == 422
+        assert "not available" in incompatible.json()["detail"]
+
+        missing_split = client.put(
+            f"/api/datasets/{dataset_id}/training-readiness/config",
+            json={**base_config, "scope": "split"},
+        )
+        assert missing_split.status_code == 422
+        assert "split is required" in missing_split.json()["detail"]
+
+        empty_selection = client.put(
+            f"/api/datasets/{dataset_id}/training-readiness/config",
+            json={**base_config, "scope": "selected"},
+        )
+        assert empty_selection.status_code == 422
+        assert "At least one sample" in empty_selection.json()["detail"]
+
+        foreign_selection = client.put(
+            f"/api/datasets/{dataset_id}/training-readiness/config",
+            json={
+                **base_config,
+                "scope": "selected",
+                "sample_query": {"sample_ids": [999999]},
+            },
+        )
+        assert foreign_selection.status_code == 422
+        assert "target dataset" in foreign_selection.json()["detail"]
+
+    app.dependency_overrides.clear()
+
+
+def test_classification_training_readiness_records_csv_export():
+    with make_client() as client:
+        dataset = client.post(
+            "/api/datasets",
+            json={"name": "Classification Training", "task_type": "classification"},
+        ).json()
+        config = {
+            "format": "csv",
+            "scope": "all",
+            "include_empty": False,
+            "sample_query": {
+                "sort_by": "relative_path",
+                "sort_order": "asc",
+            },
+            "class_map": [],
+        }
+
+        saved = client.put(
+            f"/api/datasets/{dataset['id']}/training-readiness/config",
+            json=config,
+        )
+        assert saved.status_code == 200
+        assert saved.json()["task_type"] == "classification"
+        assert saved.json()["format"] == "csv"
+
+        exported = client.post(
+            f"/api/datasets/{dataset['id']}/training-readiness/exports",
+            json=config,
+        )
+        assert exported.status_code == 200
+        assert exported.json()["last_export_at"] is not None
+
+        incompatible = client.put(
+            f"/api/datasets/{dataset['id']}/training-readiness/config",
+            json={**config, "format": "coco_detection"},
+        )
+        assert incompatible.status_code == 422
+
+    app.dependency_overrides.clear()
+
+
+def test_tagged_and_untagged_virtual_filters_return_exact_classification_ranges(tmp_path: Path):
+    data_root = tmp_path / "classification-filter"
+    data_root.mkdir()
+    (data_root / "labeled.png").write_bytes(png_bytes(10, 10))
+    (data_root / "pending.png").write_bytes(png_bytes(12, 10))
+
+    with make_client() as client:
+        dataset = client.post(
+            "/api/datasets",
+            json={
+                "name": "Classification Filter",
+                "root_path": str(data_root),
+                "task_type": "classification",
+            },
+        ).json()
+        assert client.post(
+            f"/api/datasets/{dataset['id']}/scan",
+            json={"folder_path": str(data_root)},
+        ).status_code == 200
+        samples = client.get(
+            f"/api/datasets/{dataset['id']}/samples",
+            params={"sort_by": "filename", "sort_order": "asc"},
+        ).json()["items"]
+        assert client.patch(
+            f"/api/samples/{samples[0]['id']}",
+            json={"tags": ["accepted"]},
+        ).status_code == 200
+
+        tagged = client.get(
+            f"/api/datasets/{dataset['id']}/samples",
+            params={"tag": "__tagged__", "sort_by": "filename", "sort_order": "asc"},
+        )
+        untagged = client.get(
+            f"/api/datasets/{dataset['id']}/samples",
+            params={"tag": "__untagged__", "sort_by": "filename", "sort_order": "asc"},
+        )
+
+        assert tagged.status_code == 200
+        assert [item["filename"] for item in tagged.json()["items"]] == ["labeled.png"]
+        assert untagged.status_code == 200
+        assert [item["filename"] for item in untagged.json()["items"]] == ["pending.png"]
+
+    app.dependency_overrides.clear()
+
+
+def test_annotation_progress_filter_is_independent_from_objects_and_review(tmp_path: Path):
     with make_client() as client:
         dataset_id, samples = create_quality_dataset(client, tmp_path)
 
-        empty = client.get(
+        not_started = client.get(
             f"/api/datasets/{dataset_id}/samples",
-            params={"annotation_status": "empty", "sort_by": "filename", "sort_order": "asc"},
+            params={"annotation_progress": "not_started", "sort_by": "filename", "sort_order": "asc"},
         )
-        assert empty.status_code == 200
-        assert [item["id"] for item in empty.json()["items"]] == [samples["empty.png"]["id"]]
+        assert not_started.status_code == 200
+        assert [item["id"] for item in not_started.json()["items"]] == [samples["empty.png"]["id"]]
 
-        annotated = client.get(
+        in_progress = client.get(
             f"/api/datasets/{dataset_id}/samples",
-            params={"annotation_status": "annotated", "sort_by": "filename", "sort_order": "asc"},
+            params={"annotation_progress": "in_progress", "sort_by": "filename", "sort_order": "asc"},
         )
-        assert annotated.status_code == 200
-        assert [item["filename"] for item in annotated.json()["items"]] == ["train.png", "val.png"]
+        assert in_progress.status_code == 200
+        assert [item["filename"] for item in in_progress.json()["items"]] == ["train.png", "val.png"]
 
     app.dependency_overrides.clear()
 

@@ -1,6 +1,7 @@
 import { AlertTriangle, CheckSquare, Database, FileText, Image as ImageIcon, PencilLine, Square, Video } from "lucide-react";
+import { useEffect, useState } from "react";
 
-import { getSampleFileUrl } from "../api/client";
+import { getSampleFileUrl, getSampleThumbnailUrl } from "../api/client";
 import type { Sample } from "../types/dataset";
 import { tagChipStyle } from "../utils/colors";
 
@@ -11,6 +12,8 @@ interface SampleGridProps {
   onSelect: (sample: Sample) => void;
   onToggleSelect: (sampleId: number) => void;
   onAnnotate?: (sample: Sample) => void;
+  useThumbnails?: boolean;
+  thumbnailRevision?: number;
 }
 
 function formatBytes(value: number): string {
@@ -23,7 +26,21 @@ function formatBytes(value: number): string {
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function FilePreview({ sample }: { sample: Sample }) {
+function FilePreview({
+  sample,
+  useThumbnails,
+  thumbnailRevision
+}: {
+  sample: Sample;
+  useThumbnails: boolean;
+  thumbnailRevision: number;
+}) {
+  const [thumbnailFailed, setThumbnailFailed] = useState(false);
+
+  useEffect(() => {
+    setThumbnailFailed(false);
+  }, [sample.file_hash, sample.id, thumbnailRevision, useThumbnails]);
+
   if (sample.file_status === "missing") {
     return (
       <div className="flex h-full w-full items-center justify-center bg-amber-50 text-amber-600">
@@ -33,12 +50,18 @@ function FilePreview({ sample }: { sample: Sample }) {
   }
 
   if (sample.file_type === "image") {
+    const shouldUseThumbnail = useThumbnails && !thumbnailFailed;
     return (
       <img
-        src={getSampleFileUrl(sample.id)}
+        src={shouldUseThumbnail
+          ? getSampleThumbnailUrl(sample.id, sample.file_hash)
+          : getSampleFileUrl(sample.id)}
         alt={sample.filename}
         className="h-full w-full object-cover"
         loading="lazy"
+        onError={() => {
+          if (shouldUseThumbnail) setThumbnailFailed(true);
+        }}
       />
     );
   }
@@ -71,13 +94,36 @@ function statusLabel(status: string): string {
   return "正常";
 }
 
+function triageBadge(sample: Sample): { label: string; className: string } {
+  if (sample.triage_outdated) {
+    return { label: "分拣待复核", className: "border-amber-200 bg-amber-50 text-amber-800" };
+  }
+  if (sample.triage_status === "ok") {
+    return {
+      label: sample.ok_grade === "clear" ? "完全 OK" : "勉强 OK",
+      className: sample.ok_grade === "clear"
+        ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+        : "border-amber-200 bg-amber-50 text-amber-800"
+    };
+  }
+  if (sample.triage_status === "ng") {
+    return { label: "NG", className: "border-red-200 bg-red-50 text-red-800" };
+  }
+  if (sample.triage_status === "pending") {
+    return { label: "待定", className: "border-violet-200 bg-violet-50 text-violet-800" };
+  }
+  return { label: "未分拣", className: "border-gray-200 bg-gray-50 text-gray-600" };
+}
+
 export default function SampleGrid({
   samples,
   selectedId,
   selectedSampleIds,
   onSelect,
   onToggleSelect,
-  onAnnotate
+  onAnnotate,
+  useThumbnails = true,
+  thumbnailRevision = 0
 }: SampleGridProps) {
   if (samples.length === 0) {
     return (
@@ -113,7 +159,11 @@ export default function SampleGrid({
             )}
             <button type="button" onClick={() => onSelect(sample)} className="block w-full text-left">
               <div className="aspect-[4/3] overflow-hidden bg-gray-50">
-                <FilePreview sample={sample} />
+                <FilePreview
+                  sample={sample}
+                  useThumbnails={useThumbnails}
+                  thumbnailRevision={thumbnailRevision}
+                />
               </div>
             </button>
           </div>
@@ -165,6 +215,18 @@ export default function SampleGrid({
                 {sample.tags.length > 3 && (
                   <span className="rounded-md border border-line bg-gray-50 px-2 py-0.5 text-xs text-gray-500">
                     +{sample.tags.length - 3}
+                  </span>
+                )}
+              </div>
+            )}
+            {sample.file_type === "image" && (
+              <div className="flex flex-wrap gap-1.5">
+                <span className={`rounded-md border px-2 py-0.5 text-xs font-medium ${triageBadge(sample).className}`}>
+                  {triageBadge(sample).label}
+                </span>
+                {sample.defect_severity && (
+                  <span className="rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600">
+                    {sample.defect_severity === "mild" ? "轻微" : sample.defect_severity === "moderate" ? "中等" : "严重"}
                   </span>
                 )}
               </div>

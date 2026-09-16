@@ -8,6 +8,7 @@ from app.models.dataset import utc_now
 from app.models.sample import Sample
 from app.schemas.split import SplitPlanRequest, SplitPlanResult
 from app.services.dataset_service import get_dataset_or_404
+from app.services.dataset_revision_service import bump_dataset_revision
 
 
 def apply_split_plan(session: Session, dataset_id: int, payload: SplitPlanRequest) -> SplitPlanResult:
@@ -31,6 +32,8 @@ def apply_split_plan(session: Session, dataset_id: int, payload: SplitPlanReques
             sample.updated_at = utc_now()
             session.add(sample)
 
+    if assignments:
+        bump_dataset_revision(session, dataset_id)
     session.commit()
     values = list(assignments.values())
     return SplitPlanResult(

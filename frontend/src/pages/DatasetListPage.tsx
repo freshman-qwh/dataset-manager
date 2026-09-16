@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 
 import { createDataset, deleteDataset, listDatasets, updateDataset } from "../api/client";
 import CreateDatasetModal from "../components/CreateDatasetModal";
+import DatabaseMaintenanceModal from "../components/DatabaseMaintenanceModal";
 import DatasetSettingsModal from "../components/DatasetSettingsModal";
 import type { Dataset, DatasetCreate } from "../types/dataset";
 
@@ -19,6 +20,7 @@ export default function DatasetListPage() {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [maintenanceOpen, setMaintenanceOpen] = useState(false);
   const [settingsDataset, setSettingsDataset] = useState<Dataset | null>(null);
   const [menuDatasetId, setMenuDatasetId] = useState<number | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
@@ -83,14 +85,26 @@ export default function DatasetListPage() {
             <h1 className="text-xl font-semibold tracking-normal text-ink">Dataset Manager</h1>
             <p className="mt-1 text-sm text-gray-500">本地科研数据集工作台</p>
           </div>
-          <button
-            type="button"
-            onClick={() => setModalOpen(true)}
-            className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-gray-800"
-          >
-            <Plus size={17} />
-            新建
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              title="数据库维护"
+              aria-label="数据库维护"
+              onClick={() => setMaintenanceOpen(true)}
+              className="inline-flex items-center gap-2 rounded-lg border border-line bg-white px-3 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <Database size={17} />
+              <span className="hidden sm:inline">数据库维护</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setModalOpen(true)}
+              className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-gray-800"
+            >
+              <Plus size={17} />
+              新建
+            </button>
+          </div>
         </div>
       </header>
 
@@ -164,7 +178,7 @@ export default function DatasetListPage() {
                       </p>
                     </div>
                     <span className="rounded-md border border-line bg-gray-50 px-2 py-1 text-xs text-gray-600">
-                      {dataset.task_type || "other"}
+                      {dataset.task_capabilities.label}
                     </span>
                   </div>
                   <div className="mt-5 flex flex-wrap items-center justify-between gap-2 text-sm text-gray-500">
@@ -191,6 +205,7 @@ export default function DatasetListPage() {
       </section>
 
       <CreateDatasetModal open={modalOpen} onClose={() => setModalOpen(false)} onCreate={handleCreate} />
+      <DatabaseMaintenanceModal open={maintenanceOpen} onClose={() => setMaintenanceOpen(false)} />
       <DatasetSettingsModal
         dataset={settingsDataset}
         open={Boolean(settingsDataset)}

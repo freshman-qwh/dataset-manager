@@ -79,6 +79,28 @@ def sample_splits_for_tag(client: TestClient, dataset_id: int, tag_name: str) ->
     return {sample["split"] for sample in samples}
 
 
+def test_dataset_task_type_contract_rejects_unsupported_values():
+    with make_client() as client:
+        created = client.post("/api/datasets", json={"name": "Workflow"})
+        assert created.status_code == 201
+        dataset = created.json()
+        assert dataset["task_type"] == "detection"
+        assert dataset["task_capabilities"]["allowed_shape_types"] == ["rectangle"]
+        assert dataset["task_capabilities"]["default_export_format"] == "coco_detection"
+
+        updated = client.patch(
+            f"/api/datasets/{dataset['id']}",
+            json={"task_type": "segmentation"},
+        )
+        assert updated.status_code == 200
+        assert updated.json()["task_capabilities"]["allowed_shape_types"] == ["polygon"]
+
+        assert client.post("/api/datasets", json={"name": "Legacy", "task_type": "tabular"}).status_code == 422
+        assert client.patch(f"/api/datasets/{dataset['id']}", json={"task_type": None}).status_code == 422
+
+    app.dependency_overrides.clear()
+
+
 def test_dataset_scan_batch_and_export(tmp_path: Path):
     data_root = tmp_path / "dataset"
     data_root.mkdir()
@@ -92,7 +114,7 @@ def test_dataset_scan_batch_and_export(tmp_path: Path):
             "/api/datasets",
             json={
                 "name": "Lab Run",
-                "task_type": "tabular",
+                "task_type": "classification",
                 "root_path": str(data_root),
                 "source": "instrument-a",
                 "modality": "csv",
@@ -104,6 +126,15 @@ def test_dataset_scan_batch_and_export(tmp_path: Path):
         )
         assert created.status_code == 201
         dataset = created.json()
+        assert dataset["task_type"] == "classification"
+        assert dataset["task_capabilities"] == {
+            "label": "分类整理",
+            "annotation_mode": "sample_tags",
+            "allowed_shape_types": [],
+            "default_export_format": "csv",
+            "supported": True,
+            "unsupported_reason": None,
+        }
 
         scan = client.post(f"/api/datasets/{dataset['id']}/scan", json={"folder_path": str(data_root)})
         assert scan.status_code == 200
@@ -162,6 +193,7 @@ def test_sample_annotations_replace_list_and_manifest_export(tmp_path: Path):
 
         sample = client.get(f"/api/datasets/{dataset['id']}/samples").json()["items"][0]
         payload = {
+            "save_mode": "complete",
             "annotations": [
                 {
                     "label": "scratch",
@@ -192,19 +224,33 @@ def test_sample_annotations_replace_list_and_manifest_export(tmp_path: Path):
 
         refreshed_sample = client.get(f"/api/samples/{sample['id']}").json()
         assert refreshed_sample["review_status"] == "in_review"
-        assert {tag["name"] for tag in refreshed_sample["tags"]} == {"scratch", "edge"}
+        assert refreshed_sample["annotation_progress"] == "completed_with_objects"
+        assert refreshed_sample["tags"] == []
 
         stats = client.get(f"/api/stats/datasets/{dataset['id']}").json()
-        assert stats["tag_counts"]["scratch"] == 1
-        assert stats["tag_counts"]["edge"] == 1
-        assert stats["annotated_samples"] == 1
+        assert stats["tag_counts"] == {}
+        assert stats["samples_with_objects"] == 1
+        assert stats["by_annotation_progress"]["completed_with_objects"] == 1
         assert stats["annotation_count"] == 2
         assert stats["by_annotation_label"] == {"scratch": 1, "edge": 1}
         filtered_by_annotation_label = client.get(
             f"/api/datasets/{dataset['id']}/samples",
             params={"tag": "scratch"},
         ).json()
-        assert filtered_by_annotation_label["total"] == 1
+        assert filtered_by_annotation_label["total"] == 0
+
+        annotation_classes = client.get(f"/api/datasets/{dataset['id']}/annotation-classes").json()
+        assert {item["name"] for item in annotation_classes} == {"scratch", "edge"}
+        synced = client.post(f"/api/samples/{sample['id']}/annotations/sync-sample-tags")
+        assert synced.status_code == 200
+        assert set(synced.json()["added_tags"]) == {"scratch", "edge"}
+        refreshed_sample = client.get(f"/api/samples/{sample['id']}").json()
+        assert {tag["name"] for tag in refreshed_sample["tags"]} == {"scratch", "edge"}
+        filtered_by_sample_tag = client.get(
+            f"/api/datasets/{dataset['id']}/samples",
+            params={"tag": "scratch"},
+        ).json()
+        assert filtered_by_sample_tag["total"] == 1
 
         manifest = client.get(f"/api/datasets/{dataset['id']}/export-manifest").json()
         annotations = manifest["samples"][0]["annotations"]
@@ -258,6 +304,116 @@ def test_duplicate_sample_filter_groups_hashes_together(tmp_path: Path):
     app.dependency_overrides.clear()
 
 
+def test_duplicate_report_explains_cross_split_leakage_and_paginates(tmp_path: Path):
+    data_root = tmp_path / "duplicate-leakage"
+    data_root.mkdir()
+    payloads = {
+        "a_train.png": b"leak-a",
+        "a_val.png": b"leak-a",
+        "b_val.png": b"leak-b",
+        "b_test.png": b"leak-b",
+        "b_unassigned.png": b"leak-b",
+        "c_train_first.png": b"same-split",
+        "c_train_second.png": b"same-split",
+        "d_train.png": b"assigned-and-unassigned",
+        "d_unassigned.png": b"assigned-and-unassigned",
+        "unique.png": b"unique",
+    }
+    for filename, content in payloads.items():
+        (data_root / filename).write_bytes(content)
+    original_contents = {path.name: path.read_bytes() for path in data_root.iterdir()}
+
+    with make_client() as client:
+        dataset = client.post(
+            "/api/datasets",
+            json={"name": "Duplicate leakage", "root_path": str(data_root)},
+        ).json()
+        scan = client.post(
+            f"/api/datasets/{dataset['id']}/scan",
+            json={"folder_path": str(data_root)},
+        )
+        assert scan.status_code == 200
+
+        samples = client.get(
+            f"/api/datasets/{dataset['id']}/samples",
+            params={"page_size": 20},
+        ).json()["items"]
+        samples_by_name = {sample["filename"]: sample for sample in samples}
+        splits = {
+            "a_train.png": "train",
+            "a_val.png": "val",
+            "b_val.png": "val",
+            "b_test.png": "test",
+            "c_train_first.png": "train",
+            "c_train_second.png": "train",
+            "d_train.png": "train",
+        }
+        for filename, split_name in splits.items():
+            response = client.patch(
+                f"/api/samples/{samples_by_name[filename]['id']}",
+                json={"split": split_name},
+            )
+            assert response.status_code == 200
+
+        first_page = client.get(
+            f"/api/datasets/{dataset['id']}/duplicates",
+            params={"page": 1, "page_size": 2},
+        )
+        assert first_page.status_code == 200
+        report = first_page.json()
+        assert report["group_count"] == 4
+        assert report["duplicate_sample_count"] == 9
+        assert report["cross_split_group_count"] == 2
+        assert report["cross_split_sample_count"] == 5
+        assert report["filtered_group_count"] == 4
+        assert report["has_previous"] is False
+        assert report["has_next"] is True
+        assert len(report["groups"]) == 2
+        assert all(group["cross_split"] for group in report["groups"])
+
+        three_sample_group = next(group for group in report["groups"] if group["count"] == 3)
+        assert three_sample_group["training_splits"] == ["val", "test"]
+        assert three_sample_group["split_counts"] == {"test": 1, "unassigned": 1, "val": 1}
+        assert {sample["filename"] for sample in three_sample_group["samples"]} == {
+            "b_test.png",
+            "b_unassigned.png",
+            "b_val.png",
+        }
+
+        leakage_page = client.get(
+            f"/api/datasets/{dataset['id']}/duplicates",
+            params={"leakage_only": True, "page": 99, "page_size": 1},
+        )
+        assert leakage_page.status_code == 200
+        leakage_report = leakage_page.json()
+        assert leakage_report["filtered_group_count"] == 2
+        assert leakage_report["page"] == 2
+        assert leakage_report["has_previous"] is True
+        assert leakage_report["has_next"] is False
+        assert len(leakage_report["groups"]) == 1
+        assert leakage_report["groups"][0]["training_splits"] == ["train", "val"]
+
+        target_hash = leakage_report["groups"][0]["file_hash"]
+        located = client.get(
+            f"/api/datasets/{dataset['id']}/samples",
+            params={"file_status": "duplicate", "search": target_hash, "page_size": 20},
+        )
+        assert located.status_code == 200
+        assert located.json()["total"] == 2
+        assert {item["filename"] for item in located.json()["items"]} == {
+            "a_train.png",
+            "a_val.png",
+        }
+
+        assert client.get(
+            f"/api/datasets/{dataset['id']}/duplicates",
+            params={"page_size": 101},
+        ).status_code == 422
+        assert {path.name: path.read_bytes() for path in data_root.iterdir()} == original_contents
+
+    app.dependency_overrides.clear()
+
+
 def test_sample_navigation_uses_context_and_skips_non_normal_images(tmp_path: Path):
     data_root = tmp_path / "navigation"
     data_root.mkdir()
@@ -280,6 +436,8 @@ def test_sample_navigation_uses_context_and_skips_non_normal_images(tmp_path: Pa
         assert navigation.status_code == 200
         payload = navigation.json()
         assert payload["total"] == 2
+        assert payload["remaining"] == 1
+        assert payload["queue_scope"] == "current_filter"
         assert payload["current_index"] == 0
         assert payload["current_sample"]["filename"] == "a.png"
         assert payload["previous_sample"] is None
@@ -294,8 +452,106 @@ def test_sample_navigation_uses_context_and_skips_non_normal_images(tmp_path: Pa
             },
         ).json()
         assert second_navigation["current_index"] == 1
+        assert second_navigation["remaining"] == 1
         assert second_navigation["previous_sample"]["filename"] == "a.png"
         assert second_navigation["next_sample"] is None
+
+    app.dependency_overrides.clear()
+
+
+def test_sample_navigation_supports_pending_filter_and_split_queues(tmp_path: Path):
+    data_root = tmp_path / "navigation-queues"
+    data_root.mkdir()
+    for filename in ["a.png", "b.png", "c.png", "d.png"]:
+        (data_root / filename).write_bytes(PNG_1X1)
+
+    with make_client() as client:
+        dataset = client.post(
+            "/api/datasets",
+            json={"name": "Navigation queues", "root_path": str(data_root)},
+        ).json()
+        assert client.post(
+            f"/api/datasets/{dataset['id']}/scan",
+            json={"folder_path": str(data_root)},
+        ).status_code == 200
+        samples = client.get(
+            f"/api/datasets/{dataset['id']}/samples",
+            params={"sort_by": "filename", "sort_order": "asc"},
+        ).json()["items"]
+        by_name = {sample["filename"]: sample for sample in samples}
+
+        for filename, split, progress in [
+            ("a.png", "train", "not_started"),
+            ("b.png", "train", "in_progress"),
+            ("c.png", "train", "completed_with_objects"),
+            ("d.png", "val", "not_started"),
+        ]:
+            response = client.patch(
+                f"/api/samples/{by_name[filename]['id']}",
+                json={"split": split, "annotation_progress": progress},
+            )
+            assert response.status_code == 200
+
+        all_pending = client.get(
+            f"/api/datasets/{dataset['id']}/samples/navigation",
+            params={
+                "queue_scope": "all_pending",
+                "search": "d.png",
+                "split": "val",
+                "sort_by": "filename",
+                "sort_order": "asc",
+            },
+        ).json()
+        assert all_pending["queue_scope"] == "all_pending"
+        assert all_pending["total"] == 3
+        assert all_pending["remaining"] == 2
+        assert all_pending["current_sample"]["filename"] == "a.png"
+        assert all_pending["next_sample"]["filename"] == "b.png"
+
+        current_filter = client.get(
+            f"/api/datasets/{dataset['id']}/samples/navigation",
+            params={
+                "queue_scope": "current_filter",
+                "search": "d.png",
+                "sort_by": "filename",
+                "sort_order": "asc",
+            },
+        ).json()
+        assert current_filter["total"] == 1
+        assert current_filter["remaining"] == 0
+        assert current_filter["current_sample"]["filename"] == "d.png"
+
+        current_split = client.get(
+            f"/api/datasets/{dataset['id']}/samples/navigation",
+            params={
+                "queue_scope": "current_split",
+                "sample_id": by_name["b.png"]["id"],
+                "search": "d.png",
+                "review_status": "approved",
+                "annotation_progress": "completed_with_objects",
+                "sort_by": "filename",
+                "sort_order": "asc",
+            },
+        ).json()
+        assert current_split["queue_scope"] == "current_split"
+        assert current_split["total"] == 2
+        assert current_split["current_index"] == 1
+        assert current_split["remaining"] == 1
+        assert current_split["previous_sample"]["filename"] == "a.png"
+
+        completed_outside_queue = client.get(
+            f"/api/datasets/{dataset['id']}/samples/navigation",
+            params={
+                "queue_scope": "current_split",
+                "sample_id": by_name["c.png"]["id"],
+                "sort_by": "filename",
+                "sort_order": "asc",
+            },
+        ).json()
+        assert completed_outside_queue["total"] == 2
+        assert completed_outside_queue["current_index"] is None
+        assert completed_outside_queue["remaining"] == 2
+        assert completed_outside_queue["current_sample"] is None
 
     app.dependency_overrides.clear()
 
@@ -494,7 +750,7 @@ def test_v03_duplicates_tags_metadata_import_and_templates(tmp_path: Path):
         assert stats.json()["by_split"]["train"] == 1
         assert stats.json()["by_split"]["val"] == 1
         assert stats.json()["duplicate_groups"] == 1
-        assert stats.json()["unlabeled_samples"] == 0
+        assert stats.json()["untagged_samples"] == 0
 
         samples = client.get(f"/api/datasets/{dataset['id']}/samples", params={"search": "a.png"}).json()
         sample = samples["items"][0]
@@ -577,7 +833,8 @@ def test_v03_review_missing_repair_and_metadata_delete(tmp_path: Path):
         ).json()["items"]
         first_id = samples[0]["id"]
         second_id = samples[1]["id"]
-        assert samples[0]["review_status"] == "unlabeled"
+        assert samples[0]["review_status"] == "not_reviewed"
+        assert samples[0]["annotation_progress"] == "not_started"
 
         updated = client.patch(f"/api/samples/{first_id}", json={"review_status": "approved"})
         assert updated.status_code == 200
@@ -598,7 +855,7 @@ def test_v03_review_missing_repair_and_metadata_delete(tmp_path: Path):
         stats = client.get(f"/api/stats/datasets/{dataset['id']}").json()
         assert stats["by_review_status"]["approved"] == 1
         assert stats["by_review_status"]["in_review"] == 1
-        assert stats["unlabeled_samples"] == 2
+        assert stats["untagged_samples"] == 2
 
         first.unlink()
         missing_scan = client.post(f"/api/datasets/{dataset['id']}/scan", json={"folder_path": str(data_root)})

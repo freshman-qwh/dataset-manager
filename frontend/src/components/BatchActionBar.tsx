@@ -1,4 +1,4 @@
-import { CheckSquare, Trash2, Tags } from "lucide-react";
+import { CheckSquare, ListChecks, Trash2, Tags } from "lucide-react";
 import { useState } from "react";
 
 interface BatchActionBarProps {
@@ -6,6 +6,7 @@ interface BatchActionBarProps {
   busy: boolean;
   deleting: boolean;
   onApply: (payload: { split: string | null; addTags: string[] }) => Promise<void>;
+  onTriage: () => void;
   onDelete: () => Promise<void>;
   onClear: () => void;
 }
@@ -17,7 +18,7 @@ function parseTags(value: string): string[] {
     .filter(Boolean);
 }
 
-export default function BatchActionBar({ selectedCount, busy, deleting, onApply, onDelete, onClear }: BatchActionBarProps) {
+export default function BatchActionBar({ selectedCount, busy, deleting, onApply, onTriage, onDelete, onClear }: BatchActionBarProps) {
   const [split, setSplit] = useState("");
   const [tags, setTags] = useState("");
 
@@ -58,7 +59,17 @@ export default function BatchActionBar({ selectedCount, busy, deleting, onApply,
           />
         </label>
       </div>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onTriage}
+          disabled={busy || deleting || selectedCount > 200}
+          title={selectedCount > 200 ? "批量分拣一次最多处理 200 张图片" : "预览并批量修改分拣结果"}
+          className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300"
+        >
+          <ListChecks size={16} />
+          批量分拣
+        </button>
         <button
           type="button"
           onClick={onClear}

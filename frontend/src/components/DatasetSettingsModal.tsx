@@ -3,6 +3,7 @@ import { FormEvent, useEffect, useState } from "react";
 import type { Dataset, DatasetCreate } from "../types/dataset";
 import DirectoryPickerModal from "./DirectoryPickerModal";
 import Modal from "./Modal";
+import { datasetTaskOptions } from "../utils/workflow";
 
 interface DatasetSettingsModalProps {
   dataset: Dataset | null;
@@ -24,7 +25,7 @@ export default function DatasetSettingsModal({
   onDelete
 }: DatasetSettingsModalProps) {
   const [name, setName] = useState("");
-  const [taskType, setTaskType] = useState("classification");
+  const [taskType, setTaskType] = useState<DatasetCreate["task_type"]>("detection");
   const [rootPath, setRootPath] = useState("");
   const [project, setProject] = useState("");
   const [owner, setOwner] = useState("");
@@ -42,7 +43,7 @@ export default function DatasetSettingsModal({
       return;
     }
     setName(dataset.name);
-    setTaskType(dataset.task_type || "classification");
+    setTaskType(datasetTaskOptions.some((option) => option.value === dataset.task_type) ? dataset.task_type as DatasetCreate["task_type"] : "detection");
     setRootPath(dataset.root_path || "");
     setProject(dataset.project || "");
     setOwner(dataset.owner || "");
@@ -62,7 +63,7 @@ export default function DatasetSettingsModal({
     }
     await onSave({
       name: name.trim(),
-      task_type: taskType.trim() || null,
+      task_type: taskType,
       root_path: rootPath.trim() || null,
       project: project.trim() || null,
       owner: owner.trim() || null,
@@ -110,15 +111,12 @@ export default function DatasetSettingsModal({
             <span className="text-sm font-medium text-gray-700">任务类型</span>
             <select
               value={taskType}
-              onChange={(event) => setTaskType(event.target.value)}
+              onChange={(event) => setTaskType(event.target.value as DatasetCreate["task_type"])}
               className="mt-2 w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm outline-none transition focus:border-gray-900"
             >
-              <option value="classification">分类</option>
-              <option value="detection">检测</option>
-              <option value="segmentation">分割</option>
-              <option value="tabular">表格</option>
-              <option value="other">其他</option>
+              {datasetTaskOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
+            {dataset && !dataset.task_capabilities.supported && <span className="mt-1 block text-xs text-amber-700">{dataset.task_capabilities.unsupported_reason}</span>}
           </label>
           <label className="block">
             <span className="text-sm font-medium text-gray-700">项目</span>

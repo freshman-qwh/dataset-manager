@@ -1,13 +1,16 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.workflow import AnnotationProgress, ReviewStatus
 from app.schemas.tag import TagRead
 
 
 class SampleUpdate(BaseModel):
     split: str | None = Field(default=None, max_length=40)
-    review_status: str | None = Field(default=None, max_length=40)
+    annotation_progress: AnnotationProgress | None = None
+    review_status: ReviewStatus | None = None
     notes: str | None = Field(default=None, max_length=4000)
     tags: list[str] | None = None
 
@@ -15,7 +18,8 @@ class SampleUpdate(BaseModel):
 class BatchSampleUpdate(BaseModel):
     sample_ids: list[int] = Field(min_length=1)
     split: str | None = Field(default=None, max_length=40)
-    review_status: str | None = Field(default=None, max_length=40)
+    annotation_progress: AnnotationProgress | None = None
+    review_status: ReviewStatus | None = None
     add_tags: list[str] | None = None
     replace_tags: list[str] | None = None
 
@@ -84,7 +88,18 @@ class SampleRead(BaseModel):
     file_modified_at: datetime | None
     last_scanned_at: datetime | None
     split: str | None
-    review_status: str
+    annotation_progress: AnnotationProgress
+    review_status: ReviewStatus
+    triage_status: str = "untriaged"
+    ok_grade: str | None = None
+    defect_severity: str | None = None
+    primary_defect_type_id: int | None = None
+    triage_note: str | None = None
+    triage_version: int = 0
+    triaged_at: datetime | None = None
+    triage_policy_version: int | None = None
+    triaged_file_hash: str | None = None
+    triage_outdated: bool = False
     notes: str | None
     metadata: dict[str, object] = Field(default_factory=dict)
     tags: list[TagRead] = Field(default_factory=list)
@@ -99,6 +114,7 @@ class SampleListResponse(BaseModel):
     page_size: int
     sort_by: str
     sort_order: str
+    thumbnail_prefetch_sample_ids: list[int] = Field(default_factory=list)
 
 
 class SampleNavigationResponse(BaseModel):
@@ -107,5 +123,7 @@ class SampleNavigationResponse(BaseModel):
     next_sample: SampleRead | None = None
     current_index: int | None = None
     total: int
+    remaining: int
+    queue_scope: Literal["all_pending", "current_filter", "current_split"]
     sort_by: str
     sort_order: str

@@ -17,6 +17,8 @@ class Settings(BaseModel):
     database_url: str
     database_path: Path
     storage_root: Path
+    thumbnail_cache_max_bytes: int = Field(default=1024 * 1024 * 1024, ge=1)
+    thumbnail_cache_maintenance_interval_seconds: int = Field(default=900, ge=1)
     allowed_origins: list[str] = Field(default_factory=lambda: DEFAULT_ALLOWED_ORIGINS.copy())
 
 
@@ -45,11 +47,26 @@ def _sqlite_url(path: Path) -> str:
     return f"sqlite:///{path.as_posix()}"
 
 
+def _positive_int_env(name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    if not raw_value:
+        return default
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
+
+
 @lru_cache
 def get_settings() -> Settings:
     root = _project_root()
-    load_dotenv(root / ".env")
-    load_dotenv(_backend_root() / ".env", override=True)
+    # A packaged launcher owns every path explicitly. Ignoring nearby .env files
+    # prevents an upgraded portable build from accidentally writing into its
+    # extracted program directory or a developer checkout.
+    if os.getenv("DATASET_MANAGER_PORTABLE") != "1":
+        load_dotenv(root / ".env")
+        load_dotenv(_backend_root() / ".env", override=True)
 
     storage_root = _resolve_local_path(
         os.getenv("STORAGE_ROOT"),
@@ -72,5 +89,13 @@ def get_settings() -> Settings:
         database_url=_sqlite_url(database_path),
         database_path=database_path,
         storage_root=storage_root,
+        thumbnail_cache_max_bytes=_positive_int_env(
+            "THUMBNAIL_CACHE_MAX_BYTES",
+            1024 * 1024 * 1024,
+        ),
+        thumbnail_cache_maintenance_interval_seconds=_positive_int_env(
+            "THUMBNAIL_CACHE_MAINTENANCE_INTERVAL_SECONDS",
+            900,
+        ),
         allowed_origins=origins or DEFAULT_ALLOWED_ORIGINS.copy(),
     )

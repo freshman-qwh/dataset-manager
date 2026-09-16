@@ -6,12 +6,12 @@ from fastapi import HTTPException, status
 from sqlmodel import Session, select
 
 from app.models.annotation import Annotation
+from app.models.annotation_class import AnnotationClass
 from app.models.dataset import utc_now
-from app.models.tag import Tag
-from app.schemas.annotation import AnnotationCreate, AnnotationRead, AnnotationReplaceRequest
-from app.services import sample_service
+from app.schemas.annotation import AnnotationCreate, AnnotationRead, AnnotationReplaceRequest, AnnotationTagSyncResult
+from app.services import annotation_class_service, sample_service
+from app.services.dataset_revision_service import bump_dataset_revision
 from app.services.annotation_geometry import points_within_image, polygon_area
-from app.services.tag_service import find_tag_by_name_or_alias
 from app.utils.image_size import read_image_size
 
 SHAPE_TYPES = {"rectangle", "polygon", "point", "points"}
@@ -22,7 +22,7 @@ def to_annotation_read(annotation: Annotation) -> AnnotationRead:
         id=annotation.id or 0,
         sample_id=annotation.sample_id,
         dataset_id=annotation.dataset_id,
-        tag_id=annotation.tag_id,
+        class_id=annotation.class_id,
         label=annotation.label,
         shape_type=annotation.shape_type,
         points=_loads_list(annotation.points_json),
@@ -53,10 +53,23 @@ def replace_sample_annotations(
     session: Session,
     sample_id: int,
     payload: AnnotationReplaceRequest,
+    *,
+    commit: bool = True,
+    bump_revision: bool = True,
 ) -> list[AnnotationRead]:
     sample = sample_service.get_sample_or_404(session, sample_id)
     if sample.file_type != "image":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only image samples can be annotated.")
+    if payload.save_mode == "confirm_empty" and payload.annotations:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="confirm_empty requires an empty annotation list.",
+        )
+    if payload.save_mode == "complete" and not payload.annotations:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="complete requires at least one annotation; use confirm_empty for a negative sample.",
+        )
 
     for item in payload.annotations:
         _validate_annotation(item)
@@ -76,17 +89,13 @@ def replace_sample_annotations(
 
     now = utc_now()
     created: list[Annotation] = []
-    annotation_tags: list[Tag] = []
-    seen_tag_ids: set[int] = set()
     for index, item in enumerate(payload.annotations):
-        tag = _resolve_tag(session, sample.dataset_id, item)
-        if tag and tag.id is not None and tag.id not in seen_tag_ids:
-            annotation_tags.append(tag)
-            seen_tag_ids.add(tag.id)
+        annotation_class = _resolve_annotation_class(session, sample.dataset_id, item)
         annotation = Annotation(
             sample_id=sample.id or 0,
             dataset_id=sample.dataset_id,
-            tag_id=tag.id if tag else item.tag_id,
+            class_id=annotation_class.id,
+            tag_id=None,
             label=item.label.strip(),
             shape_type=item.shape_type,
             points_json=json.dumps(item.points),
@@ -106,16 +115,65 @@ def replace_sample_annotations(
 
     if payload.review_status is not None:
         sample.review_status = _validate_review_status(payload.review_status)
-    elif created and sample.review_status == "unlabeled":
+    elif payload.save_mode in {"complete", "confirm_empty"} and sample.review_status == "not_reviewed":
         sample.review_status = "in_review"
-    if payload.sync_sample_tags:
-        sample.tags = annotation_tags
+    if payload.save_mode == "complete":
+        sample.annotation_progress = "completed_with_objects"
+    elif payload.save_mode == "confirm_empty":
+        sample.annotation_progress = "completed_empty"
+    else:
+        sample.annotation_progress = "in_progress"
     sample.updated_at = now
     session.add(sample)
-    session.commit()
-    for item in created:
-        session.refresh(item)
+    if bump_revision:
+        bump_dataset_revision(session, sample.dataset_id)
+    if commit:
+        session.commit()
+        for item in created:
+            session.refresh(item)
+    else:
+        session.flush()
     return [to_annotation_read(item) for item in created]
+
+
+def sync_annotation_classes_to_sample_tags(
+    session: Session,
+    sample_id: int,
+    *,
+    commit: bool = True,
+    bump_revision: bool = True,
+) -> AnnotationTagSyncResult:
+    sample = sample_service.get_sample_or_404(session, sample_id)
+    annotations = session.exec(
+        select(Annotation).where(Annotation.sample_id == sample_id).order_by(Annotation.z_order, Annotation.id)
+    ).all()
+    labels: list[str] = []
+    seen_labels: set[str] = set()
+    for annotation in annotations:
+        label = annotation.label.strip()
+        key = label.casefold()
+        if label and key not in seen_labels:
+            seen_labels.add(key)
+            labels.append(label)
+
+    existing_keys = {tag.name.casefold() for tag in sample.tags}
+    existing_tags = [label for label in labels if label.casefold() in existing_keys]
+    added_tags = [label for label in labels if label.casefold() not in existing_keys]
+    for label in added_tags:
+        sample.tags.append(sample_service._get_or_create_tag(session, sample.dataset_id, label))
+    sample.updated_at = utc_now()
+    session.add(sample)
+    if bump_revision and added_tags:
+        bump_dataset_revision(session, sample.dataset_id)
+    if commit:
+        session.commit()
+    else:
+        session.flush()
+    return AnnotationTagSyncResult(
+        sample_id=sample.id or 0,
+        added_tags=added_tags,
+        existing_tags=existing_tags,
+    )
 
 
 def delete_sample_annotations(session: Session, sample_ids: list[int]) -> None:
@@ -176,25 +234,22 @@ def _to_labelme_shape(annotation: AnnotationRead) -> dict[str, object]:
     }
 
 
-def _resolve_tag(session: Session, dataset_id: int, item: AnnotationCreate) -> Tag | None:
+def _resolve_annotation_class(session: Session, dataset_id: int, item: AnnotationCreate) -> AnnotationClass:
     label = item.label.strip()
-    if item.tag_id is not None:
-        tag = session.get(Tag, item.tag_id)
-        if not tag or tag.dataset_id != dataset_id:
+    if item.class_id is not None:
+        annotation_class = session.get(AnnotationClass, item.class_id)
+        if not annotation_class or annotation_class.dataset_id != dataset_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Annotation tag must belong to the same dataset.",
+                detail="Annotation class must belong to the same dataset.",
             )
-        return tag
-
-    existing = find_tag_by_name_or_alias(session, dataset_id, label)
-    if existing:
-        return existing
-
-    tag = Tag(dataset_id=dataset_id, name=label)
-    session.add(tag)
-    session.flush()
-    return tag
+        if annotation_class.name.casefold() != label.casefold():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Annotation label does not match the selected annotation class.",
+            )
+        return annotation_class
+    return annotation_class_service.get_or_create_annotation_class(session, dataset_id, label)
 
 
 def _validate_annotation(item: AnnotationCreate) -> None:
@@ -224,7 +279,7 @@ def _validate_annotation(item: AnnotationCreate) -> None:
 
 
 def _validate_review_status(value: str) -> str:
-    normalized = value.strip() or "unlabeled"
+    normalized = value.strip() or "not_reviewed"
     if normalized not in sample_service.REVIEW_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

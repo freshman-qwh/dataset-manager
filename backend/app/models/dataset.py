@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from sqlalchemy import Column, Integer, text
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
@@ -18,7 +19,7 @@ class Dataset(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(index=True, min_length=1, max_length=160)
     description: str | None = Field(default=None, max_length=2000)
-    task_type: str | None = Field(default="classification", max_length=80)
+    task_type: str = Field(default="detection", max_length=80)
     root_path: str | None = Field(default=None, max_length=2000)
     source: str | None = Field(default=None, max_length=500)
     modality: str | None = Field(default=None, max_length=120)
@@ -27,6 +28,15 @@ class Dataset(SQLModel, table=True):
     project: str | None = Field(default=None, max_length=160)
     notes: str | None = Field(default=None, max_length=4000)
     auto_scan_on_open: bool = Field(default=False)
+    triage_policy_version: int = Field(
+        default=1,
+        sa_column=Column(Integer, nullable=False, server_default=text("1")),
+    )
+    triage_policy_json: str | None = Field(default=None)
+    revision: int = Field(
+        default=1,
+        sa_column=Column(Integer, nullable=False, server_default=text("1")),
+    )
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 

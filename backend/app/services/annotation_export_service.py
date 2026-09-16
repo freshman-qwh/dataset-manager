@@ -1,9 +1,11 @@
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from io import BytesIO
 import json
 import math
 from pathlib import Path, PurePosixPath
 import re
+from typing import BinaryIO
 from xml.etree import ElementTree
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -46,6 +48,21 @@ class AnnotationExportArtifact:
     precheck: AnnotationExportPrecheckResponse
 
 
+@dataclass(frozen=True)
+class AnnotationExportFileArtifact:
+    path: Path
+    media_type: str
+    filename: str
+    precheck: AnnotationExportPrecheckResponse
+    report: dict[str, object]
+
+
+@dataclass(frozen=True)
+class AnnotationExportArtifactSpec:
+    filename: str
+    media_type: str
+
+
 class AnnotationExportBlockedError(Exception):
     def __init__(self, precheck: AnnotationExportPrecheckResponse) -> None:
         super().__init__("Annotation export was blocked by precheck errors.")
@@ -58,6 +75,14 @@ class _ExportSample:
     annotations: list[AnnotationRead]
     image_width: int
     image_height: int
+
+
+@dataclass(frozen=True)
+class _PreparedExport:
+    dataset_name: str
+    precheck: AnnotationExportPrecheckResponse
+    export_samples: list[_ExportSample]
+    report: dict[str, object]
 
 
 def export_annotations(
@@ -87,51 +112,16 @@ def export_annotations(
         sort_by=sort_by,
         sort_order="asc" if sort_order.lower() == "asc" else "desc",
     )
-    precheck = annotation_export_precheck_service.precheck_annotation_export(
+    prepared = _prepare_export(
         session,
         dataset_id,
-        AnnotationExportPrecheckRequest(
-            format=export_format,
-            sample_query=query,
-            include_empty=include_empty,
-        ),
-    )
-    if precheck.blocked:
-        raise AnnotationExportBlockedError(precheck)
-
-    dataset = dataset_service.get_dataset_or_404(session, dataset_id)
-    samples = sample_service.get_filtered_samples(
-        session,
-        dataset_id,
-        search=search,
-        file_type="image",
-        file_status=file_status,
-        tag=tag,
-        split=split,
-        review_status=review_status,
-        sample_ids=sample_ids,
-        sort_by=sort_by,
-        sort_order=sort_order,
-    )
-    annotations_by_sample = annotation_service.annotations_by_sample(
-        session,
-        [sample.id for sample in samples if sample.id is not None],
-    )
-    export_samples, skipped_empty_count = _prepare_export_samples(
-        samples,
-        annotations_by_sample,
         export_format,
-        include_empty,
+        query=query,
+        include_empty=include_empty,
     )
-    report = _build_report(
-        dataset_id,
-        dataset.name,
-        export_format,
-        precheck,
-        export_samples,
-        skipped_empty_count,
-        include_empty,
-    )
+    precheck = prepared.precheck
+    export_samples = prepared.export_samples
+    report = prepared.report
 
     if export_format == "labelme":
         content = _export_labelme_zip(session, export_samples, report)
@@ -142,7 +132,13 @@ def export_annotations(
             precheck=precheck,
         )
     if export_format in {"coco_detection", "coco_segmentation"}:
-        payload = _build_coco_payload(dataset.name, export_format, export_samples, precheck.class_map, report)
+        payload = _build_coco_payload(
+            prepared.dataset_name,
+            export_format,
+            export_samples,
+            precheck.class_map,
+            report,
+        )
         suffix = "detection" if export_format == "coco_detection" else "segmentation"
         return AnnotationExportArtifact(
             content=_json_bytes(payload),
@@ -159,12 +155,206 @@ def export_annotations(
             filename=f"dataset-{dataset_id}-yolo-{suffix}.zip",
             precheck=precheck,
         )
-    content = _export_voc_zip(dataset.name, export_samples, report)
+    content = _export_voc_zip(prepared.dataset_name, export_samples, report)
     return AnnotationExportArtifact(
         content=content,
         media_type="application/zip",
         filename=f"dataset-{dataset_id}-pascal-voc.zip",
         precheck=precheck,
+    )
+
+
+def export_labelme_annotations_to_path(
+    session: Session,
+    dataset_id: int,
+    destination: Path,
+    *,
+    query: AnnotationExportSampleQuery,
+    include_empty: bool,
+    checkpoint: Callable[[], None] | None = None,
+    progress: Callable[[int, int], None] | None = None,
+) -> AnnotationExportFileArtifact:
+    return export_annotations_to_path(
+        session,
+        dataset_id,
+        "labelme",
+        destination,
+        query=query,
+        include_empty=include_empty,
+        checkpoint=checkpoint,
+        progress=progress,
+    )
+
+
+def export_annotations_to_path(
+    session: Session,
+    dataset_id: int,
+    export_format: AnnotationExportFormat,
+    destination: Path,
+    *,
+    query: AnnotationExportSampleQuery,
+    include_empty: bool,
+    checkpoint: Callable[[], None] | None = None,
+    progress: Callable[[int, int], None] | None = None,
+) -> AnnotationExportFileArtifact:
+    spec = annotation_export_artifact_spec(dataset_id, export_format)
+    prepared = _prepare_export(
+        session,
+        dataset_id,
+        export_format,
+        query=query,
+        include_empty=include_empty,
+        checkpoint=checkpoint,
+    )
+    if export_format == "labelme":
+        _write_labelme_zip(
+            session,
+            prepared.export_samples,
+            prepared.report,
+            destination,
+            checkpoint=checkpoint,
+            progress=progress,
+        )
+    elif export_format in {"coco_detection", "coco_segmentation"}:
+        payload = _build_coco_payload(
+            prepared.dataset_name,
+            export_format,
+            prepared.export_samples,
+            prepared.precheck.class_map,
+            prepared.report,
+            checkpoint=checkpoint,
+            progress=progress,
+        )
+        _write_json_file(payload, destination, checkpoint=checkpoint)
+    elif export_format in {"yolo_detection", "yolo_segmentation"}:
+        _write_yolo_zip(
+            export_format,
+            prepared.export_samples,
+            prepared.precheck.class_map,
+            prepared.report,
+            destination,
+            checkpoint=checkpoint,
+            progress=progress,
+        )
+    else:
+        _write_voc_zip(
+            prepared.dataset_name,
+            prepared.export_samples,
+            prepared.report,
+            destination,
+            total=len(prepared.export_samples),
+            checkpoint=checkpoint,
+            progress=progress,
+        )
+    return AnnotationExportFileArtifact(
+        path=destination,
+        media_type=spec.media_type,
+        filename=spec.filename,
+        precheck=prepared.precheck,
+        report=prepared.report,
+    )
+
+
+def annotation_export_artifact_spec(
+    dataset_id: int,
+    export_format: AnnotationExportFormat,
+) -> AnnotationExportArtifactSpec:
+    if export_format == "labelme":
+        return AnnotationExportArtifactSpec(
+            filename=f"dataset-{dataset_id}-labelme-annotations.zip",
+            media_type="application/zip",
+        )
+    if export_format == "coco_detection":
+        return AnnotationExportArtifactSpec(
+            filename=f"dataset-{dataset_id}-coco-detection.json",
+            media_type="application/json;charset=utf-8",
+        )
+    if export_format == "coco_segmentation":
+        return AnnotationExportArtifactSpec(
+            filename=f"dataset-{dataset_id}-coco-segmentation.json",
+            media_type="application/json;charset=utf-8",
+        )
+    if export_format == "yolo_detection":
+        return AnnotationExportArtifactSpec(
+            filename=f"dataset-{dataset_id}-yolo-detection.zip",
+            media_type="application/zip",
+        )
+    if export_format == "yolo_segmentation":
+        return AnnotationExportArtifactSpec(
+            filename=f"dataset-{dataset_id}-yolo-segmentation.zip",
+            media_type="application/zip",
+        )
+    if export_format == "voc":
+        return AnnotationExportArtifactSpec(
+            filename=f"dataset-{dataset_id}-pascal-voc.zip",
+            media_type="application/zip",
+        )
+    raise ValueError(f"Annotation export jobs do not support format: {export_format}")
+
+
+def _prepare_export(
+    session: Session,
+    dataset_id: int,
+    export_format: AnnotationExportFormat,
+    *,
+    query: AnnotationExportSampleQuery,
+    include_empty: bool,
+    checkpoint: Callable[[], None] | None = None,
+) -> _PreparedExport:
+    precheck = annotation_export_precheck_service.precheck_annotation_export(
+        session,
+        dataset_id,
+        AnnotationExportPrecheckRequest(
+            format=export_format,
+            sample_query=query,
+            include_empty=include_empty,
+        ),
+    )
+    if precheck.blocked:
+        raise AnnotationExportBlockedError(precheck)
+    if checkpoint is not None:
+        checkpoint()
+
+    dataset = dataset_service.get_dataset_or_404(session, dataset_id)
+    samples = sample_service.get_filtered_samples(
+        session,
+        dataset_id,
+        search=query.search,
+        file_type="image",
+        file_status=query.file_status,
+        tag=query.tag,
+        split=query.split,
+        review_status=query.review_status,
+        sample_ids=query.sample_ids,
+        sort_by=query.sort_by,
+        sort_order=query.sort_order,
+    )
+    annotations_by_sample = annotation_service.annotations_by_sample(
+        session,
+        [sample.id for sample in samples if sample.id is not None],
+    )
+    if checkpoint is not None:
+        checkpoint()
+    export_samples, skipped_empty_count = _prepare_export_samples(
+        samples,
+        annotations_by_sample,
+        export_format,
+        include_empty,
+    )
+    report = _build_report(
+        dataset_id,
+        dataset.name,
+        export_format,
+        precheck,
+        export_samples,
+        skipped_empty_count,
+        include_empty,
+    )
+    return _PreparedExport(
+        dataset_name=dataset.name,
+        precheck=precheck,
+        export_samples=export_samples,
+        report=report,
     )
 
 
@@ -271,15 +461,34 @@ def _export_labelme_zip(
     report: dict[str, object],
 ) -> bytes:
     buffer = BytesIO()
-    with ZipFile(buffer, mode="w", compression=ZIP_DEFLATED) as archive:
-        for item in export_samples:
+    _write_labelme_zip(session, export_samples, report, buffer)
+    return buffer.getvalue()
+
+
+def _write_labelme_zip(
+    session: Session,
+    export_samples: list[_ExportSample],
+    report: dict[str, object],
+    destination: Path | BinaryIO,
+    *,
+    checkpoint: Callable[[], None] | None = None,
+    progress: Callable[[int, int], None] | None = None,
+) -> None:
+    total = len(export_samples)
+    with ZipFile(destination, mode="w", compression=ZIP_DEFLATED) as archive:
+        for index, item in enumerate(export_samples, start=1):
+            if checkpoint is not None and (index == 1 or index % 25 == 0):
+                checkpoint()
             payload = annotation_service.export_labelme_annotation(session, item.sample.id or 0)
             archive.writestr(
                 str(PurePosixPath("annotations") / _safe_relative_path(item.sample.relative_path).with_suffix(".json")),
                 _json_bytes(payload),
             )
+            if progress is not None and (index == total or index % 25 == 0):
+                progress(index, total)
+        if checkpoint is not None:
+            checkpoint()
         archive.writestr("export_report.json", _json_bytes(report))
-    return buffer.getvalue()
 
 
 def _build_coco_payload(
@@ -288,12 +497,18 @@ def _build_coco_payload(
     export_samples: list[_ExportSample],
     class_map: list[AnnotationClassMapItem],
     report: dict[str, object],
+    *,
+    checkpoint: Callable[[], None] | None = None,
+    progress: Callable[[int, int], None] | None = None,
 ) -> dict[str, object]:
     category_ids = {item.name: item.coco_id for item in class_map}
     images: list[dict[str, object]] = []
     annotations: list[dict[str, object]] = []
     annotation_id = 1
+    total = len(export_samples)
     for image_id, item in enumerate(export_samples, start=1):
+        if checkpoint is not None and (image_id == 1 or image_id % 25 == 0):
+            checkpoint()
         images.append(
             {
                 "id": image_id,
@@ -325,6 +540,10 @@ def _build_coco_payload(
                 coco_annotation["attributes"] = standard_attributes
             annotations.append(coco_annotation)
             annotation_id += 1
+        if progress is not None and (image_id == total or image_id % 25 == 0):
+            progress(image_id, total)
+    if checkpoint is not None:
+        checkpoint()
     return {
         "info": {"description": dataset_name, "version": "dataset-manager"},
         "licenses": [],
@@ -338,16 +557,55 @@ def _build_coco_payload(
     }
 
 
+def _write_json_file(
+    payload: dict[str, object],
+    destination: Path,
+    *,
+    checkpoint: Callable[[], None] | None = None,
+) -> None:
+    encoder = json.JSONEncoder(ensure_ascii=False, indent=2)
+    buffer = bytearray()
+    with destination.open("wb") as stream:
+        for chunk in encoder.iterencode(payload):
+            buffer.extend(chunk.encode("utf-8"))
+            if len(buffer) >= 1024 * 1024:
+                stream.write(buffer)
+                buffer.clear()
+                if checkpoint is not None:
+                    checkpoint()
+        buffer.extend(b"\n")
+        stream.write(buffer)
+    if checkpoint is not None:
+        checkpoint()
+
+
 def _export_yolo_zip(
     export_format: AnnotationExportFormat,
     export_samples: list[_ExportSample],
     class_map: list[AnnotationClassMapItem],
     report: dict[str, object],
 ) -> bytes:
-    class_ids = {item.name: item.yolo_id for item in class_map}
     buffer = BytesIO()
-    with ZipFile(buffer, mode="w", compression=ZIP_DEFLATED) as archive:
-        for item in export_samples:
+    _write_yolo_zip(export_format, export_samples, class_map, report, buffer)
+    return buffer.getvalue()
+
+
+def _write_yolo_zip(
+    export_format: AnnotationExportFormat,
+    export_samples: list[_ExportSample],
+    class_map: list[AnnotationClassMapItem],
+    report: dict[str, object],
+    destination: Path | BinaryIO,
+    *,
+    checkpoint: Callable[[], None] | None = None,
+    progress: Callable[[int, int], None] | None = None,
+) -> None:
+    class_ids = {item.name: item.yolo_id for item in class_map}
+    total = len(export_samples)
+    with ZipFile(destination, mode="w", compression=ZIP_DEFLATED) as archive:
+        for index, item in enumerate(export_samples, start=1):
+            if checkpoint is not None and (index == 1 or index % 25 == 0):
+                checkpoint()
             lines: list[str] = []
             for annotation in item.annotations:
                 class_id = class_ids[annotation.label.strip()]
@@ -364,10 +622,13 @@ def _export_yolo_zip(
             split_name = _safe_split(item.sample.split)
             label_path = PurePosixPath("labels") / split_name / _safe_relative_path(item.sample.relative_path).with_suffix(".txt")
             archive.writestr(str(label_path), ("\n".join(lines) + ("\n" if lines else "")).encode("utf-8"))
+            if progress is not None and (index == total or index % 25 == 0):
+                progress(index, total)
+        if checkpoint is not None:
+            checkpoint()
         archive.writestr("data.yaml", _yolo_data_yaml(export_format, class_map).encode("utf-8"))
         archive.writestr("classes.txt", ("\n".join(item.name for item in class_map) + "\n").encode("utf-8"))
         archive.writestr("export_report.json", _json_bytes(report))
-    return buffer.getvalue()
 
 
 def _yolo_data_yaml(export_format: AnnotationExportFormat, class_map: list[AnnotationClassMapItem]) -> str:
@@ -390,8 +651,30 @@ def _export_voc_zip(
     report: dict[str, object],
 ) -> bytes:
     buffer = BytesIO()
-    with ZipFile(buffer, mode="w", compression=ZIP_DEFLATED) as archive:
-        for item in export_samples:
+    _write_voc_zip(
+        dataset_name,
+        export_samples,
+        report,
+        buffer,
+        total=len(export_samples),
+    )
+    return buffer.getvalue()
+
+
+def _write_voc_zip(
+    dataset_name: str,
+    export_samples: Iterable[_ExportSample],
+    report: dict[str, object],
+    destination: Path | BinaryIO,
+    *,
+    total: int,
+    checkpoint: Callable[[], None] | None = None,
+    progress: Callable[[int, int], None] | None = None,
+) -> None:
+    with ZipFile(destination, mode="w", compression=ZIP_DEFLATED) as archive:
+        for index, item in enumerate(export_samples, start=1):
+            if checkpoint is not None and (index == 1 or index % 25 == 0):
+                checkpoint()
             relative_path = _safe_relative_path(item.sample.relative_path)
             root = ElementTree.Element("annotation")
             ElementTree.SubElement(root, "folder").text = dataset_name
@@ -417,8 +700,11 @@ def _export_voc_zip(
                 ElementTree.SubElement(box, "ymax").text = str(math.ceil(bbox.y_max))
             xml = ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
             archive.writestr(str(PurePosixPath("annotations") / relative_path.with_suffix(".xml")), xml)
+            if progress is not None and (index == total or index % 25 == 0):
+                progress(index, total)
+        if checkpoint is not None:
+            checkpoint()
         archive.writestr("export_report.json", _json_bytes(report))
-    return buffer.getvalue()
 
 
 def _annotation_bbox(annotation: AnnotationRead) -> BBox:

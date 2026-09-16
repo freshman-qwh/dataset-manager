@@ -96,10 +96,16 @@ def precheck_annotation_export(
         if annotations:
             annotated_sample_count += 1
         elif not payload.include_empty:
+            if sample.annotation_progress == "completed_empty":
+                message = "Confirmed negative sample has no objects and is excluded by the current empty-sample option."
+                code = "CONFIRMED_EMPTY_SAMPLE_SKIPPED"
+            else:
+                message = "Unfinished sample has no annotations and will be skipped."
+                code = "UNFINISHED_SAMPLE_SKIPPED"
             issues.add(
                 "info",
-                "EMPTY_SAMPLE_SKIPPED",
-                "Sample has no annotations and will be skipped.",
+                code,
+                message,
                 sample_id=sample_id,
                 sample_path=sample.relative_path,
             )
@@ -196,6 +202,7 @@ def _filtered_image_samples(
         tag=query.tag,
         split=query.split,
         review_status=query.review_status,
+        annotation_progress=query.annotation_progress,
         sample_ids=query.sample_ids,
         sort_by=query.sort_by,
         sort_order=query.sort_order,

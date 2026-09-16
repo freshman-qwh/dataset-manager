@@ -4,12 +4,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import HTTPException, status
+from sqlalchemy import and_, asc, delete, desc, exists, false, func, or_
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
-from app.models.sample import Sample
-from app.models.annotation import Annotation
+from app.models.dataset import Dataset, utc_now
+from app.models.defect_type import SampleDefectLink
+from app.models.sample import Sample, SampleTagLink
 from app.models.tag import Tag
+from app.core.workflow import ANNOTATION_PROGRESS_VALUES, REVIEW_STATUS_VALUES
 from app.schemas.sample import (
     BatchSampleUpdate,
     BatchSampleUpdateResult,
@@ -24,14 +28,16 @@ from app.schemas.sample import (
     SampleUpdate,
 )
 from app.services.dataset_service import get_dataset_or_404
-from app.services.tag_service import find_tag_by_name_or_alias, tag_matches_value, tag_to_read
-from app.models.dataset import utc_now
+from app.services.dataset_revision_service import bump_dataset_revision
+from app.services.tag_service import find_tag_by_name_or_alias, tag_to_read
 from app.utils.file_types import detect_file_type, detect_mime_type
 from app.utils.hashing import sha256_file
 from app.utils.paths import relative_to_root, resolve_local_path
 
-REVIEW_STATUSES = {"unlabeled", "in_review", "approved", "rejected"}
+REVIEW_STATUSES = set(REVIEW_STATUS_VALUES)
+ANNOTATION_PROGRESS_STATUSES = set(ANNOTATION_PROGRESS_VALUES)
 UNTAGGED_FILTER = "__untagged__"
+TAGGED_FILTER = "__tagged__"
 
 SORTABLE_SAMPLE_FIELDS = {
     "created_at",
@@ -44,10 +50,25 @@ SORTABLE_SAMPLE_FIELDS = {
     "file_status",
     "split",
     "review_status",
+    "annotation_progress",
+}
+
+TEXT_SORT_FIELDS = {
+    "filename",
+    "relative_path",
+    "extension",
+    "file_type",
+    "file_status",
+    "split",
+    "review_status",
+    "annotation_progress",
 }
 
 
-def to_sample_read(sample: Sample) -> SampleRead:
+def to_sample_read(
+    sample: Sample,
+    current_triage_policy_version: int | None = None,
+) -> SampleRead:
     tags = [tag_to_read(tag) for tag in sorted(sample.tags, key=lambda item: item.name)]
     return SampleRead(
         id=sample.id or 0,
@@ -64,7 +85,27 @@ def to_sample_read(sample: Sample) -> SampleRead:
         file_modified_at=sample.file_modified_at,
         last_scanned_at=sample.last_scanned_at,
         split=sample.split,
-        review_status=sample.review_status or "unlabeled",
+        annotation_progress=_normalize_annotation_progress(sample.annotation_progress),
+        review_status=sample.review_status or "not_reviewed",
+        triage_status=sample.triage_status or "untriaged",
+        ok_grade=sample.ok_grade,
+        defect_severity=sample.defect_severity,
+        primary_defect_type_id=sample.primary_defect_type_id,
+        triage_note=sample.triage_note,
+        triage_version=sample.triage_version or 0,
+        triaged_at=sample.triaged_at,
+        triage_policy_version=sample.triage_policy_version,
+        triaged_file_hash=sample.triaged_file_hash,
+        triage_outdated=(
+            (sample.triage_status or "untriaged") != "untriaged"
+            and (
+                sample.triaged_file_hash != sample.file_hash
+                or (
+                    current_triage_policy_version is not None
+                    and sample.triage_policy_version != current_triage_policy_version
+                )
+            )
+        ),
         notes=sample.notes,
         metadata=_metadata_from_json(sample.metadata_json),
         tags=tags,
@@ -82,77 +123,44 @@ def get_filtered_samples(
     tag: str | None = None,
     split: str | None = None,
     review_status: str | None = None,
-    annotation_status: str | None = None,
+    annotation_progress: str | None = None,
     sample_ids: list[int] | None = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
+    triage_status: str | None = None,
+    ok_grade: str | None = None,
+    defect_severity: str | None = None,
+    defect_type_id: int | None = None,
+    triage_outdated: bool | None = None,
 ) -> list[Sample]:
-    statement = select(Sample).where(Sample.dataset_id == dataset_id)
-    duplicate_only = file_status == "duplicate"
-    if file_type:
-        statement = statement.where(Sample.file_type == file_type)
-    if file_status and not duplicate_only:
-        statement = statement.where(Sample.file_status == file_status)
-    if split:
-        if split == "unassigned":
-            statement = statement.where(Sample.split.is_(None))
-        else:
-            statement = statement.where(Sample.split == split)
-    if review_status:
-        statement = statement.where(Sample.review_status == review_status)
-    if sample_ids:
-        statement = statement.where(Sample.id.in_(sample_ids))
-
-    samples = session.exec(statement).all()
-
-    if annotation_status:
-        annotated_ids = set(
-            session.exec(
-                select(Annotation.sample_id).where(Annotation.dataset_id == dataset_id).distinct()
-            ).all()
+    safe_sort_by = sort_by if sort_by in SORTABLE_SAMPLE_FIELDS else "created_at"
+    safe_sort_order = "asc" if sort_order.lower() == "asc" else "desc"
+    statement = _apply_sample_filters(
+        select(Sample),
+        session,
+        dataset_id,
+        search=search,
+        file_type=file_type,
+        file_status=file_status,
+        tag=tag,
+        split=split,
+        review_status=review_status,
+        annotation_progress=annotation_progress,
+        sample_ids=sample_ids,
+        triage_status=triage_status,
+        ok_grade=ok_grade,
+        defect_severity=defect_severity,
+        defect_type_id=defect_type_id,
+        triage_outdated=triage_outdated,
+    )
+    statement = statement.order_by(
+        *_sample_order_clauses(
+            safe_sort_by,
+            safe_sort_order,
+            duplicate_only=file_status == "duplicate",
         )
-        if annotation_status == "empty":
-            samples = [sample for sample in samples if sample.id not in annotated_ids]
-        elif annotation_status == "annotated":
-            samples = [sample for sample in samples if sample.id in annotated_ids]
-
-    if duplicate_only:
-        duplicate_hashes = _duplicate_hashes(session, dataset_id)
-        samples = [sample for sample in samples if sample.file_hash in duplicate_hashes]
-
-    if search:
-        needle = search.casefold()
-        samples = [
-            sample
-            for sample in samples
-            if needle in sample.filename.casefold()
-            or needle in sample.relative_path.casefold()
-            or needle in sample.file_hash.casefold()
-        ]
-
-    if tag:
-        normalized_tag = tag.strip()
-        if not normalized_tag:
-            tag = None
-        elif normalized_tag == UNTAGGED_FILTER:
-            samples = [sample for sample in samples if not sample.tags]
-            tag = None
-        else:
-            tag = normalized_tag
-
-    if tag:
-        samples = [
-            sample
-            for sample in samples
-            if any(tag_matches_value(existing, tag) for existing in sample.tags)
-        ]
-
-    sort_field = sort_by if sort_by in SORTABLE_SAMPLE_FIELDS else "created_at"
-    reverse = sort_order.lower() != "asc"
-    sorted_samples = sorted(samples, key=lambda sample: _sample_sort_value(sample, sort_field), reverse=reverse)
-    if duplicate_only:
-        return _group_duplicate_samples(sorted_samples)
-    return sorted_samples
+    ).options(selectinload(Sample.tags))
+    return list(session.exec(statement).all())
 
 
 def list_samples(
@@ -164,16 +172,23 @@ def list_samples(
     tag: str | None = None,
     split: str | None = None,
     review_status: str | None = None,
-    annotation_status: str | None = None,
+    annotation_progress: str | None = None,
     page: int = 1,
     page_size: int = 60,
     sort_by: str = "created_at",
     sort_order: str = "desc",
+    thumbnail_prefetch: int = 0,
+    triage_status: str | None = None,
+    ok_grade: str | None = None,
+    defect_severity: str | None = None,
+    defect_type_id: int | None = None,
+    triage_outdated: bool | None = None,
 ) -> SampleListResponse:
     safe_page_size = min(max(page_size, 1), 200)
     safe_sort_by = sort_by if sort_by in SORTABLE_SAMPLE_FIELDS else "created_at"
     safe_sort_order = "asc" if sort_order.lower() == "asc" else "desc"
-    samples = get_filtered_samples(
+    filtered_ids = _apply_sample_filters(
+        select(Sample.id),
         session,
         dataset_id,
         search=search,
@@ -182,21 +197,101 @@ def list_samples(
         tag=tag,
         split=split,
         review_status=review_status,
-        annotation_status=annotation_status,
-        sort_by=safe_sort_by,
-        sort_order=safe_sort_order,
+        annotation_progress=annotation_progress,
+        triage_status=triage_status,
+        ok_grade=ok_grade,
+        defect_severity=defect_severity,
+        defect_type_id=defect_type_id,
+        triage_outdated=triage_outdated,
     )
-    page_count = max((len(samples) + safe_page_size - 1) // safe_page_size, 1)
+    total = int(session.exec(select(func.count()).select_from(filtered_ids.subquery())).one())
+    page_count = max((total + safe_page_size - 1) // safe_page_size, 1)
     safe_page = min(max(page, 1), page_count)
-    start = (safe_page - 1) * safe_page_size
-    end = start + safe_page_size
+    statement = _apply_sample_filters(
+        select(Sample, Dataset.triage_policy_version).join(
+            Dataset,
+            Dataset.id == Sample.dataset_id,
+        ),
+        session,
+        dataset_id,
+        search=search,
+        file_type=file_type,
+        file_status=file_status,
+        tag=tag,
+        split=split,
+        review_status=review_status,
+        annotation_progress=annotation_progress,
+        triage_status=triage_status,
+        ok_grade=ok_grade,
+        defect_severity=defect_severity,
+        defect_type_id=defect_type_id,
+        triage_outdated=triage_outdated,
+    )
+    statement = (
+        statement.order_by(
+            *_sample_order_clauses(
+                safe_sort_by,
+                safe_sort_order,
+                duplicate_only=file_status == "duplicate",
+            )
+        )
+        .offset((safe_page - 1) * safe_page_size)
+        .limit(safe_page_size)
+        .options(selectinload(Sample.tags))
+    )
+    sample_rows = list(session.exec(statement).all())
+    samples = [row[0] for row in sample_rows]
+    thumbnail_prefetch_sample_ids: list[int] = []
+    safe_thumbnail_prefetch = min(max(thumbnail_prefetch, 0), 12)
+    if safe_thumbnail_prefetch:
+        page_start = (safe_page - 1) * safe_page_size
+        window_start = max(page_start - safe_thumbnail_prefetch, 0)
+        window_end = min(page_start + safe_page_size + safe_thumbnail_prefetch, total)
+        prefetch_statement = _apply_sample_filters(
+            select(Sample.id, Sample.file_type, Sample.file_status),
+            session,
+            dataset_id,
+            search=search,
+            file_type=file_type,
+            file_status=file_status,
+            tag=tag,
+            split=split,
+            review_status=review_status,
+            annotation_progress=annotation_progress,
+            triage_status=triage_status,
+            ok_grade=ok_grade,
+            defect_severity=defect_severity,
+            defect_type_id=defect_type_id,
+            triage_outdated=triage_outdated,
+        )
+        prefetch_statement = (
+            prefetch_statement.order_by(
+                *_sample_order_clauses(
+                    safe_sort_by,
+                    safe_sort_order,
+                    duplicate_only=file_status == "duplicate",
+                )
+            )
+            .offset(window_start)
+            .limit(window_end - window_start)
+        )
+        current_ids = {sample.id for sample in samples if sample.id is not None}
+        thumbnail_prefetch_sample_ids = [
+            int(row[0])
+            for row in session.exec(prefetch_statement).all()
+            if row[0] not in current_ids
+            and row[1] == "image"
+            and row[2] == "normal"
+        ]
+    current_policy_version = int(sample_rows[0][1]) if sample_rows else None
     return SampleListResponse(
-        items=[to_sample_read(sample) for sample in samples[start:end]],
-        total=len(samples),
+        items=[to_sample_read(sample, current_policy_version) for sample in samples],
+        total=total,
         page=safe_page,
         page_size=safe_page_size,
         sort_by=safe_sort_by,
         sort_order=safe_sort_order,
+        thumbnail_prefetch_sample_ids=thumbnail_prefetch_sample_ids,
     )
 
 
@@ -209,49 +304,432 @@ def get_sample_navigation(
     tag: str | None = None,
     split: str | None = None,
     review_status: str | None = None,
-    annotation_status: str | None = None,
+    annotation_progress: str | None = None,
+    queue_scope: str = "current_filter",
     sort_by: str = "created_at",
     sort_order: str = "desc",
 ) -> SampleNavigationResponse:
     safe_sort_by = sort_by if sort_by in SORTABLE_SAMPLE_FIELDS else "created_at"
     safe_sort_order = "asc" if sort_order.lower() == "asc" else "desc"
-    context_status = "duplicate" if file_status == "duplicate" else "normal"
-    samples = get_filtered_samples(
-        session,
-        dataset_id,
-        search=search,
-        file_type="image",
-        file_status=context_status,
-        tag=tag,
-        split=split,
-        review_status=review_status,
-        annotation_status=annotation_status,
-        sort_by=safe_sort_by,
-        sort_order=safe_sort_order,
+    safe_queue_scope = (
+        queue_scope
+        if queue_scope in {"all_pending", "current_filter", "current_split"}
+        else "current_filter"
     )
-    # The duplicate status is a virtual filter. Keep the annotation workspace
-    # constrained to normal image files after duplicate hash filtering.
-    samples = [sample for sample in samples if sample.file_type == "image" and sample.file_status == "normal"]
+    context_status = (
+        "duplicate"
+        if safe_queue_scope == "current_filter" and file_status == "duplicate"
+        else "normal"
+    )
+    queue_split = split
+    if safe_queue_scope == "current_split" and not queue_split and sample_id is not None:
+        current_sample = session.get(Sample, sample_id)
+        if current_sample and current_sample.dataset_id == dataset_id:
+            queue_split = current_sample.split or "unassigned"
 
-    current_index: int | None = None
-    if sample_id is not None:
-        current_index = next((index for index, sample in enumerate(samples) if sample.id == sample_id), None)
-    elif samples:
-        current_index = 0
+    queue_file_status = context_status if safe_queue_scope == "current_filter" else "normal"
+    queue_split_filter = (
+        queue_split
+        if safe_queue_scope == "current_split"
+        else split if safe_queue_scope == "current_filter" else None
+    )
+    order_clauses = _sample_order_clauses(
+        safe_sort_by,
+        safe_sort_order,
+        duplicate_only=queue_file_status == "duplicate",
+    )
+    filter_options = {
+        "search": search if safe_queue_scope == "current_filter" else None,
+        "file_type": "image",
+        "file_status": queue_file_status,
+        "tag": tag if safe_queue_scope == "current_filter" else None,
+        "split": queue_split_filter,
+        "review_status": review_status if safe_queue_scope == "current_filter" else None,
+        "annotation_progress": annotation_progress if safe_queue_scope == "current_filter" else None,
+        "pending_only": safe_queue_scope in {"all_pending", "current_split"},
+    }
+    if queue_file_status != "duplicate":
+        current_index, total, current_id, previous_id, next_id = _get_indexed_navigation_ids(
+            session,
+            dataset_id,
+            sample_id,
+            safe_sort_by,
+            safe_sort_order,
+            filter_options,
+        )
+    else:
+        ranked_statement = _apply_sample_filters(
+            select(
+                Sample.id.label("sample_id"),
+                func.row_number().over(order_by=order_clauses).label("position"),
+                func.lag(Sample.id).over(order_by=order_clauses).label("previous_id"),
+                func.lead(Sample.id).over(order_by=order_clauses).label("next_id"),
+                func.count().over().label("total"),
+            ),
+            session,
+            dataset_id,
+            **filter_options,
+        )
+        # Duplicate is a virtual filter; annotation navigation still excludes
+        # missing and unreadable image records from the resulting queue.
+        ranked_statement = ranked_statement.where(Sample.file_status == "normal")
+        ranked = ranked_statement.subquery()
+        row_statement = select(
+            ranked.c.sample_id,
+            ranked.c.position,
+            ranked.c.previous_id,
+            ranked.c.next_id,
+            ranked.c.total,
+        )
+        if sample_id is None:
+            row_statement = row_statement.order_by(ranked.c.position).limit(1)
+        else:
+            row_statement = row_statement.where(ranked.c.sample_id == sample_id)
+        row = session.exec(row_statement).first()
+        current_index = None
+        total = 0
+        current_id = None
+        previous_id = None
+        next_id = None
+        if row is not None:
+            current_id = int(row[0])
+            current_index = int(row[1]) - 1
+            previous_id = int(row[2]) if row[2] is not None else None
+            next_id = int(row[3]) if row[3] is not None else None
+            total = int(row[4])
+        else:
+            total_statement = _apply_sample_filters(
+                select(func.count(Sample.id)),
+                session,
+                dataset_id,
+                **filter_options,
+            ).where(Sample.file_status == "normal")
+            total = int(session.exec(total_statement).one())
 
-    current_sample = samples[current_index] if current_index is not None else None
-    previous_sample = samples[current_index - 1] if current_index is not None and current_index > 0 else None
-    next_sample = samples[current_index + 1] if current_index is not None and current_index < len(samples) - 1 else None
+    samples_by_id: dict[int, Sample] = {}
+    current_policy_version: int | None = None
+    neighbor_ids = [item_id for item_id in (current_id, previous_id, next_id) if item_id is not None]
+    if neighbor_ids:
+        neighbor_statement = (
+            select(Sample, Dataset.triage_policy_version)
+            .join(Dataset, Dataset.id == Sample.dataset_id)
+            .where(Sample.id.in_(neighbor_ids))
+            .options(selectinload(Sample.tags))
+        )
+        neighbor_rows = list(session.exec(neighbor_statement).all())
+        samples_by_id = {
+            sample.id: sample
+            for sample, _policy_version in neighbor_rows
+            if sample.id is not None
+        }
+        if neighbor_rows:
+            current_policy_version = int(neighbor_rows[0][1])
+    current_sample = samples_by_id.get(current_id) if current_id is not None else None
+    previous_sample = samples_by_id.get(previous_id) if previous_id is not None else None
+    next_sample = samples_by_id.get(next_id) if next_id is not None else None
 
     return SampleNavigationResponse(
-        current_sample=to_sample_read(current_sample) if current_sample else None,
-        previous_sample=to_sample_read(previous_sample) if previous_sample else None,
-        next_sample=to_sample_read(next_sample) if next_sample else None,
+        current_sample=(
+            to_sample_read(current_sample, current_policy_version)
+            if current_sample
+            else None
+        ),
+        previous_sample=(
+            to_sample_read(previous_sample, current_policy_version)
+            if previous_sample
+            else None
+        ),
+        next_sample=(
+            to_sample_read(next_sample, current_policy_version)
+            if next_sample
+            else None
+        ),
         current_index=current_index,
-        total=len(samples),
+        total=total,
+        remaining=max(total - (1 if current_index is not None else 0), 0),
+        queue_scope=safe_queue_scope,
         sort_by=safe_sort_by,
         sort_order=safe_sort_order,
     )
+
+
+def _apply_sample_filters(
+    statement,
+    session: Session,
+    dataset_id: int,
+    *,
+    search: str | None = None,
+    file_type: str | None = None,
+    file_status: str | None = None,
+    tag: str | None = None,
+    split: str | None = None,
+    review_status: str | None = None,
+    annotation_progress: str | None = None,
+    sample_ids: list[int] | None = None,
+    pending_only: bool = False,
+    triage_status: str | None = None,
+    ok_grade: str | None = None,
+    defect_severity: str | None = None,
+    defect_type_id: int | None = None,
+    triage_outdated: bool | None = None,
+):
+    statement = statement.where(Sample.dataset_id == dataset_id)
+    if file_type:
+        statement = statement.where(Sample.file_type == file_type)
+    if file_status == "duplicate":
+        duplicate_hashes = (
+            select(Sample.file_hash)
+            .where(
+                Sample.dataset_id == dataset_id,
+                Sample.file_hash != "",
+            )
+            .group_by(Sample.file_hash)
+            .having(func.count(Sample.id) > 1)
+        )
+        statement = statement.where(Sample.file_hash.in_(duplicate_hashes))
+    elif file_status:
+        statement = statement.where(Sample.file_status == file_status)
+    if split == "unassigned":
+        statement = statement.where(Sample.split.is_(None))
+    elif split:
+        statement = statement.where(Sample.split == split)
+    if review_status:
+        statement = statement.where(Sample.review_status == review_status)
+    if pending_only:
+        statement = statement.where(
+            or_(
+                Sample.annotation_progress.in_(("not_started", "in_progress")),
+                Sample.annotation_progress.is_(None),
+                ~Sample.annotation_progress.in_(tuple(ANNOTATION_PROGRESS_STATUSES)),
+            )
+        )
+    elif annotation_progress:
+        statement = statement.where(Sample.annotation_progress == annotation_progress)
+    if triage_status:
+        statement = statement.where(Sample.triage_status == triage_status)
+    if ok_grade:
+        statement = statement.where(Sample.ok_grade == ok_grade)
+    if defect_severity:
+        statement = statement.where(Sample.defect_severity == defect_severity)
+    if defect_type_id:
+        statement = statement.where(
+            exists(
+                select(SampleDefectLink.sample_id).where(
+                    SampleDefectLink.sample_id == Sample.id,
+                    SampleDefectLink.defect_type_id == defect_type_id,
+                )
+            )
+        )
+    if triage_outdated is not None:
+        policy_version = (
+            select(Dataset.triage_policy_version)
+            .where(Dataset.id == dataset_id)
+            .scalar_subquery()
+        )
+        outdated_condition = and_(
+            Sample.triage_status != "untriaged",
+            or_(
+                Sample.triaged_file_hash.is_(None),
+                Sample.triaged_file_hash != Sample.file_hash,
+                Sample.triage_policy_version.is_(None),
+                Sample.triage_policy_version != policy_version,
+            ),
+        )
+        statement = statement.where(
+            outdated_condition if triage_outdated else ~outdated_condition
+        )
+    if sample_ids:
+        statement = statement.where(Sample.id.in_(sample_ids))
+
+    normalized_search = (search or "").strip().casefold()
+    if normalized_search:
+        escaped = (
+            normalized_search
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        pattern = f"%{escaped}%"
+        statement = statement.where(
+            or_(
+                func.lower(Sample.filename).like(pattern, escape="\\"),
+                func.lower(Sample.relative_path).like(pattern, escape="\\"),
+                func.lower(Sample.file_hash).like(pattern, escape="\\"),
+            )
+        )
+
+    normalized_tag = (tag or "").strip()
+    tag_link_exists = exists(
+        select(SampleTagLink.sample_id).where(SampleTagLink.sample_id == Sample.id)
+    )
+    if normalized_tag == UNTAGGED_FILTER:
+        statement = statement.where(~tag_link_exists)
+    elif normalized_tag == TAGGED_FILTER:
+        statement = statement.where(tag_link_exists)
+    elif normalized_tag:
+        matched_tag = find_tag_by_name_or_alias(session, dataset_id, normalized_tag)
+        if matched_tag is None or matched_tag.id is None:
+            statement = statement.where(false())
+        else:
+            statement = statement.where(
+                exists(
+                    select(SampleTagLink.sample_id).where(
+                        SampleTagLink.sample_id == Sample.id,
+                        SampleTagLink.tag_id == matched_tag.id,
+                    )
+                )
+            )
+    return statement
+
+
+def _get_indexed_navigation_ids(
+    session: Session,
+    dataset_id: int,
+    sample_id: int | None,
+    sort_by: str,
+    sort_order: str,
+    filter_options: dict[str, object],
+) -> tuple[int | None, int, int | None, int | None, int | None]:
+    def filtered(statement):
+        return _apply_sample_filters(
+            statement,
+            session,
+            dataset_id,
+            **filter_options,
+        )
+
+    total = int(session.exec(filtered(select(func.count(Sample.id)))).one())
+    order_clauses = _sample_order_clauses(sort_by, sort_order)
+    if sample_id is None:
+        current_id = session.exec(
+            filtered(select(Sample.id)).order_by(*order_clauses).limit(1)
+        ).first()
+        if current_id is None:
+            return None, total, None, None, None
+        next_id = session.exec(
+            filtered(select(Sample.id))
+            .where(
+                _sample_relative_condition(
+                    sort_by,
+                    sort_order,
+                    _sample_sort_value_for_id(session, int(current_id), sort_by),
+                    int(current_id),
+                    before=False,
+                )
+            )
+            .order_by(*order_clauses)
+            .limit(1)
+        ).first()
+        return 0, total, int(current_id), None, int(next_id) if next_id is not None else None
+
+    current_value = session.exec(
+        filtered(select(getattr(Sample, sort_by))).where(Sample.id == sample_id)
+    ).first()
+    if current_value is None and not session.exec(
+        filtered(select(Sample.id)).where(Sample.id == sample_id)
+    ).first():
+        return None, total, None, None, None
+    before_condition = _sample_relative_condition(
+        sort_by,
+        sort_order,
+        current_value,
+        sample_id,
+        before=True,
+    )
+    after_condition = _sample_relative_condition(
+        sort_by,
+        sort_order,
+        current_value,
+        sample_id,
+        before=False,
+    )
+    current_index = int(
+        session.exec(
+            filtered(select(func.count(Sample.id))).where(before_condition)
+        ).one()
+    )
+    reverse_order = "desc" if sort_order == "asc" else "asc"
+    previous_id = session.exec(
+        filtered(select(Sample.id))
+        .where(before_condition)
+        .order_by(*_sample_order_clauses(sort_by, reverse_order))
+        .limit(1)
+    ).first()
+    next_id = session.exec(
+        filtered(select(Sample.id))
+        .where(after_condition)
+        .order_by(*order_clauses)
+        .limit(1)
+    ).first()
+    return (
+        current_index,
+        total,
+        sample_id,
+        int(previous_id) if previous_id is not None else None,
+        int(next_id) if next_id is not None else None,
+    )
+
+
+def _sample_sort_value_for_id(
+    session: Session,
+    sample_id: int,
+    sort_by: str,
+):
+    return session.exec(
+        select(getattr(Sample, sort_by)).where(Sample.id == sample_id)
+    ).one()
+
+
+def _sample_relative_condition(
+    sort_by: str,
+    sort_order: str,
+    current_value,
+    current_id: int,
+    *,
+    before: bool,
+):
+    column = getattr(Sample, sort_by)
+    expression = func.lower(column) if sort_by in TEXT_SORT_FIELDS else column
+    normalized_value = (
+        current_value.casefold()
+        if isinstance(current_value, str) and sort_by in TEXT_SORT_FIELDS
+        else current_value
+    )
+    id_before = Sample.id < current_id if sort_order == "asc" else Sample.id > current_id
+    id_after = Sample.id > current_id if sort_order == "asc" else Sample.id < current_id
+
+    if normalized_value is None:
+        same_value_before = and_(column.is_(None), id_before)
+        same_value_after = and_(column.is_(None), id_after)
+        if sort_order == "asc":
+            return same_value_before if before else or_(column.is_not(None), same_value_after)
+        return or_(column.is_not(None), same_value_before) if before else same_value_after
+
+    same_value_before = and_(expression == normalized_value, id_before)
+    same_value_after = and_(expression == normalized_value, id_after)
+    if sort_order == "asc":
+        if before:
+            return or_(column.is_(None), expression < normalized_value, same_value_before)
+        return or_(expression > normalized_value, same_value_after)
+    if before:
+        return or_(expression > normalized_value, same_value_before)
+    return or_(column.is_(None), expression < normalized_value, same_value_after)
+
+
+def _sample_order_clauses(
+    sort_by: str,
+    sort_order: str,
+    *,
+    duplicate_only: bool = False,
+):
+    sort_column = getattr(Sample, sort_by)
+    sort_expression = func.lower(sort_column) if sort_by in TEXT_SORT_FIELDS else sort_column
+    direction = asc if sort_order == "asc" else desc
+    clauses = []
+    if duplicate_only:
+        clauses.append(asc(Sample.file_hash))
+    clauses.extend((direction(sort_expression), direction(Sample.id)))
+    return clauses
 
 
 def get_sample_or_404(session: Session, sample_id: int) -> Sample:
@@ -265,7 +743,12 @@ def get_sample_or_404(session: Session, sample_id: int) -> Sample:
 
 
 def get_sample(session: Session, sample_id: int) -> SampleRead:
-    return to_sample_read(get_sample_or_404(session, sample_id))
+    sample = get_sample_or_404(session, sample_id)
+    dataset = session.get(Dataset, sample.dataset_id)
+    return to_sample_read(
+        sample,
+        dataset.triage_policy_version if dataset is not None else None,
+    )
 
 
 def _get_or_create_tag(session: Session, dataset_id: int, name: str) -> Tag:
@@ -294,6 +777,8 @@ def update_sample(session: Session, sample_id: int, payload: SampleUpdate) -> Sa
         sample.split = updates["split"]
     if "review_status" in updates and updates["review_status"] is not None:
         sample.review_status = _validate_review_status(updates["review_status"])
+    if "annotation_progress" in updates and updates["annotation_progress"] is not None:
+        sample.annotation_progress = _validate_annotation_progress(updates["annotation_progress"])
     if "notes" in updates:
         sample.notes = updates["notes"]
     if "tags" in updates and updates["tags"] is not None:
@@ -309,6 +794,8 @@ def update_sample(session: Session, sample_id: int, payload: SampleUpdate) -> Sa
 
     sample.updated_at = utc_now().astimezone(timezone.utc)
     session.add(sample)
+    if updates:
+        bump_dataset_revision(session, sample.dataset_id)
     session.commit()
     session.refresh(sample)
     return to_sample_read(sample)
@@ -322,6 +809,14 @@ def batch_update_samples(
     statement = select(Sample).where(Sample.dataset_id == dataset_id, Sample.id.in_(payload.sample_ids))
     samples = session.exec(statement).all()
 
+    if not samples:
+        return BatchSampleUpdateResult(
+            dataset_id=dataset_id,
+            requested=len(payload.sample_ids),
+            updated=0,
+            skipped=len(payload.sample_ids),
+        )
+
     add_tags = [_get_or_create_tag(session, dataset_id, name) for name in _clean_tag_names(payload.add_tags or [])]
     replace_tag_names = _clean_tag_names(payload.replace_tags or [])
     replace_tags = [_get_or_create_tag(session, dataset_id, name) for name in replace_tag_names]
@@ -331,6 +826,8 @@ def batch_update_samples(
             sample.split = payload.split or None
         if payload.review_status is not None:
             sample.review_status = _validate_review_status(payload.review_status)
+        if payload.annotation_progress is not None:
+            sample.annotation_progress = _validate_annotation_progress(payload.annotation_progress)
         if payload.replace_tags is not None:
             sample.tags = replace_tags.copy()
         elif add_tags:
@@ -339,6 +836,7 @@ def batch_update_samples(
         sample.updated_at = utc_now().astimezone(timezone.utc)
         session.add(sample)
 
+    bump_dataset_revision(session, dataset_id)
     session.commit()
     return BatchSampleUpdateResult(
         dataset_id=dataset_id,
@@ -376,6 +874,7 @@ def repair_sample_file(session: Session, sample_id: int, payload: SampleRepairRe
     _ensure_no_path_conflict(session, sample.dataset_id, path, sample.id)
     _apply_path_metadata(sample, path, dataset.root_path)
     session.add(sample)
+    bump_dataset_revision(session, sample.dataset_id)
     _commit_or_conflict(session)
     session.refresh(sample)
     return to_sample_read(sample)
@@ -415,11 +914,14 @@ def repair_missing_samples(
         except OSError as exc:
             errors.append(f"{sample.relative_path}: {exc}")
 
+    root_changed = payload.update_dataset_root and dataset.root_path != str(root)
     if payload.update_dataset_root:
         dataset.root_path = str(root)
         dataset.updated_at = utc_now()
         session.add(dataset)
 
+    if repaired or root_changed:
+        bump_dataset_revision(session, dataset_id)
     _commit_or_conflict(session)
     return MissingSampleRepairResult(
         dataset_id=dataset_id,
@@ -488,22 +990,44 @@ def _delete_samples(session: Session, samples: list[Sample]) -> None:
     from app.services import annotation_service
 
     annotation_service.delete_sample_annotations(session, [sample.id for sample in samples if sample.id is not None])
+    sample_ids = [sample.id for sample in samples if sample.id is not None]
+    if sample_ids:
+        session.exec(
+            delete(SampleDefectLink).where(SampleDefectLink.sample_id.in_(sample_ids))
+        )
     for sample in samples:
         # Metadata-only delete: detach tag links and remove the database record.
         sample.tags.clear()
         session.add(sample)
         session.delete(sample)
+    if samples:
+        bump_dataset_revision(session, samples[0].dataset_id)
     session.commit()
 
 
 def _validate_review_status(value: str) -> str:
-    normalized = value.strip() or "unlabeled"
+    normalized = value.strip() or "not_reviewed"
     if normalized not in REVIEW_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unsupported review_status: {value}",
         )
     return normalized
+
+
+def _validate_annotation_progress(value: str) -> str:
+    normalized = value.strip() or "not_started"
+    if normalized not in ANNOTATION_PROGRESS_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported annotation_progress: {value}",
+        )
+    return normalized
+
+
+def _normalize_annotation_progress(value: str | None):
+    normalized = value or "not_started"
+    return normalized if normalized in ANNOTATION_PROGRESS_STATUSES else "not_started"
 
 
 def _apply_path_metadata(sample: Sample, path: Path, root_path: str | None) -> None:
@@ -557,35 +1081,6 @@ def _clean_tag_names(raw_names: list[str]) -> list[str]:
             seen.add(key)
             unique_names.append(name)
     return unique_names
-
-
-def _duplicate_hashes(session: Session, dataset_id: int) -> set[str]:
-    samples = session.exec(select(Sample).where(Sample.dataset_id == dataset_id)).all()
-    counts: dict[str, int] = {}
-    for sample in samples:
-        if sample.file_hash:
-            counts[sample.file_hash] = counts.get(sample.file_hash, 0) + 1
-    return {file_hash for file_hash, count in counts.items() if count > 1}
-
-
-def _sample_sort_value(sample: Sample, sort_by: str):
-    value = getattr(sample, sort_by)
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value.casefold()
-    return value
-
-
-def _group_duplicate_samples(samples: list[Sample]) -> list[Sample]:
-    grouped: dict[str, list[Sample]] = {}
-    group_order: list[str] = []
-    for sample in samples:
-        if sample.file_hash not in grouped:
-            grouped[sample.file_hash] = []
-            group_order.append(sample.file_hash)
-        grouped[sample.file_hash].append(sample)
-    return [sample for file_hash in group_order for sample in grouped[file_hash]]
 
 
 def _metadata_from_json(value: str | None) -> dict[str, object]:
