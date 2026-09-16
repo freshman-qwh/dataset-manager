@@ -16,6 +16,11 @@ from app.models.annotation import Annotation
 from app.models.sample import Sample
 from app.schemas.annotation import AnnotationCreate, AnnotationReplaceRequest
 from app.schemas.annotation_import import (
+    AnnotationImportJobCreateRequest,
+    AnnotationImportJobCreateResponse,
+    AnnotationImportJobParameters,
+    AnnotationImportRequest,
+    AnnotationImportRollbackJobCreateResponse,
     LabelmeImportJobCreateRequest,
     LabelmeImportJobCreateResponse,
     LabelmeImportJobParameters,
@@ -31,6 +36,8 @@ from app.services.sample_service import _get_or_create_tag
 
 LABELME_IMPORT_JOB_TYPE = "annotation.import.labelme"
 LABELME_IMPORT_ROLLBACK_JOB_TYPE = "annotation.import.labelme.rollback"
+ANNOTATION_IMPORT_JOB_TYPE = "annotation.import"
+ANNOTATION_IMPORT_ROLLBACK_JOB_TYPE = "annotation.import.rollback"
 IMPORT_BATCH_SIZE = 25
 ROLLBACK_BATCH_SIZE = 25
 JOURNAL_VERSION = 1
@@ -42,9 +49,34 @@ def create_labelme_import_job(
     dataset_id: int,
     payload: LabelmeImportJobCreateRequest,
 ) -> LabelmeImportJobCreateResponse:
+    result = _create_annotation_import_job(
+        session,
+        dataset_id,
+        AnnotationImportJobCreateRequest(format="labelme", **payload.model_dump()),
+        job_type=LABELME_IMPORT_JOB_TYPE,
+    )
+    return LabelmeImportJobCreateResponse(job=result.job, created=result.created)
+
+
+def create_annotation_import_job(
+    session: Session,
+    dataset_id: int,
+    payload: AnnotationImportJobCreateRequest,
+) -> AnnotationImportJobCreateResponse:
+    return _create_annotation_import_job(session, dataset_id, payload, job_type=ANNOTATION_IMPORT_JOB_TYPE)
+
+
+def _create_annotation_import_job(
+    session: Session,
+    dataset_id: int,
+    payload: AnnotationImportJobCreateRequest,
+    *,
+    job_type: str,
+) -> AnnotationImportJobCreateResponse:
     job_service.ensure_jobs_schema(session)
     dataset = dataset_service.get_dataset_or_404(session, dataset_id)
-    preview_payload = LabelmeImportRequest(
+    preview_payload = AnnotationImportRequest(
+        format=payload.format,
         path=payload.path,
         mode=payload.mode,
         sample_id=payload.sample_id,
@@ -53,13 +85,14 @@ def create_labelme_import_job(
         sync_sample_tags=payload.sync_sample_tags,
         expected_source_sha256=payload.expected_source_sha256,
     )
-    plan = annotation_import_service.prepare_labelme_import(session, dataset_id, preview_payload)
+    plan = annotation_import_service.prepare_annotation_import(session, dataset_id, preview_payload)
     if plan.plan_fingerprint != payload.expected_plan_fingerprint.lower():
-        raise job_service.JobStateError("LabelMe import targets changed after preview. Run preview again.")
+        raise job_service.JobStateError("Annotation import targets changed after preview. Run preview again.")
     if not plan.operations:
-        raise job_service.JobStateError("LabelMe import preview does not contain any valid sample updates.")
+        raise job_service.JobStateError("Annotation import preview does not contain any valid sample updates.")
 
     request_payload = {
+        "format": payload.format,
         "path": str(plan.source),
         "mode": payload.mode,
         "sample_id": payload.sample_id,
@@ -76,7 +109,7 @@ def create_labelme_import_job(
     request_fingerprint = sha256(
         json.dumps(request_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-    parameters = LabelmeImportJobParameters(
+    parameters = AnnotationImportJobParameters(
         **request_payload,
         request_fingerprint=request_fingerprint,
     ).model_dump(mode="json")
@@ -85,45 +118,51 @@ def create_labelme_import_job(
     session.exec(text("BEGIN IMMEDIATE"))
     active = job_service.find_active_job(
         session,
-        job_type=LABELME_IMPORT_JOB_TYPE,
+        job_type=job_type,
         dataset_id=dataset_id,
         parameter_match=("request_fingerprint", request_fingerprint),
     )
     if active is not None:
         session.commit()
-        return LabelmeImportJobCreateResponse(job=active, created=False)
+        return AnnotationImportJobCreateResponse(job=active, created=False)
+    format_label = _format_label(payload.format)
     created = job_service.create_job(
         session,
         JobCreate(
-            job_type=LABELME_IMPORT_JOB_TYPE,
-            title=f"导入 LabelMe 标注：{dataset.name}",
+            job_type=job_type,
+            title=f"导入 {format_label} 标注：{dataset.name}",
             dataset_id=dataset_id,
             parameters=parameters,
             progress_total=len(plan.operations),
         ),
     )
-    return LabelmeImportJobCreateResponse(job=created, created=True)
+    return AnnotationImportJobCreateResponse(job=created, created=True)
 
 
 def run_labelme_import_job(context: JobContext, parameters: dict[str, object]) -> dict[str, object]:
+    return run_annotation_import_job(context, parameters)
+
+
+def run_annotation_import_job(context: JobContext, parameters: dict[str, object]) -> dict[str, object]:
     try:
-        snapshot = LabelmeImportJobParameters.model_validate(parameters)
+        snapshot = AnnotationImportJobParameters.model_validate(parameters)
     except ValidationError as exc:
-        raise job_service.JobStateError(f"Invalid LabelMe import parameter snapshot: {exc}") from exc
+        raise job_service.JobStateError(f"Invalid annotation import parameter snapshot: {exc}") from exc
 
     with Session(context.engine) as session:
         job = job_service.get_job(session, context.job_id)
         if job.dataset_id is None:
-            raise job_service.JobStateError("A LabelMe import job requires dataset_id.")
+            raise job_service.JobStateError("An annotation import job requires dataset_id.")
         dataset_id = job.dataset_id
         journal_job_id = _root_retry_job_id(session, job)
 
-    context.report_progress(current=0, stage="parsing_labelme")
+    context.report_progress(current=0, stage=f"parsing_{snapshot.format}")
     with Session(context.engine) as session:
-        plan = annotation_import_service.prepare_labelme_import(
+        plan = annotation_import_service.prepare_annotation_import(
             session,
             dataset_id,
-            LabelmeImportRequest(
+            AnnotationImportRequest(
+                format=snapshot.format,
                 path=snapshot.path,
                 mode=snapshot.mode,
                 sample_id=snapshot.sample_id,
@@ -134,11 +173,11 @@ def run_labelme_import_job(context: JobContext, parameters: dict[str, object]) -
             ),
         )
     if plan.source_size_bytes != snapshot.source_size_bytes or plan.checked_files != snapshot.checked_files:
-        raise job_service.JobStateError("LabelMe source set changed after the task was created.")
+        raise job_service.JobStateError("Annotation source set changed after the task was created.")
     if plan.plan_fingerprint != snapshot.expected_plan_fingerprint.lower():
-        raise job_service.JobStateError("LabelMe import targets changed after preview. Run preview again.")
+        raise job_service.JobStateError("Annotation import targets changed after preview. Run preview again.")
     if len(plan.operations) != snapshot.planned_samples:
-        raise job_service.JobStateError("LabelMe import sample count changed after preview.")
+        raise job_service.JobStateError("Annotation import sample count changed after preview.")
 
     journal = _RollbackJournal(
         _journal_path(journal_job_id),
@@ -155,6 +194,7 @@ def run_labelme_import_job(context: JobContext, parameters: dict[str, object]) -
     def result() -> dict[str, object]:
         return {
             "source_job_id": journal_job_id,
+            "format": snapshot.format,
             "source_sha256": snapshot.expected_source_sha256.lower(),
             "planned_samples": snapshot.planned_samples,
             "planned_annotations": snapshot.planned_annotations,
@@ -180,7 +220,7 @@ def run_labelme_import_job(context: JobContext, parameters: dict[str, object]) -
                     ).all()
                 }
                 if len(samples) != len(sample_ids):
-                    raise job_service.JobStateError("A LabelMe import target disappeared after preview.")
+                    raise job_service.JobStateError("An annotation import target disappeared after preview.")
                 journal.append_missing(session, samples.values())
                 for operation in batch:
                     original = journal.entries[operation.sample_id]
@@ -234,19 +274,47 @@ def create_labelme_import_rollback_job(
     session: Session,
     source_job_id: int,
 ) -> LabelmeImportRollbackJobCreateResponse:
+    result = _create_annotation_import_rollback_job(
+        session,
+        source_job_id,
+        source_type=LABELME_IMPORT_JOB_TYPE,
+        rollback_type=LABELME_IMPORT_ROLLBACK_JOB_TYPE,
+    )
+    return LabelmeImportRollbackJobCreateResponse(job=result.job, created=result.created)
+
+
+def create_annotation_import_rollback_job(
+    session: Session,
+    source_job_id: int,
+) -> AnnotationImportRollbackJobCreateResponse:
+    return _create_annotation_import_rollback_job(
+        session,
+        source_job_id,
+        source_type=ANNOTATION_IMPORT_JOB_TYPE,
+        rollback_type=ANNOTATION_IMPORT_ROLLBACK_JOB_TYPE,
+    )
+
+
+def _create_annotation_import_rollback_job(
+    session: Session,
+    source_job_id: int,
+    *,
+    source_type: str,
+    rollback_type: str,
+) -> AnnotationImportRollbackJobCreateResponse:
     source_job = job_service.get_job(session, source_job_id)
-    if source_job.job_type != LABELME_IMPORT_JOB_TYPE:
-        raise job_service.JobStateError("Only LabelMe import jobs can create LabelMe rollback jobs.")
+    if source_job.job_type != source_type:
+        raise job_service.JobStateError("Only annotation import jobs can create annotation rollback jobs.")
     if source_job.status not in job_service.TERMINAL_STATUSES:
-        raise job_service.JobStateError("LabelMe import rollback is available only after the import task stops.")
+        raise job_service.JobStateError("Annotation import rollback is available only after the import task stops.")
     if source_job.dataset_id is None:
-        raise job_service.JobStateError("The LabelMe import job has no dataset.")
+        raise job_service.JobStateError("The annotation import job has no dataset.")
     journal_job_id = _root_retry_job_id(session, source_job)
     journal = _RollbackJournal.load(_journal_path(journal_job_id))
     if journal.dataset_id != source_job.dataset_id:
-        raise job_service.JobStateError("LabelMe rollback journal dataset mismatch.")
+        raise job_service.JobStateError("Annotation rollback journal dataset mismatch.")
     if journal.entry_count == 0:
-        raise job_service.JobStateError("The LabelMe import task did not commit any recoverable changes.")
+        raise job_service.JobStateError("The annotation import task did not commit any recoverable changes.")
 
     fingerprint = sha256(
         f"{journal_job_id}:{journal.entry_count}:{journal.source_sha256}".encode("utf-8")
@@ -254,6 +322,7 @@ def create_labelme_import_rollback_job(
     parameters = {
         "source_job_id": source_job_id,
         "journal_job_id": journal_job_id,
+        "format": str(source_job.parameters.get("format") or "labelme"),
         "entry_count": journal.entry_count,
         "source_sha256": journal.source_sha256,
         "request_fingerprint": fingerprint,
@@ -262,28 +331,33 @@ def create_labelme_import_rollback_job(
     session.exec(text("BEGIN IMMEDIATE"))
     active = job_service.find_active_job(
         session,
-        job_type=LABELME_IMPORT_ROLLBACK_JOB_TYPE,
+        job_type=rollback_type,
         dataset_id=source_job.dataset_id,
         parameter_match=("request_fingerprint", fingerprint),
     )
     if active is not None:
         session.commit()
-        return LabelmeImportRollbackJobCreateResponse(job=active, created=False)
+        return AnnotationImportRollbackJobCreateResponse(job=active, created=False)
     dataset = dataset_service.get_dataset_or_404(session, source_job.dataset_id)
+    import_format = str(source_job.parameters.get("format") or "labelme")
     created = job_service.create_job(
         session,
         JobCreate(
-            job_type=LABELME_IMPORT_ROLLBACK_JOB_TYPE,
-            title=f"回滚 LabelMe 导入：{dataset.name}",
+            job_type=rollback_type,
+            title=f"回滚 {_format_label(import_format)} 导入：{dataset.name}",
             dataset_id=source_job.dataset_id,
             parameters=parameters,
             progress_total=journal.entry_count,
         ),
     )
-    return LabelmeImportRollbackJobCreateResponse(job=created, created=True)
+    return AnnotationImportRollbackJobCreateResponse(job=created, created=True)
 
 
 def run_labelme_import_rollback_job(context: JobContext, parameters: dict[str, object]) -> dict[str, object]:
+    return run_annotation_import_rollback_job(context, parameters)
+
+
+def run_annotation_import_rollback_job(context: JobContext, parameters: dict[str, object]) -> dict[str, object]:
     journal_job_id = _positive_int(parameters.get("journal_job_id"), "journal_job_id")
     expected_count = _positive_int(parameters.get("entry_count"), "entry_count")
     journal = _RollbackJournal.load(_journal_path(journal_job_id))
@@ -300,7 +374,13 @@ def run_labelme_import_rollback_job(context: JobContext, parameters: dict[str, o
     revision_tracker = DatasetRevisionTracker(journal.dataset_id)
 
     def result() -> dict[str, object]:
-        return {"source_job_id": journal_job_id, "restored": restored, "missing": missing, "batches_committed": batches_committed}
+        return {
+            "source_job_id": journal_job_id,
+            "format": str(parameters.get("format") or "labelme"),
+            "restored": restored,
+            "missing": missing,
+            "batches_committed": batches_committed,
+        }
 
     try:
         context.report_progress(current=0, stage="prechecking")
@@ -521,15 +601,25 @@ def _restore_sample(session: Session, dataset_id: int, sample: Sample, entry: di
 
 def _root_retry_job_id(session: Session, job: JobRead) -> int:
     current = job
+    root_job_type = current.job_type
     visited = {current.id}
     while current.retry_of_id is not None:
         if current.retry_of_id in visited:
             raise job_service.JobStateError("Job retry lineage contains a cycle.")
         visited.add(current.retry_of_id)
         current = job_service.get_job(session, current.retry_of_id)
-        if current.job_type != LABELME_IMPORT_JOB_TYPE:
-            raise job_service.JobStateError("LabelMe import retry lineage is invalid.")
+        if current.job_type != root_job_type:
+            raise job_service.JobStateError("Annotation import retry lineage is invalid.")
     return current.id
+
+
+def _format_label(import_format: str) -> str:
+    return {
+        "labelme": "LabelMe",
+        "yolo_detection": "YOLO detection",
+        "yolo_segmentation": "YOLO segmentation",
+        "coco": "COCO",
+    }.get(import_format, import_format)
 
 
 def _journal_path(job_id: int) -> Path:

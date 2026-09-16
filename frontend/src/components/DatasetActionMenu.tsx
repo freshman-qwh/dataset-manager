@@ -87,7 +87,7 @@ export default function DatasetActionMenu({
             className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300"
           >
             <Upload size={16} />
-            导入 LabelMe 标注
+            导入标注
           </button>
           <div className="my-2 border-t border-line" />
           <label className="block px-3 text-xs font-medium text-gray-500">导出格式</label>

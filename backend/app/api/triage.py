@@ -4,6 +4,10 @@ from sqlmodel import Session
 from app.core.database import get_session
 from app.core.workflow import DEFECT_SEVERITY_VALUES, OK_GRADE_VALUES, TRIAGE_STATUS_VALUES
 from app.schemas.triage import (
+    BatchTriageCommitRequest,
+    BatchTriageCommitResponse,
+    BatchTriagePreviewRequest,
+    BatchTriagePreviewResponse,
     DefectTypeCreate,
     DefectTypeRead,
     DefectTypeUpdate,
@@ -128,6 +132,36 @@ def replace_sample_triage(
 ) -> SampleTriageRead:
     try:
         return triage_service.replace_sample_triage(session, sample_id, payload)
+    except triage_service.TriageError as exc:
+        _raise_triage_error(exc)
+
+
+@router.post(
+    "/datasets/{dataset_id}/triage/batch-preview",
+    response_model=BatchTriagePreviewResponse,
+)
+def preview_batch_triage(
+    dataset_id: int,
+    payload: BatchTriagePreviewRequest,
+    session: Session = Depends(get_session),
+) -> BatchTriagePreviewResponse:
+    try:
+        return triage_service.preview_batch_triage(session, dataset_id, payload)
+    except triage_service.TriageError as exc:
+        _raise_triage_error(exc)
+
+
+@router.post(
+    "/datasets/{dataset_id}/triage/batch",
+    response_model=BatchTriageCommitResponse,
+)
+def commit_batch_triage(
+    dataset_id: int,
+    payload: BatchTriageCommitRequest,
+    session: Session = Depends(get_session),
+) -> BatchTriageCommitResponse:
+    try:
+        return triage_service.commit_batch_triage(session, dataset_id, payload)
     except triage_service.TriageError as exc:
         _raise_triage_error(exc)
 

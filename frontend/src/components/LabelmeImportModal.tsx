@@ -1,12 +1,13 @@
 import axios from "axios";
 import { FormEvent, useEffect, useRef, useState } from "react";
 
-import { createLabelmeImportJob, getJob, importLabelmeAnnotations } from "../api/client";
+import { createAnnotationImportJob, getJob, importAnnotations } from "../api/client";
 import type {
-  LabelmeImportIssue,
-  LabelmeImportMode,
-  LabelmeImportResult,
-  LabelmeImportStrategy
+  AnnotationImportFormat,
+  AnnotationImportIssue,
+  AnnotationImportMode,
+  AnnotationImportResult,
+  AnnotationImportStrategy
 } from "../types/dataset";
 import type { Job } from "../types/job";
 import Modal from "./Modal";
@@ -18,13 +19,14 @@ interface LabelmeImportModalProps {
   onImported: () => Promise<void>;
 }
 
-export default function LabelmeImportModal({ datasetId, open, onClose, onImported }: LabelmeImportModalProps) {
+export default function AnnotationImportModal({ datasetId, open, onClose, onImported }: LabelmeImportModalProps) {
+  const [format, setFormat] = useState<AnnotationImportFormat>("labelme");
   const [path, setPath] = useState("");
-  const [mode, setMode] = useState<LabelmeImportMode>("file");
+  const [mode, setMode] = useState<AnnotationImportMode>("file");
   const [sampleId, setSampleId] = useState("");
-  const [strategy, setStrategy] = useState<LabelmeImportStrategy>("replace");
+  const [strategy, setStrategy] = useState<AnnotationImportStrategy>("replace");
   const [syncSampleTags, setSyncSampleTags] = useState(false);
-  const [preview, setPreview] = useState<LabelmeImportResult | null>(null);
+  const [preview, setPreview] = useState<AnnotationImportResult | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +72,7 @@ export default function LabelmeImportModal({ datasetId, open, onClose, onImporte
   function requestBase() {
     const parsedSampleId = mode === "file" && sampleId.trim() ? Number(sampleId) : undefined;
     return {
+      format,
       path: path.trim(),
       mode,
       sample_id: Number.isInteger(parsedSampleId) && (parsedSampleId ?? 0) > 0 ? parsedSampleId : undefined,
@@ -85,12 +88,12 @@ export default function LabelmeImportModal({ datasetId, open, onClose, onImporte
     setError(null);
     try {
       if (!preview) {
-        const result = await importLabelmeAnnotations(datasetId, { ...requestBase(), dry_run: true });
+        const result = await importAnnotations(datasetId, { ...requestBase(), dry_run: true });
         setPreview(result);
         return;
       }
       try {
-        const created = await createLabelmeImportJob(datasetId, {
+        const created = await createAnnotationImportJob(datasetId, {
           ...requestBase(),
           expected_source_sha256: preview.source_sha256,
           expected_plan_fingerprint: preview.plan_fingerprint
@@ -99,7 +102,7 @@ export default function LabelmeImportModal({ datasetId, open, onClose, onImporte
         window.dispatchEvent(new Event("dataset-manager:jobs-changed"));
       } catch (caught) {
         if (!isJobsSchemaUnavailable(caught)) throw caught;
-        const result = await importLabelmeAnnotations(datasetId, {
+        const result = await importAnnotations(datasetId, {
           ...requestBase(),
           dry_run: false,
           expected_source_sha256: preview.source_sha256,
@@ -121,41 +124,62 @@ export default function LabelmeImportModal({ datasetId, open, onClose, onImporte
   const canImport = Boolean(preview && preview.imported_samples > 0);
 
   return (
-    <Modal open={open} title="导入 LabelMe 标注" onClose={onClose}>
+    <Modal open={open} title="导入标注" onClose={onClose}>
       <form onSubmit={handleSubmit} className="max-h-[78vh] space-y-4 overflow-y-auto px-5 py-5">
         <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm leading-6 text-blue-900">
-          先执行只读预检，再创建可取消、可重试、可回滚的本地任务。系统只读取 JSON 和原图尺寸，不会修改原图或在数据集目录写入旁路文件。
+          先执行只读预检，再创建可取消、可重试、可回滚的本地任务。系统只读取标注文件和原图尺寸，不会修改原图或在数据集目录写入旁路文件。
         </div>
         <label className="block">
-          <span className="text-sm font-medium text-gray-700">LabelMe JSON 文件或目录路径 *</span>
+          <span className="text-sm font-medium text-gray-700">标注格式</span>
+          <select
+            value={format}
+            disabled={locked}
+            onChange={(event) => {
+              const nextFormat = event.target.value as AnnotationImportFormat;
+              setFormat(nextFormat);
+              setMode(nextFormat.startsWith("yolo_") ? "directory" : "file");
+              setSampleId("");
+              invalidatePreview();
+            }}
+            className="mt-2 w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm outline-none focus:border-gray-900"
+          >
+            <option value="labelme">LabelMe JSON</option>
+            <option value="yolo_detection">YOLO detection TXT</option>
+            <option value="yolo_segmentation">YOLO segmentation TXT</option>
+            <option value="coco">COCO JSON</option>
+          </select>
+          {format.startsWith("yolo_") ? <span className="mt-1 block text-xs text-gray-500">支持 bbox 或 polygon；pose、OBB 暂不支持并会在预检中明确报错。</span> : null}
+        </label>
+        <label className="block">
+          <span className="text-sm font-medium text-gray-700">{sourcePathLabel(format, mode)} *</span>
           <input
             value={path}
             disabled={locked}
             onChange={(event) => { setPath(event.target.value); invalidatePreview(); }}
-            placeholder="D:/annotations/labelme"
+            placeholder={format.startsWith("yolo_") ? "D:/annotations/yolo-dataset" : "D:/annotations/annotations.json"}
             className="mt-2 w-full rounded-lg border border-line px-3 py-2.5 text-sm outline-none transition focus:border-gray-900"
           />
           <span className="mt-1 block text-xs text-gray-500">填写后端可以读取的本机绝对路径，不是浏览器上传。</span>
         </label>
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className="block">
+          {format === "labelme" ? <label className="block">
             <span className="text-sm font-medium text-gray-700">来源范围</span>
             <select
               value={mode}
               disabled={locked}
-              onChange={(event) => { setMode(event.target.value as LabelmeImportMode); invalidatePreview(); }}
+              onChange={(event) => { setMode(event.target.value as AnnotationImportMode); invalidatePreview(); }}
               className="mt-2 w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm outline-none focus:border-gray-900"
             >
               <option value="file">单个 JSON 文件</option>
               <option value="directory">目录内全部 JSON</option>
             </select>
-          </label>
+          </label> : <div className="rounded-lg border border-line bg-gray-50 px-3 py-2.5 text-sm text-gray-600">{format === "coco" ? "单个 COCO JSON 文件" : "YOLO 数据集目录（含 labels/ 与 data.yaml 或 classes.txt）"}</div>}
           <label className="block">
             <span className="text-sm font-medium text-gray-700">写入方式</span>
             <select
               value={strategy}
               disabled={locked}
-              onChange={(event) => { setStrategy(event.target.value as LabelmeImportStrategy); invalidatePreview(); }}
+              onChange={(event) => { setStrategy(event.target.value as AnnotationImportStrategy); invalidatePreview(); }}
               className="mt-2 w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm outline-none focus:border-gray-900"
             >
               <option value="replace">替换匹配样本的标注</option>
@@ -163,7 +187,7 @@ export default function LabelmeImportModal({ datasetId, open, onClose, onImporte
             </select>
           </label>
         </div>
-        {mode === "file" ? (
+        {format === "labelme" && mode === "file" ? (
           <label className="block">
             <span className="text-sm font-medium text-gray-700">指定样本 ID（可选）</span>
             <input
@@ -213,7 +237,7 @@ export default function LabelmeImportModal({ datasetId, open, onClose, onImporte
   );
 }
 
-function PreviewSummary({ result }: { result: LabelmeImportResult }) {
+function PreviewSummary({ result }: { result: AnnotationImportResult }) {
   const issues = [...result.errors, ...result.warnings];
   return (
     <section className="rounded-lg border border-line bg-gray-50 p-3" aria-live="polite">
@@ -236,11 +260,12 @@ function PreviewSummary({ result }: { result: LabelmeImportResult }) {
   );
 }
 
-function IssueRow({ issue }: { issue: LabelmeImportIssue }) {
+function IssueRow({ issue }: { issue: AnnotationImportIssue }) {
   return (
     <div className={`rounded-md px-3 py-2 text-xs leading-5 ${issue.severity === "error" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800"}`}>
       <span className="font-medium">{issue.code}</span> · {issue.message}
       {issue.sample_path ? <span className="block truncate opacity-80">{issue.sample_path}</span> : null}
+      {issue.file_path ? <span className="block truncate opacity-70">{issue.file_path}</span> : null}
     </div>
   );
 }
@@ -271,7 +296,13 @@ function apiErrorMessage(caught: unknown): string {
     const detail = caught.response?.data?.detail;
     if (typeof detail === "string") return detail;
   }
-  return "LabelMe 导入失败，请检查路径、JSON 格式和样本匹配关系。";
+  return "标注导入失败，请检查路径、格式、类别定义和样本匹配关系。";
+}
+
+function sourcePathLabel(format: AnnotationImportFormat, mode: AnnotationImportMode): string {
+  if (format === "coco") return "COCO JSON 文件路径";
+  if (format.startsWith("yolo_")) return "YOLO 数据集目录路径";
+  return mode === "directory" ? "LabelMe JSON 目录路径" : "LabelMe JSON 文件路径";
 }
 
 function isJobsSchemaUnavailable(caught: unknown): boolean {

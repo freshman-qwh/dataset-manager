@@ -63,6 +63,9 @@ export interface LabelmeImportRollbackJobCreateResponse {
   created: boolean;
 }
 
+export type AnnotationImportJobCreateResponse = LabelmeImportJobCreateResponse;
+export type AnnotationImportRollbackJobCreateResponse = LabelmeImportRollbackJobCreateResponse;
+
 export interface ThumbnailJobCreateResponse {
   job: Job | null;
   created: boolean;

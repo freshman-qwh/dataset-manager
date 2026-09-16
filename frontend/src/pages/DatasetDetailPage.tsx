@@ -57,6 +57,7 @@ import {
 } from "../api/client";
 import AnnotationExportModal from "../components/AnnotationExportModal";
 import BatchActionBar from "../components/BatchActionBar";
+import BatchTriageModal from "../components/BatchTriageModal";
 import DatasetActionMenu from "../components/DatasetActionMenu";
 import DirectoryExportModal from "../components/DirectoryExportModal";
 import TriageDirectoryMappingModal from "../components/TriageDirectoryMappingModal";
@@ -262,6 +263,7 @@ export default function DatasetDetailPage() {
   const [directoryMappingOpen, setDirectoryMappingOpen] = useState(false);
   const [snapshotOpen, setSnapshotOpen] = useState(false);
   const [savedViewOpen, setSavedViewOpen] = useState(false);
+  const [batchTriageOpen, setBatchTriageOpen] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scanJobId, setScanJobId] = useState<number | null>(null);
   const [scanNotice, setScanNotice] = useState<string | null>(null);
@@ -1609,6 +1611,7 @@ export default function DatasetDetailPage() {
             busy={batchBusy}
             deleting={deletingSamples}
             onApply={handleBatchApply}
+            onTriage={() => setBatchTriageOpen(true)}
             onDelete={handleDeleteSelected}
             onClear={() => setSelectedSampleIds(new Set())}
           />
@@ -1892,6 +1895,15 @@ export default function DatasetDetailPage() {
         datasetId={datasetId}
         open={directoryMappingOpen}
         onClose={() => setDirectoryMappingOpen(false)}
+        onCompleted={() => {
+          void Promise.all([loadOverview(), loadSamples()]);
+        }}
+      />
+      <BatchTriageModal
+        datasetId={datasetId}
+        selectedSampleIds={annotationExportSelectedSampleIds}
+        open={batchTriageOpen}
+        onClose={() => setBatchTriageOpen(false)}
         onCompleted={() => {
           void Promise.all([loadOverview(), loadSamples()]);
         }}

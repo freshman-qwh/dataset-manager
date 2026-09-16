@@ -4,6 +4,10 @@ from sqlmodel import Session
 from app.core.database import get_session
 from app.core.job_runtime import job_runner
 from app.schemas.annotation_import import (
+    AnnotationImportJobCreateRequest,
+    AnnotationImportJobCreateResponse,
+    AnnotationImportRequest,
+    AnnotationImportResult,
     LabelmeImportJobCreateRequest,
     LabelmeImportJobCreateResponse,
     LabelmeImportRequest,
@@ -49,6 +53,15 @@ def import_labelme_annotations(
     return annotation_import_service.import_labelme_annotations(session, dataset_id, payload)
 
 
+@router.post("/datasets/{dataset_id}/annotations/import", response_model=AnnotationImportResult)
+def import_annotations(
+    dataset_id: int,
+    payload: AnnotationImportRequest,
+    session: Session = Depends(get_session),
+) -> AnnotationImportResult:
+    return annotation_import_service.import_annotations(session, dataset_id, payload)
+
+
 @router.post(
     "/datasets/{dataset_id}/annotation-import-labelme-jobs",
     response_model=LabelmeImportJobCreateResponse,
@@ -62,6 +75,29 @@ def create_labelme_import_job(
 ) -> LabelmeImportJobCreateResponse:
     try:
         result = annotation_import_job_service.create_labelme_import_job(session, dataset_id, payload)
+    except job_service.JobSchemaUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except job_service.JobError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    if not result.created:
+        response.status_code = status.HTTP_200_OK
+    job_runner.notify()
+    return result
+
+
+@router.post(
+    "/datasets/{dataset_id}/annotation-import-jobs",
+    response_model=AnnotationImportJobCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_annotation_import_job(
+    dataset_id: int,
+    payload: AnnotationImportJobCreateRequest,
+    response: Response,
+    session: Session = Depends(get_session),
+) -> AnnotationImportJobCreateResponse:
+    try:
+        result = annotation_import_job_service.create_annotation_import_job(session, dataset_id, payload)
     except job_service.JobSchemaUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except job_service.JobError as exc:

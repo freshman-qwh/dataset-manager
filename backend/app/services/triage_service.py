@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import timezone
 from uuid import uuid4
 
-from sqlalchemy import String, case, cast, delete, exists, func, inspect, literal, or_, update
+from pydantic import ValidationError
+from sqlalchemy import String, case, cast, delete, exists, func, inspect, insert, literal, or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
@@ -14,6 +16,14 @@ from app.models.dataset import Dataset, utc_now
 from app.models.defect_type import DefectType, SampleDefectLink
 from app.models.sample import Sample
 from app.schemas.triage import (
+    BatchTriageCommitRequest,
+    BatchTriageCommitResponse,
+    BatchTriageExpectedSample,
+    BatchTriageOperation,
+    BatchTriagePreviewItem,
+    BatchTriagePreviewRequest,
+    BatchTriagePreviewResponse,
+    BatchTriageState,
     DefectTypeCreate,
     DefectTypeRead,
     DefectTypeUpdate,
@@ -482,6 +492,439 @@ def replace_sample_triage(
     bump_dataset_revision(session, sample.dataset_id)
     session.commit()
     return get_sample_triage(session, sample_id)
+
+
+def _batch_state(
+    sample: Sample,
+    defect_type_ids: list[int],
+    *,
+    current_policy_version: int,
+) -> BatchTriageState:
+    outdated = sample.triage_status != "untriaged" and (
+        sample.triaged_file_hash != sample.file_hash
+        or sample.triage_policy_version != current_policy_version
+    )
+    return BatchTriageState(
+        triage_status=sample.triage_status,
+        ok_grade=sample.ok_grade,
+        defect_severity=sample.defect_severity,
+        defect_type_ids=defect_type_ids,
+        primary_defect_type_id=sample.primary_defect_type_id,
+        triage_note=sample.triage_note,
+        triage_version=sample.triage_version,
+        outdated=outdated,
+    )
+
+
+def _batch_value(mode: str, current: object, value: object) -> object:
+    if mode == "set":
+        return value
+    if mode == "clear":
+        return None
+    return current
+
+
+def _batch_payload(
+    sample: Sample,
+    current_defect_type_ids: list[int],
+    operation: BatchTriageOperation,
+) -> SampleTriageWrite:
+    triage_status = _batch_value(
+        operation.triage_status_mode,
+        sample.triage_status,
+        operation.triage_status,
+    )
+    if triage_status is None or triage_status == "untriaged":
+        return SampleTriageWrite(
+            expected_version=sample.triage_version,
+            expected_file_hash=sample.file_hash,
+            triage_status="untriaged",
+        )
+
+    if operation.defect_types_mode == "append":
+        defect_type_ids = sorted(
+            set(current_defect_type_ids) | set(operation.defect_type_ids)
+        )
+    elif operation.defect_types_mode == "replace":
+        defect_type_ids = operation.defect_type_ids
+    elif operation.defect_types_mode == "clear":
+        defect_type_ids = []
+    else:
+        defect_type_ids = current_defect_type_ids
+
+    return SampleTriageWrite(
+        expected_version=sample.triage_version,
+        expected_file_hash=sample.file_hash,
+        triage_status=triage_status,
+        ok_grade=_batch_value(
+            operation.ok_grade_mode,
+            sample.ok_grade,
+            operation.ok_grade,
+        ),
+        defect_severity=_batch_value(
+            operation.defect_severity_mode,
+            sample.defect_severity,
+            operation.defect_severity,
+        ),
+        defect_type_ids=defect_type_ids,
+        primary_defect_type_id=_batch_value(
+            operation.primary_defect_type_mode,
+            sample.primary_defect_type_id,
+            operation.primary_defect_type_id,
+        ),
+        triage_note=_batch_value(
+            operation.triage_note_mode,
+            sample.triage_note,
+            operation.triage_note,
+        ),
+    )
+
+
+def _batch_payload_is_unchanged(
+    sample: Sample,
+    current_defect_type_ids: list[int],
+    payload: SampleTriageWrite,
+    *,
+    current_policy_version: int,
+) -> bool:
+    return (
+        sample.triage_status == payload.triage_status
+        and sample.ok_grade == payload.ok_grade
+        and sample.defect_severity == payload.defect_severity
+        and sample.primary_defect_type_id == payload.primary_defect_type_id
+        and sample.triage_note == payload.triage_note
+        and current_defect_type_ids == payload.defect_type_ids
+        and (
+            payload.triage_status == "untriaged"
+            or (
+                sample.triaged_file_hash == sample.file_hash
+                and sample.triage_policy_version == current_policy_version
+            )
+        )
+    )
+
+
+def _batch_validation_message(exc: ValidationError) -> str:
+    errors = exc.errors()
+    if not errors:
+        return str(exc)
+    message = str(errors[0].get("msg") or "批量分拣结果不合法。")
+    message = message.removeprefix("Value error, ")
+    translations = {
+        "Only OK samples may have an ok_grade": "只有 OK 样本可以保留 OK 等级。",
+        "Clear OK samples cannot have defect types or severity": "完全 OK 不能保留缺陷类型或程度。",
+        "Untriaged samples cannot retain triage details": "清空判定时不能保留其他分拣详情。",
+        "primary_defect_type_id must be selected in defect_type_ids": "主要缺陷必须包含在已选缺陷类型中。",
+    }
+    return translations.get(message, message)
+
+
+def _load_batch_samples(
+    session: Session,
+    dataset_id: int,
+    sample_ids: list[int],
+) -> list[Sample]:
+    samples = list(
+        session.exec(
+            select(Sample).where(
+                Sample.dataset_id == dataset_id,
+                Sample.id.in_(sample_ids),
+            )
+        ).all()
+    )
+    by_id = {sample.id: sample for sample in samples}
+    missing = [sample_id for sample_id in sample_ids if sample_id not in by_id]
+    if missing:
+        raise TriageValidationError(
+            f"有 {len(missing)} 个样本不存在或不属于当前数据集，请刷新选择后重试。"
+        )
+    ordered = [by_id[sample_id] for sample_id in sample_ids]
+    if any(sample.file_type != "image" for sample in ordered):
+        raise TriageValidationError("批量分拣只支持图片样本，请移除其他类型后重试。")
+    return ordered
+
+
+def _dataset_defect_types(session: Session, dataset_id: int) -> dict[int, DefectType]:
+    return {
+        item.id or 0: item
+        for item in session.exec(
+            select(DefectType).where(DefectType.dataset_id == dataset_id)
+        ).all()
+    }
+
+
+def _validate_batch_payload(
+    policy: TriagePolicyValues,
+    payload: SampleTriageWrite,
+    defect_types: dict[int, DefectType],
+) -> None:
+    _validate_triage_payload(policy, payload)
+    selected = [defect_types.get(item) for item in payload.defect_type_ids]
+    if any(item is None or not item.is_active for item in selected):
+        raise TriageValidationError("所选缺陷类型不存在、已停用或不属于当前数据集。")
+
+
+def _validate_operation_references(
+    operation: BatchTriageOperation,
+    defect_types: dict[int, DefectType],
+) -> None:
+    referenced_ids = set(operation.defect_type_ids)
+    if operation.primary_defect_type_id is not None:
+        referenced_ids.add(operation.primary_defect_type_id)
+    if any(
+        item_id not in defect_types or not defect_types[item_id].is_active
+        for item_id in referenced_ids
+    ):
+        raise TriageValidationError(
+            "批量操作引用的缺陷类型不存在、已停用或不属于当前数据集。"
+        )
+
+
+def _batch_preview_hash(
+    dataset_id: int,
+    policy_version: int,
+    operation: BatchTriageOperation,
+    expected_samples: list[BatchTriageExpectedSample],
+) -> str:
+    value = {
+        "dataset_id": dataset_id,
+        "policy_version": policy_version,
+        "operation": operation.model_dump(mode="json"),
+        "expected_samples": [item.model_dump(mode="json") for item in expected_samples],
+    }
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def preview_batch_triage(
+    session: Session,
+    dataset_id: int,
+    request: BatchTriagePreviewRequest,
+) -> BatchTriagePreviewResponse:
+    _ensure_schema(session)
+    dataset = get_dataset_or_404(session, dataset_id)
+    samples = _load_batch_samples(session, dataset_id, request.sample_ids)
+    policy = _policy_values(dataset)
+    current_types = defect_types_by_sample(session, request.sample_ids)
+    defect_types = _dataset_defect_types(session, dataset_id)
+    _validate_operation_references(request.operation, defect_types)
+
+    items: list[BatchTriagePreviewItem] = []
+    expected_samples: list[BatchTriageExpectedSample] = []
+    for sample in samples:
+        sample_id = sample.id or 0
+        current_ids = sorted(item.id or 0 for item in current_types.get(sample_id, []))
+        before = _batch_state(
+            sample,
+            current_ids,
+            current_policy_version=dataset.triage_policy_version,
+        )
+        expected_samples.append(
+            BatchTriageExpectedSample(
+                sample_id=sample_id,
+                expected_version=sample.triage_version,
+                expected_file_hash=sample.file_hash,
+            )
+        )
+        errors: list[str] = []
+        payload: SampleTriageWrite | None = None
+        try:
+            payload = _batch_payload(sample, current_ids, request.operation)
+            _validate_batch_payload(policy, payload, defect_types)
+        except ValidationError as exc:
+            errors.append(_batch_validation_message(exc))
+        except TriageValidationError as exc:
+            errors.append(str(exc))
+
+        changed = bool(
+            payload is not None
+            and not errors
+            and not _batch_payload_is_unchanged(
+                sample,
+                current_ids,
+                payload,
+                current_policy_version=dataset.triage_policy_version,
+            )
+        )
+        after = None
+        if payload is not None:
+            after = BatchTriageState(
+                triage_status=payload.triage_status,
+                ok_grade=payload.ok_grade,
+                defect_severity=payload.defect_severity,
+                defect_type_ids=payload.defect_type_ids,
+                primary_defect_type_id=payload.primary_defect_type_id,
+                triage_note=payload.triage_note,
+                triage_version=sample.triage_version + (1 if changed else 0),
+                outdated=False if changed else before.outdated,
+            )
+        items.append(
+            BatchTriagePreviewItem(
+                sample_id=sample_id,
+                relative_path=sample.relative_path,
+                expected_version=sample.triage_version,
+                expected_file_hash=sample.file_hash,
+                before=before,
+                after=after,
+                changed=changed,
+                errors=errors,
+            )
+        )
+
+    blocked = sum(bool(item.errors) for item in items)
+    changed = sum(item.changed for item in items)
+    unchanged = len(items) - changed - blocked
+    preview_hash = _batch_preview_hash(
+        dataset_id,
+        dataset.triage_policy_version,
+        request.operation,
+        expected_samples,
+    )
+    return BatchTriagePreviewResponse(
+        dataset_id=dataset_id,
+        dataset_revision=dataset.revision,
+        policy_version=dataset.triage_policy_version,
+        requested=len(items),
+        changed=changed,
+        unchanged=unchanged,
+        blocked=blocked,
+        can_apply=blocked == 0 and changed > 0,
+        preview_hash=preview_hash,
+        expected_samples=expected_samples,
+        items=items,
+    )
+
+
+def commit_batch_triage(
+    session: Session,
+    dataset_id: int,
+    request: BatchTriageCommitRequest,
+) -> BatchTriageCommitResponse:
+    _ensure_schema(session)
+    expected_hash = _batch_preview_hash(
+        dataset_id,
+        request.policy_version,
+        request.operation,
+        request.expected_samples,
+    )
+    if request.preview_hash != expected_hash:
+        raise TriageConflictError("批量预览内容已变化，请重新预览后提交。")
+
+    dataset = get_dataset_or_404(session, dataset_id)
+    if dataset.triage_policy_version != request.policy_version:
+        raise TriageConflictError("分拣层级已变化，请重新预览后提交。")
+    sample_ids = [item.sample_id for item in request.expected_samples]
+    samples = _load_batch_samples(session, dataset_id, sample_ids)
+    expected_by_id = {item.sample_id: item for item in request.expected_samples}
+    for sample in samples:
+        expected = expected_by_id[sample.id or 0]
+        if (
+            sample.triage_version != expected.expected_version
+            or sample.file_hash != expected.expected_file_hash
+        ):
+            raise TriageConflictError(
+                "至少一个样本的分拣结果或图片内容已变化；本次批量操作未写入，请重新预览。"
+            )
+
+    current_types = defect_types_by_sample(session, sample_ids)
+    defect_types = _dataset_defect_types(session, dataset_id)
+    _validate_operation_references(request.operation, defect_types)
+    prepared: list[tuple[Sample, SampleTriageWrite]] = []
+    for sample in samples:
+        sample_id = sample.id or 0
+        current_ids = sorted(item.id or 0 for item in current_types.get(sample_id, []))
+        try:
+            payload = _batch_payload(sample, current_ids, request.operation)
+        except ValidationError as exc:
+            raise TriageValidationError(_batch_validation_message(exc)) from exc
+        _validate_batch_payload(_policy_values(dataset), payload, defect_types)
+        if not _batch_payload_is_unchanged(
+            sample,
+            current_ids,
+            payload,
+            current_policy_version=dataset.triage_policy_version,
+        ):
+            prepared.append((sample, payload))
+
+    if not prepared:
+        return BatchTriageCommitResponse(
+            dataset_id=dataset_id,
+            dataset_revision=dataset.revision,
+            requested=len(samples),
+            updated=0,
+            unchanged=len(samples),
+        )
+
+    now = utc_now().astimezone(timezone.utc)
+    try:
+        for sample, payload in prepared:
+            sample_id = sample.id or 0
+            is_reset = payload.triage_status == "untriaged"
+            result = session.connection().execute(
+                update(Sample)
+                .where(
+                    Sample.id == sample_id,
+                    Sample.triage_version == payload.expected_version,
+                    Sample.file_hash == payload.expected_file_hash,
+                )
+                .values(
+                    triage_status=payload.triage_status,
+                    ok_grade=payload.ok_grade,
+                    defect_severity=payload.defect_severity,
+                    primary_defect_type_id=payload.primary_defect_type_id,
+                    triage_note=payload.triage_note,
+                    triage_version=Sample.triage_version + 1,
+                    triaged_at=None if is_reset else now,
+                    triage_policy_version=(
+                        None if is_reset else dataset.triage_policy_version
+                    ),
+                    triaged_file_hash=None if is_reset else sample.file_hash,
+                    updated_at=now,
+                )
+            )
+            if result.rowcount != 1:
+                raise TriageConflictError(
+                    "至少一个样本在提交期间被修改；本次批量操作已整批回滚。"
+                )
+            session.connection().execute(
+                delete(SampleDefectLink).where(
+                    SampleDefectLink.sample_id == sample_id
+                )
+            )
+            if payload.defect_type_ids:
+                session.connection().execute(
+                    insert(SampleDefectLink),
+                    [
+                        {
+                            "sample_id": sample_id,
+                            "defect_type_id": defect_type_id,
+                        }
+                        for defect_type_id in payload.defect_type_ids
+                    ],
+                )
+        revision = bump_dataset_revision(session, dataset_id)
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise TriageConflictError(
+            "批量分拣写入发生数据冲突；本次操作已整批回滚。"
+        ) from exc
+    except Exception:
+        session.rollback()
+        raise
+
+    return BatchTriageCommitResponse(
+        dataset_id=dataset_id,
+        dataset_revision=revision,
+        requested=len(samples),
+        updated=len(prepared),
+        unchanged=len(samples) - len(prepared),
+    )
 
 
 def _triage_filters(

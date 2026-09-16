@@ -69,6 +69,298 @@ def triage_payload(sample: dict, **overrides: object) -> dict:
     return payload
 
 
+def batch_operation(**overrides: object) -> dict:
+    payload = {
+        "triage_status_mode": "preserve",
+        "ok_grade_mode": "preserve",
+        "defect_severity_mode": "preserve",
+        "defect_types_mode": "preserve",
+        "primary_defect_type_mode": "preserve",
+        "triage_note_mode": "preserve",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_batch_triage_preview_commit_and_field_modes(tmp_path: Path) -> None:
+    with make_client() as client:
+        dataset, samples = create_image_dataset(client, tmp_path)
+        dataset_id = dataset["id"]
+        scratch = client.post(
+            f"/api/datasets/{dataset_id}/defect-types",
+            json={"name": "划痕", "code": "scratch"},
+        ).json()
+        dent = client.post(
+            f"/api/datasets/{dataset_id}/defect-types",
+            json={"name": "凹陷", "code": "dent"},
+        ).json()
+        first = client.put(
+            f"/api/samples/{samples['a.png']['id']}/triage",
+            json=triage_payload(
+                samples["a.png"],
+                triage_status="ok",
+                ok_grade="borderline",
+                defect_severity="mild",
+                defect_type_ids=[scratch["id"]],
+                primary_defect_type_id=scratch["id"],
+                triage_note="保留这条备注",
+            ),
+        )
+        assert first.status_code == 200
+
+        operation = batch_operation(
+            triage_status_mode="set",
+            triage_status="ng",
+            ok_grade_mode="clear",
+            defect_severity_mode="set",
+            defect_severity="severe",
+            defect_types_mode="append",
+            defect_type_ids=[dent["id"]],
+            primary_defect_type_mode="clear",
+        )
+        selected_ids = [samples["b.png"]["id"], samples["a.png"]["id"]]
+        revision_before = client.get(f"/api/datasets/{dataset_id}").json()["revision"]
+        preview = client.post(
+            f"/api/datasets/{dataset_id}/triage/batch-preview",
+            json={"sample_ids": selected_ids, "operation": operation},
+        )
+        assert preview.status_code == 200
+        preview_json = preview.json()
+        assert preview_json["can_apply"] is True
+        assert preview_json["changed"] == 2
+        assert preview_json["blocked"] == 0
+        assert [item["sample_id"] for item in preview_json["items"]] == selected_ids
+        assert preview_json["items"][0]["after"]["defect_type_ids"] == [dent["id"]]
+        assert preview_json["items"][1]["after"]["defect_type_ids"] == sorted(
+            [scratch["id"], dent["id"]]
+        )
+        assert preview_json["items"][1]["after"]["triage_note"] == "保留这条备注"
+
+        committed = client.post(
+            f"/api/datasets/{dataset_id}/triage/batch",
+            json={
+                "policy_version": preview_json["policy_version"],
+                "preview_hash": preview_json["preview_hash"],
+                "expected_samples": preview_json["expected_samples"],
+                "operation": operation,
+            },
+        )
+        assert committed.status_code == 200
+        assert committed.json()["updated"] == 2
+        assert committed.json()["dataset_revision"] == revision_before + 1
+
+        first_after = client.get(
+            f"/api/samples/{samples['a.png']['id']}/triage"
+        ).json()
+        second_after = client.get(
+            f"/api/samples/{samples['b.png']['id']}/triage"
+        ).json()
+        assert first_after["triage_status"] == "ng"
+        assert first_after["ok_grade"] is None
+        assert first_after["defect_severity"] == "severe"
+        assert {item["id"] for item in first_after["defect_types"]} == {
+            scratch["id"],
+            dent["id"],
+        }
+        assert first_after["primary_defect_type_id"] is None
+        assert first_after["triage_note"] == "保留这条备注"
+        assert [item["id"] for item in second_after["defect_types"]] == [dent["id"]]
+
+        replace_operation = batch_operation(
+            defect_types_mode="replace",
+            defect_type_ids=[scratch["id"]],
+            primary_defect_type_mode="set",
+            primary_defect_type_id=scratch["id"],
+            triage_note_mode="clear",
+        )
+        replace_preview = client.post(
+            f"/api/datasets/{dataset_id}/triage/batch-preview",
+            json={"sample_ids": selected_ids, "operation": replace_operation},
+        ).json()
+        replaced = client.post(
+            f"/api/datasets/{dataset_id}/triage/batch",
+            json={
+                "policy_version": replace_preview["policy_version"],
+                "preview_hash": replace_preview["preview_hash"],
+                "expected_samples": replace_preview["expected_samples"],
+                "operation": replace_operation,
+            },
+        )
+        assert replaced.status_code == 200
+        assert replaced.json()["updated"] == 2
+        for sample_id in selected_ids:
+            value = client.get(f"/api/samples/{sample_id}/triage").json()
+            assert [item["id"] for item in value["defect_types"]] == [scratch["id"]]
+            assert value["primary_defect_type_id"] == scratch["id"]
+            assert value["triage_note"] is None
+
+        clear_operation = batch_operation(triage_status_mode="clear")
+        clear_preview = client.post(
+            f"/api/datasets/{dataset_id}/triage/batch-preview",
+            json={"sample_ids": selected_ids, "operation": clear_operation},
+        ).json()
+        assert all(item["after"]["triage_status"] == "untriaged" for item in clear_preview["items"])
+        cleared = client.post(
+            f"/api/datasets/{dataset_id}/triage/batch",
+            json={
+                "policy_version": clear_preview["policy_version"],
+                "preview_hash": clear_preview["preview_hash"],
+                "expected_samples": clear_preview["expected_samples"],
+                "operation": clear_operation,
+            },
+        )
+        assert cleared.status_code == 200
+        for sample_id in selected_ids:
+            value = client.get(f"/api/samples/{sample_id}/triage").json()
+            assert value["triage_status"] == "untriaged"
+            assert value["defect_types"] == []
+            assert value["defect_severity"] is None
+            assert value["triage_note"] is None
+
+        no_change_revision = client.get(f"/api/datasets/{dataset_id}").json()[
+            "revision"
+        ]
+        no_change_preview = client.post(
+            f"/api/datasets/{dataset_id}/triage/batch-preview",
+            json={"sample_ids": selected_ids, "operation": clear_operation},
+        ).json()
+        assert no_change_preview["changed"] == 0
+        assert no_change_preview["can_apply"] is False
+        no_change = client.post(
+            f"/api/datasets/{dataset_id}/triage/batch",
+            json={
+                "policy_version": no_change_preview["policy_version"],
+                "preview_hash": no_change_preview["preview_hash"],
+                "expected_samples": no_change_preview["expected_samples"],
+                "operation": clear_operation,
+            },
+        )
+        assert no_change.status_code == 200
+        assert no_change.json()["updated"] == 0
+        assert no_change.json()["unchanged"] == 2
+        assert client.get(f"/api/datasets/{dataset_id}").json()["revision"] == no_change_revision
+
+    app.dependency_overrides.clear()
+
+
+def test_batch_triage_conflict_rejects_entire_batch(tmp_path: Path) -> None:
+    with make_client() as client:
+        dataset, samples = create_image_dataset(client, tmp_path)
+        dataset_id = dataset["id"]
+        operation = batch_operation(
+            triage_status_mode="set",
+            triage_status="pending",
+        )
+        preview = client.post(
+            f"/api/datasets/{dataset_id}/triage/batch-preview",
+            json={
+                "sample_ids": [samples["a.png"]["id"], samples["b.png"]["id"]],
+                "operation": operation,
+            },
+        ).json()
+
+        competing = client.put(
+            f"/api/samples/{samples['a.png']['id']}/triage",
+            json=triage_payload(
+                samples["a.png"],
+                triage_status="ok",
+                ok_grade="clear",
+            ),
+        )
+        assert competing.status_code == 200
+        rejected = client.post(
+            f"/api/datasets/{dataset_id}/triage/batch",
+            json={
+                "policy_version": preview["policy_version"],
+                "preview_hash": preview["preview_hash"],
+                "expected_samples": preview["expected_samples"],
+                "operation": operation,
+            },
+        )
+        assert rejected.status_code == 409
+        assert "未写入" in rejected.json()["detail"]
+        untouched = client.get(
+            f"/api/samples/{samples['b.png']['id']}/triage"
+        ).json()
+        assert untouched["triage_status"] == "untriaged"
+        assert untouched["triage_version"] == 0
+
+    app.dependency_overrides.clear()
+
+
+def test_batch_triage_preview_reports_blocked_rows_and_enforces_limits(
+    tmp_path: Path,
+) -> None:
+    with make_client() as client:
+        dataset, samples = create_image_dataset(client, tmp_path)
+        dataset_id = dataset["id"]
+        scratch = client.post(
+            f"/api/datasets/{dataset_id}/defect-types",
+            json={"name": "划痕", "code": "scratch"},
+        ).json()
+        saved = client.put(
+            f"/api/samples/{samples['a.png']['id']}/triage",
+            json=triage_payload(
+                samples["a.png"],
+                triage_status="ok",
+                ok_grade="clear",
+            ),
+        )
+        assert saved.status_code == 200
+
+        invalid_operation = batch_operation(
+            defect_types_mode="append",
+            defect_type_ids=[scratch["id"]],
+        )
+        preview = client.post(
+            f"/api/datasets/{dataset_id}/triage/batch-preview",
+            json={
+                "sample_ids": [samples["a.png"]["id"]],
+                "operation": invalid_operation,
+            },
+        )
+        assert preview.status_code == 200
+        assert preview.json()["can_apply"] is False
+        assert preview.json()["blocked"] == 1
+        assert "完全 OK" in preview.json()["items"][0]["errors"][0]
+
+        blocked_commit = client.post(
+            f"/api/datasets/{dataset_id}/triage/batch",
+            json={
+                "policy_version": preview.json()["policy_version"],
+                "preview_hash": preview.json()["preview_hash"],
+                "expected_samples": preview.json()["expected_samples"],
+                "operation": invalid_operation,
+            },
+        )
+        assert blocked_commit.status_code == 422
+        assert client.get(
+            f"/api/samples/{samples['a.png']['id']}/triage"
+        ).json()["triage_version"] == saved.json()["triage_version"]
+
+        tampered = client.post(
+            f"/api/datasets/{dataset_id}/triage/batch",
+            json={
+                "policy_version": preview.json()["policy_version"],
+                "preview_hash": "0" * 64,
+                "expected_samples": preview.json()["expected_samples"],
+                "operation": invalid_operation,
+            },
+        )
+        assert tampered.status_code == 409
+
+        too_many = client.post(
+            f"/api/datasets/{dataset_id}/triage/batch-preview",
+            json={
+                "sample_ids": list(range(1, 202)),
+                "operation": batch_operation(triage_status_mode="clear"),
+            },
+        )
+        assert too_many.status_code == 422
+
+    app.dependency_overrides.clear()
+
+
 def test_quick_triage_api_workflow_and_conflict_protection(tmp_path: Path) -> None:
     with make_client() as client:
         dataset, samples = create_image_dataset(client, tmp_path)

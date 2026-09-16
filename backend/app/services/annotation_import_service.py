@@ -9,7 +9,13 @@ from sqlmodel import Session, select
 
 from app.models.sample import Sample
 from app.schemas.annotation import AnnotationCreate, AnnotationReplaceRequest
-from app.schemas.annotation_import import LabelmeImportIssue, LabelmeImportRequest, LabelmeImportResult
+from app.schemas.annotation_import import (
+    AnnotationImportRequest,
+    AnnotationImportResult,
+    LabelmeImportIssue,
+    LabelmeImportRequest,
+    LabelmeImportResult,
+)
 from app.services import annotation_service, dataset_service
 from app.services.dataset_revision_service import bump_dataset_revision
 from app.utils.image_size import read_image_size
@@ -39,6 +45,34 @@ class LabelmeImportPlan:
     warnings: list[LabelmeImportIssue]
     errors: list[LabelmeImportIssue]
     operations: list[LabelmeImportOperation]
+    format: str = "labelme"
+
+
+def prepare_annotation_import(
+    session: Session,
+    dataset_id: int,
+    payload: AnnotationImportRequest,
+) -> LabelmeImportPlan:
+    if payload.format == "labelme":
+        return prepare_labelme_import(session, dataset_id, LabelmeImportRequest(**payload.model_dump(exclude={"format"})))
+    if payload.format in {"yolo_detection", "yolo_segmentation"}:
+        from app.services import yolo_annotation_import_service
+
+        return yolo_annotation_import_service.prepare_yolo_import(session, dataset_id, payload)
+    from app.services import coco_annotation_import_service
+
+    return coco_annotation_import_service.prepare_coco_import(session, dataset_id, payload)
+
+
+def import_annotations(
+    session: Session,
+    dataset_id: int,
+    payload: AnnotationImportRequest,
+) -> AnnotationImportResult:
+    plan = prepare_annotation_import(session, dataset_id, payload)
+    if not payload.dry_run:
+        _apply_import_plan(session, dataset_id, plan, payload)
+    return annotation_import_result(plan, payload)
 
 
 def import_labelme_annotations(
@@ -48,32 +82,36 @@ def import_labelme_annotations(
 ) -> LabelmeImportResult:
     plan = prepare_labelme_import(session, dataset_id, payload)
     if not payload.dry_run:
-        for operation in plan.operations:
-            next_annotations = operation.annotations
-            if payload.strategy == "append":
-                existing_annotations = [
-                    _annotation_read_to_create(item)
-                    for item in annotation_service.list_sample_annotations(session, operation.sample_id)
-                ]
-                next_annotations = append_annotations(existing_annotations, operation.annotations)
-            annotation_service.replace_sample_annotations(
+        _apply_import_plan(session, dataset_id, plan, payload)
+    return labelme_import_result(plan, payload)
+
+
+def _apply_import_plan(session: Session, dataset_id: int, plan: LabelmeImportPlan, payload: LabelmeImportRequest) -> None:
+    for operation in plan.operations:
+        next_annotations = operation.annotations
+        if payload.strategy == "append":
+            existing_annotations = [
+                _annotation_read_to_create(item)
+                for item in annotation_service.list_sample_annotations(session, operation.sample_id)
+            ]
+            next_annotations = append_annotations(existing_annotations, operation.annotations)
+        annotation_service.replace_sample_annotations(
+            session,
+            operation.sample_id,
+            AnnotationReplaceRequest(annotations=next_annotations, save_mode="draft"),
+            commit=False,
+            bump_revision=False,
+        )
+        if payload.sync_sample_tags:
+            annotation_service.sync_annotation_classes_to_sample_tags(
                 session,
                 operation.sample_id,
-                AnnotationReplaceRequest(annotations=next_annotations, save_mode="draft"),
                 commit=False,
                 bump_revision=False,
             )
-            if payload.sync_sample_tags:
-                annotation_service.sync_annotation_classes_to_sample_tags(
-                    session,
-                    operation.sample_id,
-                    commit=False,
-                    bump_revision=False,
-                )
-        if plan.operations:
-            bump_dataset_revision(session, dataset_id)
-            session.commit()
-    return labelme_import_result(plan, payload)
+    if plan.operations:
+        bump_dataset_revision(session, dataset_id)
+        session.commit()
 
 
 def prepare_labelme_import(
@@ -198,6 +236,27 @@ def prepare_labelme_import(
 
 def labelme_import_result(plan: LabelmeImportPlan, payload: LabelmeImportRequest) -> LabelmeImportResult:
     return LabelmeImportResult(
+        dataset_id=plan.dataset_id,
+        source_path=str(plan.source),
+        mode=payload.mode,
+        strategy=payload.strategy,
+        dry_run=payload.dry_run,
+        source_size_bytes=plan.source_size_bytes,
+        source_sha256=plan.source_sha256,
+        plan_fingerprint=plan.plan_fingerprint,
+        checked_files=plan.checked_files,
+        matched_files=plan.matched_files,
+        imported_samples=len(plan.operations),
+        created_annotations=sum(len(operation.annotations) for operation in plan.operations),
+        skipped_shapes=plan.skipped_shapes,
+        warnings=plan.warnings,
+        errors=plan.errors,
+    )
+
+
+def annotation_import_result(plan: LabelmeImportPlan, payload: AnnotationImportRequest) -> AnnotationImportResult:
+    return AnnotationImportResult(
+        format=payload.format,
         dataset_id=plan.dataset_id,
         source_path=str(plan.source),
         mode=payload.mode,

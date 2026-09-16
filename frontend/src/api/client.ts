@@ -32,6 +32,9 @@ import type {
   LabelmeImportRequest,
   LabelmeImportJobCreateRequest,
   LabelmeImportResult,
+  AnnotationImportRequest,
+  AnnotationImportJobCreateRequest,
+  AnnotationImportResult,
   Sample,
   SampleDeleteResult,
   SampleListResponse,
@@ -63,6 +66,8 @@ import type {
   MetadataImportRollbackJobCreateResponse,
   LabelmeImportJobCreateResponse,
   LabelmeImportRollbackJobCreateResponse,
+  AnnotationImportJobCreateResponse,
+  AnnotationImportRollbackJobCreateResponse,
   ThumbnailJobCreateResponse,
   DatabaseBackupJobCreateResponse
 } from "../types/job";
@@ -78,6 +83,10 @@ import type {
   DatasetSavedViewCreate
 } from "../types/datasetSavedView";
 import type {
+  BatchTriageCommitRequest,
+  BatchTriageCommitResponse,
+  BatchTriageOperation,
+  BatchTriagePreviewResponse,
   DefectType,
   DefectTypeCreate,
   SampleTriage,
@@ -460,6 +469,37 @@ export async function createLabelmeImportRollbackJob(
   return data;
 }
 
+export async function importAnnotations(
+  datasetId: number,
+  payload: AnnotationImportRequest
+): Promise<AnnotationImportResult> {
+  const { data } = await client.post<AnnotationImportResult>(
+    `/datasets/${datasetId}/annotations/import`,
+    payload
+  );
+  return data;
+}
+
+export async function createAnnotationImportJob(
+  datasetId: number,
+  payload: AnnotationImportJobCreateRequest
+): Promise<AnnotationImportJobCreateResponse> {
+  const { data } = await client.post<AnnotationImportJobCreateResponse>(
+    `/datasets/${datasetId}/annotation-import-jobs`,
+    payload
+  );
+  return data;
+}
+
+export async function createAnnotationImportRollbackJob(
+  jobId: number
+): Promise<AnnotationImportRollbackJobCreateResponse> {
+  const { data } = await client.post<AnnotationImportRollbackJobCreateResponse>(
+    `/jobs/${jobId}/annotation-import-rollback-jobs`
+  );
+  return data;
+}
+
 export async function scanDataset(datasetId: number, folderPath: string): Promise<ScanResult> {
   const { data } = await client.post<ScanResult>(`/datasets/${datasetId}/scan`, {
     folder_path: folderPath
@@ -613,6 +653,29 @@ export async function replaceSampleTriage(
   payload: SampleTriageWrite
 ): Promise<SampleTriage> {
   const { data } = await client.put<SampleTriage>(`/samples/${sampleId}/triage`, payload);
+  return data;
+}
+
+export async function previewBatchTriage(
+  datasetId: number,
+  sampleIds: number[],
+  operation: BatchTriageOperation
+): Promise<BatchTriagePreviewResponse> {
+  const { data } = await client.post<BatchTriagePreviewResponse>(
+    `/datasets/${datasetId}/triage/batch-preview`,
+    { sample_ids: sampleIds, operation }
+  );
+  return data;
+}
+
+export async function commitBatchTriage(
+  datasetId: number,
+  payload: BatchTriageCommitRequest
+): Promise<BatchTriageCommitResponse> {
+  const { data } = await client.post<BatchTriageCommitResponse>(
+    `/datasets/${datasetId}/triage/batch`,
+    payload
+  );
   return data;
 }
 

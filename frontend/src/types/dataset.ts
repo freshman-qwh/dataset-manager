@@ -471,6 +471,17 @@ export interface MetadataImportResult {
 
 export type LabelmeImportMode = "file" | "directory";
 export type LabelmeImportStrategy = "replace" | "append";
+export type AnnotationImportFormat = "labelme" | "yolo_detection" | "yolo_segmentation" | "coco";
+export type AnnotationImportMode = LabelmeImportMode;
+export type AnnotationImportStrategy = LabelmeImportStrategy;
+
+export interface AnnotationImportRequest extends LabelmeImportRequest {
+  format: AnnotationImportFormat;
+}
+
+export interface AnnotationImportJobCreateRequest extends LabelmeImportJobCreateRequest {
+  format: AnnotationImportFormat;
+}
 
 export interface LabelmeImportRequest {
   path: string;
@@ -503,6 +514,7 @@ export interface LabelmeImportIssue {
 }
 
 export interface LabelmeImportResult {
+  format?: AnnotationImportFormat;
   dataset_id: number;
   source_path: string;
   mode: LabelmeImportMode;
@@ -519,6 +531,9 @@ export interface LabelmeImportResult {
   warnings: LabelmeImportIssue[];
   errors: LabelmeImportIssue[];
 }
+
+export type AnnotationImportIssue = LabelmeImportIssue;
+export type AnnotationImportResult = LabelmeImportResult & { format: AnnotationImportFormat };
 
 export interface ExportTemplateResponse {
   dataset_id: number;

@@ -2,7 +2,7 @@ import axios from "axios";
 import { Activity, Ban, Download, RefreshCw, RotateCcw, Undo2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { cancelJob, createLabelmeImportRollbackJob, createMetadataImportRollbackJob, downloadJobArtifact, listJobs, retryJob } from "../api/client";
+import { cancelJob, createAnnotationImportRollbackJob, createLabelmeImportRollbackJob, createMetadataImportRollbackJob, downloadJobArtifact, listJobs, retryJob } from "../api/client";
 import type { Job, JobStatus } from "../types/job";
 
 const statusCopy: Record<JobStatus, string> = {
@@ -26,6 +26,9 @@ const stageCopy: Record<string, string> = {
   writing_metadata: "分批写入元数据",
   rolling_back_metadata: "恢复导入前元数据",
   parsing_labelme: "解析 LabelMe 标注",
+  parsing_yolo_detection: "解析 YOLO detection 标注",
+  parsing_yolo_segmentation: "解析 YOLO segmentation 标注",
+  parsing_coco: "解析 COCO 标注",
   writing_annotations: "分批写入标注",
   rolling_back_annotations: "恢复导入前标注",
   writing_archive: "写入导出包",
@@ -182,20 +185,25 @@ function metadataRollbackSummary(job: Job): string | null {
 }
 
 function labelmeImportSummary(job: Job): string | null {
-  if (job.job_type !== "annotation.import.labelme" || !job.result) return null;
+  if ((job.job_type !== "annotation.import.labelme" && job.job_type !== "annotation.import") || !job.result) return null;
   const imported = job.result.imported_samples;
   const annotations = job.result.planned_annotations;
   const batches = job.result.batches_committed;
   if (typeof imported !== "number" || typeof annotations !== "number" || typeof batches !== "number") return null;
-  return `LabelMe：写入 ${imported} 个样本 · ${annotations} 个对象 · ${batches} 批`;
+  const format = typeof job.result.format === "string" ? job.result.format : "labelme";
+  const labels: Record<string, string> = { labelme: "LabelMe", yolo_detection: "YOLO detection", yolo_segmentation: "YOLO segmentation", coco: "COCO" };
+  const label = labels[format] ?? format;
+  return `${label}：写入 ${imported} 个样本 · ${annotations} 个对象 · ${batches} 批`;
 }
 
 function labelmeRollbackSummary(job: Job): string | null {
-  if (job.job_type !== "annotation.import.labelme.rollback" || !job.result) return null;
+  if ((job.job_type !== "annotation.import.labelme.rollback" && job.job_type !== "annotation.import.rollback") || !job.result) return null;
   const restored = job.result.restored;
   const missing = job.result.missing;
   if (typeof restored !== "number" || typeof missing !== "number") return null;
-  return `LabelMe 回滚：恢复 ${restored} 个样本${missing > 0 ? ` · 缺失 ${missing}` : ""}`;
+  const format = typeof job.result.format === "string" ? job.result.format : "labelme";
+  const labels: Record<string, string> = { labelme: "LabelMe", yolo_detection: "YOLO detection", yolo_segmentation: "YOLO segmentation", coco: "COCO" };
+  return `${labels[format] ?? format} 回滚：恢复 ${restored} 个样本${missing > 0 ? ` · 缺失 ${missing}` : ""}`;
 }
 
 function databaseBackupSummary(job: Job): string | null {
@@ -327,7 +335,11 @@ export default function JobCenter() {
       if (job.job_type === "metadata.import") {
         await createMetadataImportRollbackJob(job.id);
       } else {
-        await createLabelmeImportRollbackJob(job.id);
+        if (job.job_type === "annotation.import") {
+          await createAnnotationImportRollbackJob(job.id);
+        } else {
+          await createLabelmeImportRollbackJob(job.id);
+        }
       }
       await load(true);
       window.dispatchEvent(new Event("dataset-manager:jobs-changed"));
@@ -409,7 +421,7 @@ export default function JobCenter() {
                       || job.job_type === "database.backup"
                       || (job.job_type === "dataset.directory_export" && job.result?.delivery === "zip")
                     ) && job.status === "succeeded";
-                    const canRollback = (job.job_type === "metadata.import" || job.job_type === "annotation.import.labelme")
+                    const canRollback = (job.job_type === "metadata.import" || job.job_type === "annotation.import.labelme" || job.job_type === "annotation.import")
                       && (job.result?.rollback_available === true || job.status === "interrupted");
                     return (
                       <article key={job.id} className="rounded-2xl border border-line p-4">

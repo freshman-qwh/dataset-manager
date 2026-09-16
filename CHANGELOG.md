@@ -1,9 +1,24 @@
 # CHANGELOG
 
+## [v0.5.0-rc.1 Windows x64 外部测试候选] - 2026-09-16
+
+- 将快速分拣、批量分拣、目录/ZIP 导出与 LabelMe/YOLO/COCO 标注导入整合为首个外部测试候选；应用内部版本保持 `0.5.0`，以 Git 标签 `v0.5.0-rc.1` 和同名便携 ZIP 标识本次交付。
+- 本机自动化测试、前端构建和便携包隔离验收作为交付门槛；全新 Windows 10/11 x64 虚拟机兼容性仍待测试人员签收，不标记为正式发布。
+
+## [v0.5.0 YOLO/COCO 标注导入] - 2026-09-16
+
+- 新增通用 `POST /api/datasets/{id}/annotations/import`、`annotation-import-jobs` 与任务回滚 API；保留旧 LabelMe 端点兼容，LabelMe、YOLO 和 COCO 共用来源/计划指纹、replace/append、取消、重试、回滚及任务中心。
+- YOLO 支持 detection bbox 与 segmentation polygon，从 `data.yaml` 或 `classes.txt` 读取类别，按相对路径或唯一文件名匹配 `labels/*.txt` 与样本，并按原图尺寸把归一化坐标转换为像素；pose、OBB、格式错配、缺失类别与越界坐标返回结构化错误。
+- COCO 支持单 JSON 的 images/categories/annotations，bbox 转 rectangle、polygon segmentation 转 polygon；RLE、缺失类别、重复图片、缺失 image、歧义匹配和越界坐标返回结构化 warning/error。
+- “导入 LabelMe 标注”升级为通用“导入标注”弹窗，提供格式选择、类别同步、样本匹配摘要及错误来源预览；任务中心按真实格式显示解析阶段、写入摘要与回滚入口。规范化对象继续写入 SQLite，AnnotationPage 复用现有 rectangle/polygon 画布。
+- 新增解析、通用 API、指纹保护、异步任务与回滚测试；原始图片、JSON/TXT/YAML 来源及数据集目录保持只读。
+
 ## [v0.5.0 快速分拣与目录工作流 · 开发中] - 2026-09-15
 
 主要更新：
 
+- 新增最多 200 张明确样本的批量分拣：每个字段可独立保留、设置或清空，缺陷类型支持追加或替换；提交前逐项预览原值、新值、无变化和阻断原因。
+- 批量提交复用预览时的分拣版本、文件 hash、层级版本和预览内容 hash；任一冲突整批回滚，成功批次只递增一次 dataset revision，且不修改原始文件或其他工作流元数据。
 - 新增 Windows x64 免安装便携版第一阶段：React 生产构建由 FastAPI 托管，页面和 API 共用单个动态本地端口；开发环境切换为 Vite `/api` 代理。
 - 新增 PyInstaller 目录模式启动器、PowerShell 构建脚本和 ZIP 使用说明；最终用户无需安装 Python 或 Node.js。
 - 便携版数据库、配置、日志、缓存、存储和导出统一写入 `%LOCALAPPDATA%\DatasetManager`；程序覆盖升级与应用数据分离，启动前使用既有安全迁移流程备份并升级 SQLite。

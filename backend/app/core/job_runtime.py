@@ -12,8 +12,12 @@ from app.services.triage_directory_mapping_job_service import (
     run_triage_directory_mapping_job,
 )
 from app.services.annotation_import_job_service import (
+    ANNOTATION_IMPORT_JOB_TYPE,
+    ANNOTATION_IMPORT_ROLLBACK_JOB_TYPE,
     LABELME_IMPORT_JOB_TYPE,
     LABELME_IMPORT_ROLLBACK_JOB_TYPE,
+    run_annotation_import_job,
+    run_annotation_import_rollback_job,
     run_labelme_import_job,
     run_labelme_import_rollback_job,
 )
@@ -50,9 +54,14 @@ job_runner.register_handler(
     run_triage_directory_mapping_job,
 )
 job_runner.register_handler(LABELME_IMPORT_JOB_TYPE, run_labelme_import_job)
+job_runner.register_handler(ANNOTATION_IMPORT_JOB_TYPE, run_annotation_import_job)
 job_runner.register_handler(
     LABELME_IMPORT_ROLLBACK_JOB_TYPE,
     run_labelme_import_rollback_job,
+)
+job_runner.register_handler(
+    ANNOTATION_IMPORT_ROLLBACK_JOB_TYPE,
+    run_annotation_import_rollback_job,
 )
 job_runner.register_handler(THUMBNAIL_JOB_TYPE, run_thumbnail_job)
 job_runner.register_handler(

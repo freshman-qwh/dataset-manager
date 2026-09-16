@@ -69,6 +69,81 @@ export interface SampleTriageWrite {
   triage_note?: string | null;
 }
 
+export type BatchFieldMode = "preserve" | "set" | "clear";
+export type BatchDefectTypesMode = "preserve" | "append" | "replace" | "clear";
+
+export interface BatchTriageOperation {
+  triage_status_mode: BatchFieldMode;
+  triage_status?: TriageStatus | null;
+  ok_grade_mode: BatchFieldMode;
+  ok_grade?: OkGrade | null;
+  defect_severity_mode: BatchFieldMode;
+  defect_severity?: DefectSeverity | null;
+  defect_types_mode: BatchDefectTypesMode;
+  defect_type_ids: number[];
+  primary_defect_type_mode: BatchFieldMode;
+  primary_defect_type_id?: number | null;
+  triage_note_mode: BatchFieldMode;
+  triage_note?: string | null;
+}
+
+export interface BatchTriageExpectedSample {
+  sample_id: number;
+  expected_version: number;
+  expected_file_hash: string;
+}
+
+export interface BatchTriageState {
+  triage_status: TriageStatus;
+  ok_grade: OkGrade | null;
+  defect_severity: DefectSeverity | null;
+  defect_type_ids: number[];
+  primary_defect_type_id: number | null;
+  triage_note: string | null;
+  triage_version: number;
+  outdated: boolean;
+}
+
+export interface BatchTriagePreviewItem {
+  sample_id: number;
+  relative_path: string;
+  expected_version: number;
+  expected_file_hash: string;
+  before: BatchTriageState;
+  after: BatchTriageState | null;
+  changed: boolean;
+  errors: string[];
+}
+
+export interface BatchTriagePreviewResponse {
+  dataset_id: number;
+  dataset_revision: number;
+  policy_version: number;
+  requested: number;
+  changed: number;
+  unchanged: number;
+  blocked: number;
+  can_apply: boolean;
+  preview_hash: string;
+  expected_samples: BatchTriageExpectedSample[];
+  items: BatchTriagePreviewItem[];
+}
+
+export interface BatchTriageCommitRequest {
+  policy_version: number;
+  preview_hash: string;
+  expected_samples: BatchTriageExpectedSample[];
+  operation: BatchTriageOperation;
+}
+
+export interface BatchTriageCommitResponse {
+  dataset_id: number;
+  dataset_revision: number;
+  requested: number;
+  updated: number;
+  unchanged: number;
+}
+
 export interface TriageNavigation {
   current_sample: Sample | null;
   previous_sample: Sample | null;
