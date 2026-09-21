@@ -33,7 +33,12 @@ def make_client() -> TestClient:
     return TestClient(app)
 
 
-def create_image_dataset(client: TestClient, tmp_path: Path) -> tuple[dict, dict[str, dict]]:
+def create_image_dataset(
+    client: TestClient,
+    tmp_path: Path,
+    *,
+    configure_detailed: bool = True,
+) -> tuple[dict, dict[str, dict]]:
     root = tmp_path / "triage-images"
     root.mkdir(parents=True)
     for name in ("a.png", "b.png", "c.png"):
@@ -47,6 +52,18 @@ def create_image_dataset(client: TestClient, tmp_path: Path) -> tuple[dict, dict
         json={"folder_path": str(root)},
     )
     assert scanned.status_code == 200
+    if configure_detailed:
+        policy = client.get(f"/api/datasets/{dataset['id']}/triage-policy").json()
+        configured = client.put(
+            f"/api/datasets/{dataset['id']}/triage-policy",
+            json={
+                **policy,
+                "expected_version": policy["version"],
+                "split_ok": True,
+                "ng_grouping": "defect_type_and_severity",
+            },
+        )
+        assert configured.status_code == 200
     samples = client.get(
         f"/api/datasets/{dataset['id']}/samples",
         params={"page_size": 20},
@@ -80,6 +97,121 @@ def batch_operation(**overrides: object) -> dict:
     }
     payload.update(overrides)
     return payload
+
+
+def test_triage_first_run_defaults_completion_and_policy_conflict(tmp_path: Path) -> None:
+    with make_client() as client:
+        dataset, _ = create_image_dataset(
+            client,
+            tmp_path,
+            configure_detailed=False,
+        )
+        dataset_id = dataset["id"]
+        policy = client.get(f"/api/datasets/{dataset_id}/triage-policy").json()
+        assert policy["split_ok"] is False
+        assert policy["ng_grouping"] == "none"
+        assert policy["onboarding_completed"] is False
+
+        preview = client.post(
+            f"/api/datasets/{dataset_id}/triage-policy/preview",
+            json={**policy, "expected_version": policy["version"]},
+        )
+        assert preview.status_code == 200
+        assert preview.json()["changed"] is False
+        assert preview.json()["processed_count"] == 0
+
+        completed = client.put(
+            f"/api/datasets/{dataset_id}/triage-policy",
+            json={**policy, "expected_version": policy["version"]},
+        )
+        assert completed.status_code == 200
+        assert completed.json()["version"] == policy["version"]
+        assert completed.json()["onboarding_completed"] is True
+
+        detailed = client.put(
+            f"/api/datasets/{dataset_id}/triage-policy",
+            json={
+                **completed.json(),
+                "expected_version": completed.json()["version"],
+                "split_ok": True,
+            },
+        )
+        assert detailed.status_code == 200
+        assert detailed.json()["version"] == policy["version"] + 1
+
+        stale = client.put(
+            f"/api/datasets/{dataset_id}/triage-policy",
+            json={**policy, "expected_version": policy["version"], "split_ok": True},
+        )
+        assert stale.status_code == 409
+
+    app.dependency_overrides.clear()
+
+
+def test_triage_policy_preview_preserves_details_and_marks_review(tmp_path: Path) -> None:
+    with make_client() as client:
+        dataset, samples = create_image_dataset(client, tmp_path)
+        dataset_id = dataset["id"]
+        scratch = client.post(
+            f"/api/datasets/{dataset_id}/defect-types",
+            json={"name": "划痕", "code": "scratch"},
+        ).json()
+        saved_ok = client.put(
+            f"/api/samples/{samples['a.png']['id']}/triage",
+            json=triage_payload(
+                samples["a.png"],
+                triage_status="ok",
+                ok_grade="clear",
+            ),
+        )
+        assert saved_ok.status_code == 200
+        saved_ng = client.put(
+            f"/api/samples/{samples['b.png']['id']}/triage",
+            json=triage_payload(
+                samples["b.png"],
+                triage_status="ng",
+                defect_type_ids=[scratch["id"]],
+                primary_defect_type_id=scratch["id"],
+                defect_severity="severe",
+            ),
+        )
+        assert saved_ng.status_code == 200
+        policy = client.get(f"/api/datasets/{dataset_id}/triage-policy").json()
+
+        preview = client.post(
+            f"/api/datasets/{dataset_id}/triage-policy/preview",
+            json={
+                **policy,
+                "expected_version": policy["version"],
+                "split_ok": False,
+                "ng_grouping": "none",
+            },
+        )
+        assert preview.status_code == 200
+        impact = preview.json()
+        assert impact["processed_count"] == 2
+        assert impact["requires_review_count"] == 2
+        assert impact["retained_detail_count"] == 2
+        assert len(impact["warnings"]) == 2
+
+        updated = client.put(
+            f"/api/datasets/{dataset_id}/triage-policy",
+            json={
+                **policy,
+                "expected_version": policy["version"],
+                "split_ok": False,
+                "ng_grouping": "none",
+            },
+        )
+        assert updated.status_code == 200
+        existing_ng = client.get(
+            f"/api/samples/{samples['b.png']['id']}/triage"
+        ).json()
+        assert existing_ng["defect_severity"] == "severe"
+        assert existing_ng["defect_types"][0]["code"] == "scratch"
+        assert existing_ng["outdated"] is True
+
+    app.dependency_overrides.clear()
 
 
 def test_batch_triage_preview_commit_and_field_modes(tmp_path: Path) -> None:
@@ -368,7 +500,7 @@ def test_quick_triage_api_workflow_and_conflict_protection(tmp_path: Path) -> No
 
         policy = client.get(f"/api/datasets/{dataset_id}/triage-policy")
         assert policy.status_code == 200
-        assert policy.json()["version"] == 1
+        assert policy.json()["version"] == 2
 
         parent = client.post(
             f"/api/datasets/{dataset_id}/defect-types",
@@ -512,11 +644,12 @@ def test_quick_triage_api_workflow_and_conflict_protection(tmp_path: Path) -> No
             f"/api/datasets/{dataset_id}/triage-policy",
             json={
                 **policy.json(),
+                "expected_version": policy.json()["version"],
                 "instructions": "按客户第二版标准判断",
             },
         )
         assert updated_policy.status_code == 200
-        assert updated_policy.json()["version"] == 2
+        assert updated_policy.json()["version"] == policy.json()["version"] + 1
         assert client.get(f"/api/datasets/{dataset_id}/triage/stats").json()["outdated"] == 3
         outdated = client.get(
             f"/api/datasets/{dataset_id}/samples",
@@ -617,6 +750,7 @@ def test_triage_hierarchy_configuration_controls_validation_filters_and_export(
             f"/api/datasets/{dataset_id}/triage-policy",
             json={
                 **policy,
+                "expected_version": policy["version"],
                 "split_ok": False,
                 "ng_grouping": "defect_type",
             },
@@ -715,7 +849,11 @@ def test_configured_export_bucket_covers_every_hierarchy_and_legacy_values() -> 
     dent = DefectType(id=8, dataset_id=1, name="凹陷", code="dent")
 
     legacy_policy = TriagePolicyValues.model_validate(
-        {"instructions": "旧版策略没有层级字段"}
+        {
+            "instructions": "升级迁移已固化旧版层级",
+            "split_ok": True,
+            "ng_grouping": "defect_type_and_severity",
+        }
     )
     assert legacy_policy.split_ok is True
     assert legacy_policy.ng_grouping == "defect_type_and_severity"

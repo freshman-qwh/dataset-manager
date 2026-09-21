@@ -88,6 +88,7 @@ def test_upgrade_creates_fresh_database_at_head(tmp_path: Path) -> None:
             for row in connection.execute("PRAGMA table_info(samples)").fetchall()
         }
     assert "revision" in columns
+    assert "triage_onboarding_completed" in columns
     assert {"dataset_revision", "content_sha256", "artifact_path"}.issubset(snapshot_columns)
     assert {"name", "task_type", "queue_scope", "query_json"}.issubset(saved_view_columns)
     assert {
@@ -141,6 +142,36 @@ def test_upgrade_adds_known_columns_to_legacy_table(tmp_path: Path) -> None:
     }.issubset(columns)
     assert task_type == "detection"
     assert revision == 1
+
+
+def test_triage_onboarding_migration_preserves_processed_legacy_policy(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "legacy-triage.db"
+    _create_unversioned_current_database(database_path)
+    with closing(sqlite3.connect(database_path)) as connection:
+        connection.execute(
+            "UPDATE samples SET triage_status = 'ok', ok_grade = 'clear', "
+            "triage_policy_version = 1 WHERE id = 1"
+        )
+        connection.execute(
+            "UPDATE datasets SET triage_policy_json = ? WHERE id = 1",
+            ('{"instructions":"retain me"}',),
+        )
+        connection.commit()
+
+    migrations.upgrade_database(database_path)
+
+    with closing(sqlite3.connect(database_path)) as connection:
+        onboarding_completed, policy_json = connection.execute(
+            "SELECT triage_onboarding_completed, triage_policy_json "
+            "FROM datasets WHERE id = 1"
+        ).fetchone()
+    assert onboarding_completed == 1
+    assert policy_json is not None
+    assert '\"split_ok\":true' in policy_json
+    assert '\"ng_grouping\":\"defect_type_and_severity\"' in policy_json
+    assert '\"instructions\":\"retain me\"' in policy_json
 
 
 def test_upgrade_backs_up_and_preserves_unversioned_database(tmp_path: Path) -> None:

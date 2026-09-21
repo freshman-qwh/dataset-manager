@@ -39,6 +39,20 @@ export interface TriagePolicyValues {
 export interface TriagePolicy extends TriagePolicyValues {
   dataset_id: number;
   version: number;
+  onboarding_completed: boolean;
+}
+
+export interface TriagePolicyImpactPreview {
+  dataset_id: number;
+  current_version: number;
+  changed: boolean;
+  processed_count: number;
+  requires_review_count: number;
+  retained_detail_count: number;
+  missing_ok_grade_count: number;
+  missing_defect_type_count: number;
+  missing_severity_count: number;
+  warnings: string[];
 }
 
 export interface SampleTriage {

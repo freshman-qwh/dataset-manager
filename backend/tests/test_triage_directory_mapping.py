@@ -65,6 +65,17 @@ def _create_dataset(client: TestClient, raw_root: Path) -> tuple[int, dict[str, 
         json={"folder_path": str(raw_root)},
     )
     assert scanned.status_code == 200
+    policy = client.get(f"/api/datasets/{dataset_id}/triage-policy").json()
+    configured = client.put(
+        f"/api/datasets/{dataset_id}/triage-policy",
+        json={
+            **policy,
+            "expected_version": policy["version"],
+            "split_ok": True,
+            "ng_grouping": "defect_type_and_severity",
+        },
+    )
+    assert configured.status_code == 200
     listed = client.get(
         f"/api/datasets/{dataset_id}/samples",
         params={"page_size": 20, "sort_by": "relative_path", "sort_order": "asc"},
@@ -340,7 +351,12 @@ def test_directory_mapping_respects_unified_ok_and_queued_cancel(
         policy = client.get(f"/api/datasets/{dataset_id}/triage-policy").json()
         configured = client.put(
             f"/api/datasets/{dataset_id}/triage-policy",
-            json={**policy, "split_ok": False, "ng_grouping": "none"},
+            json={
+                **policy,
+                "expected_version": policy["version"],
+                "split_ok": False,
+                "ng_grouping": "none",
+            },
         )
         assert configured.status_code == 200
         preview = client.post(

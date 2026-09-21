@@ -77,6 +77,17 @@ def _triage_payload(sample: dict, **values) -> dict:
 
 
 def _prepare_triage(client: TestClient, dataset_id: int, samples: list[dict]) -> None:
+    policy = client.get(f"/api/datasets/{dataset_id}/triage-policy").json()
+    configured = client.put(
+        f"/api/datasets/{dataset_id}/triage-policy",
+        json={
+            **policy,
+            "expected_version": policy["version"],
+            "split_ok": True,
+            "ng_grouping": "defect_type_and_severity",
+        },
+    )
+    assert configured.status_code == 200
     scratch = client.post(
         f"/api/datasets/{dataset_id}/defect-types",
         json={"name": "划痕", "code": "scratch"},
@@ -237,7 +248,12 @@ def test_server_directory_export_includes_explicit_queues_and_publishes_atomical
         policy = client.get(f"/api/datasets/{dataset_id}/triage-policy").json()
         configured = client.put(
             f"/api/datasets/{dataset_id}/triage-policy",
-            json={**policy, "split_ok": False, "ng_grouping": "none"},
+            json={
+                **policy,
+                "expected_version": policy["version"],
+                "split_ok": False,
+                "ng_grouping": "none",
+            },
         )
         assert configured.status_code == 200
         preview = client.post(
@@ -339,7 +355,11 @@ def test_export_rejects_stale_plan_and_cleans_changed_source_failure(
         policy = client.get(f"/api/datasets/{dataset_id}/triage-policy").json()
         changed_policy = client.put(
             f"/api/datasets/{dataset_id}/triage-policy",
-            json={**policy, "instructions": "changed after preview"},
+            json={
+                **policy,
+                "expected_version": policy["version"],
+                "instructions": "changed after preview",
+            },
         )
         assert changed_policy.status_code == 200
         stale = client.post(

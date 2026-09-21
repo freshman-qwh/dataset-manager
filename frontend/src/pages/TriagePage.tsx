@@ -25,6 +25,7 @@ import {
   getTriagePolicy,
   getTriageStats,
   listDefectTypes,
+  previewTriagePolicy,
   replaceSampleTriage,
   updateTriagePolicy
 } from "../api/client";
@@ -38,11 +39,13 @@ import type {
   SampleTriageWrite,
   TriageNavigation,
   TriagePolicy,
+  TriagePolicyImpactPreview,
   TriagePolicyValues,
   TriageQueueScope,
   TriageStats,
   TriageStatus
 } from "../types/triage";
+import TriagePolicyModal from "../components/TriagePolicyModal";
 
 const QUEUE_LABELS: Record<TriageQueueScope, string> = {
   untriaged: "未分拣",
@@ -64,11 +67,11 @@ const SEVERITY_LABELS: Record<DefectSeverity, string> = {
   severe: "严重"
 };
 
-const NG_GROUPING_LABELS: Record<NgGrouping, { title: string; description: string }> = {
-  none: { title: "不细分", description: "所有 NG 进入同一目录" },
-  defect_type: { title: "按缺陷类别", description: "例如 ng/scratch；无类别进入 unknown" },
-  severity: { title: "按缺陷程度", description: "按轻微、中等、严重分目录" },
-  defect_type_and_severity: { title: "类别＋程度", description: "例如 ng/scratch/mild" }
+const NG_GROUPING_DESCRIPTIONS: Record<NgGrouping, string> = {
+  none: "统一判为异常，不再填写类别或程度",
+  defect_type: "判为异常后选择缺陷类别",
+  severity: "判为异常后选择轻微、中等或严重",
+  defect_type_and_severity: "判为异常后填写缺陷类别和严重程度"
 };
 
 interface TriageDraft {
@@ -179,6 +182,7 @@ export default function TriagePage() {
   const [policy, setPolicy] = useState<TriagePolicy | null>(null);
   const [policyDraft, setPolicyDraft] = useState<TriagePolicyValues | null>(null);
   const [policyPanelOpen, setPolicyPanelOpen] = useState(false);
+  const [policyImpact, setPolicyImpact] = useState<TriagePolicyImpactPreview | null>(null);
   const [policySaving, setPolicySaving] = useState(false);
   const [stats, setStats] = useState<TriageStats | null>(null);
   const [defectTypes, setDefectTypes] = useState<DefectType[]>([]);
@@ -210,8 +214,8 @@ export default function TriagePage() {
     () => activeDefectTypes.filter((item) => item.parent_id === null),
     [activeDefectTypes]
   );
-  const splitOk = policy?.split_ok ?? true;
-  const ngGrouping = policy?.ng_grouping ?? "defect_type_and_severity";
+  const splitOk = policy?.split_ok ?? false;
+  const ngGrouping = policy?.ng_grouping ?? "none";
   const ngUsesDefectType = ngGrouping === "defect_type" || ngGrouping === "defect_type_and_severity";
   const ngUsesSeverity = ngGrouping === "severity" || ngGrouping === "defect_type_and_severity";
   const showDefectTypes =
@@ -223,6 +227,13 @@ export default function TriagePage() {
   const progressDone = stats
     ? (stats.by_status.ok ?? 0) + (stats.by_status.ng ?? 0) + (stats.by_status.pending ?? 0)
     : 0;
+  const firstRun = Boolean(
+    policy
+    && stats
+    && !policy.onboarding_completed
+    && stats.total_images > 0
+    && stats.total_images === (stats.by_status.untriaged ?? 0)
+  );
 
   const replaceSearchParams = useCallback((values: {
     sample?: number | null;
@@ -285,6 +296,12 @@ export default function TriagePage() {
       cancelled = true;
     };
   }, [datasetId]);
+
+  useEffect(() => {
+    if (firstRun) {
+      setPolicyPanelOpen(true);
+    }
+  }, [firstRun]);
 
   useEffect(() => {
     if (!Number.isInteger(datasetId) || datasetId <= 0) return;
@@ -610,45 +627,95 @@ export default function TriagePage() {
     }, { replace: true });
   }
 
+  function openPolicyModal() {
+    if (!policy) return;
+    setPolicyDraft({
+      split_ok: policy.split_ok,
+      ng_grouping: policy.ng_grouping,
+      instructions: policy.instructions,
+      clear_ok_definition: policy.clear_ok_definition,
+      borderline_ok_definition: policy.borderline_ok_definition,
+      mild_definition: policy.mild_definition,
+      moderate_definition: policy.moderate_definition,
+      severe_definition: policy.severe_definition
+    });
+    setPolicyImpact(null);
+    setPolicyPanelOpen(true);
+  }
+
+  function closePolicyModal() {
+    if (firstRun) return;
+    setPolicyImpact(null);
+    setPolicyPanelOpen(false);
+  }
+
+  async function commitPolicy() {
+    if (!policyDraft || !policy) return;
+    const reviewCount = policyImpact?.requires_review_count ?? 0;
+    const saved = await updateTriagePolicy(datasetId, {
+      ...policyDraft,
+      expected_version: policy.version,
+      complete_onboarding: true
+    });
+    setPolicy(saved);
+    setPolicyDraft({
+      split_ok: saved.split_ok,
+      ng_grouping: saved.ng_grouping,
+      instructions: saved.instructions,
+      clear_ok_definition: saved.clear_ok_definition,
+      borderline_ok_definition: saved.borderline_ok_definition,
+      mild_definition: saved.mild_definition,
+      moderate_definition: saved.moderate_definition,
+      severe_definition: saved.severe_definition
+    });
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (!saved.split_ok) next.delete("okGrade");
+      if (saved.ng_grouping !== "defect_type" && saved.ng_grouping !== "defect_type_and_severity") {
+        next.delete("defectType");
+      }
+      if (saved.ng_grouping !== "severity" && saved.ng_grouping !== "defect_type_and_severity") {
+        next.delete("severity");
+      }
+      return next;
+    }, { replace: true });
+    const statsValue = await getTriageStats(datasetId);
+    setStats(statsValue);
+    if (currentSample) {
+      const triageValue = await getSampleTriage(currentSample.id);
+      setTriage(triageValue);
+      setDraft(draftFromTriage(triageValue));
+    }
+    setNotice(
+      reviewCount > 0
+        ? `分拣规则已更新，${reviewCount} 张已有判定已标记为待复核。`
+        : "分拣规则已保存，可以开始分拣。"
+    );
+    setPolicyImpact(null);
+    setPolicyPanelOpen(false);
+  }
+
   async function savePolicy() {
-    if (!policyDraft || policySaving) return;
+    if (!policyDraft || !policy || policySaving) return;
     setPolicySaving(true);
     setError(null);
     try {
-      const saved = await updateTriagePolicy(datasetId, policyDraft);
-      setPolicy(saved);
-      setPolicyDraft({
-        split_ok: saved.split_ok,
-        ng_grouping: saved.ng_grouping,
-        instructions: saved.instructions,
-        clear_ok_definition: saved.clear_ok_definition,
-        borderline_ok_definition: saved.borderline_ok_definition,
-        mild_definition: saved.mild_definition,
-        moderate_definition: saved.moderate_definition,
-        severe_definition: saved.severe_definition
-      });
-      setSearchParams((current) => {
-        const next = new URLSearchParams(current);
-        if (!saved.split_ok) next.delete("okGrade");
-        if (saved.ng_grouping !== "defect_type" && saved.ng_grouping !== "defect_type_and_severity") {
-          next.delete("defectType");
+      if (policyImpact?.changed && policyImpact.requires_review_count > 0) {
+        await commitPolicy();
+      } else {
+        const impact = await previewTriagePolicy(datasetId, {
+          ...policyDraft,
+          expected_version: policy.version
+        });
+        if (impact.changed && impact.requires_review_count > 0) {
+          setPolicyImpact(impact);
+          return;
         }
-        if (saved.ng_grouping !== "severity" && saved.ng_grouping !== "defect_type_and_severity") {
-          next.delete("severity");
-        }
-        return next;
-      }, { replace: true });
-      const statsValue = await getTriageStats(datasetId);
-      setStats(statsValue);
-      if (currentSample) {
-        const triageValue = await getSampleTriage(currentSample.id);
-        setTriage(triageValue);
-        setDraft(draftFromTriage(triageValue));
+        await commitPolicy();
       }
-      setNotice("分拣层级已更新，已有判定保留并按新规则标记待复核。");
-      setPolicyPanelOpen(false);
     } catch (saveError) {
       setError(errorMessage(saveError));
+      setPolicyImpact(null);
     } finally {
       setPolicySaving(false);
     }
@@ -674,7 +741,7 @@ export default function TriagePage() {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setPolicyPanelOpen((value) => !value)}
+              onClick={openPolicyModal}
               className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
             >
               <Settings2 size={16} /> 分拣层级
@@ -710,97 +777,22 @@ export default function TriagePage() {
         </div>
       </header>
 
+      <TriagePolicyModal
+        open={policyPanelOpen}
+        firstRun={firstRun}
+        draft={policyDraft}
+        stats={stats}
+        impact={policyImpact}
+        saving={policySaving}
+        onChange={(value) => {
+          setPolicyDraft(value);
+          setPolicyImpact(null);
+        }}
+        onCancel={closePolicyModal}
+        onSubmit={() => void savePolicy()}
+      />
+
       <section className="mx-auto max-w-[1600px] px-5 py-4">
-        {policyPanelOpen && policyDraft && (
-          <section className="mb-4 rounded-2xl border border-line bg-white p-5 shadow-sm" aria-labelledby="triage-policy-heading">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h2 id="triage-policy-heading" className="text-lg font-semibold">配置分拣层级</h2>
-                <p className="mt-1 text-sm text-gray-500">配置同时决定分拣输入、可用筛选和目录/ZIP 的文件夹层级。</p>
-              </div>
-              <span className="rounded-md bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800">
-                保存后已有判定会进入待复核
-              </span>
-            </div>
-            <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
-              <div className="space-y-5">
-                <fieldset>
-                  <legend className="text-sm font-semibold">OK 是否细分</legend>
-                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                    <label className={`cursor-pointer rounded-xl border p-3 ${policyDraft.split_ok ? "border-gray-900 bg-gray-50" : "border-line"}`}>
-                      <input
-                        type="radio"
-                        name="ok-granularity"
-                        checked={policyDraft.split_ok}
-                        onChange={() => setPolicyDraft((current) => current ? { ...current, split_ok: true } : current)}
-                      />
-                      <span className="ml-2 text-sm font-semibold">细分完全 / 勉强 OK</span>
-                      <span className="mt-1 block pl-6 text-xs leading-5 text-gray-500">导出为 ok/clear 与 ok/borderline</span>
-                    </label>
-                    <label className={`cursor-pointer rounded-xl border p-3 ${!policyDraft.split_ok ? "border-gray-900 bg-gray-50" : "border-line"}`}>
-                      <input
-                        type="radio"
-                        name="ok-granularity"
-                        checked={!policyDraft.split_ok}
-                        onChange={() => setPolicyDraft((current) => current ? { ...current, split_ok: false } : current)}
-                      />
-                      <span className="ml-2 text-sm font-semibold">统一 OK</span>
-                      <span className="mt-1 block pl-6 text-xs leading-5 text-gray-500">只判定 OK，导出到单一 ok 目录</span>
-                    </label>
-                  </div>
-                </fieldset>
-
-                <fieldset>
-                  <legend className="text-sm font-semibold">NG 细分方式</legend>
-                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                    {(Object.entries(NG_GROUPING_LABELS) as Array<[NgGrouping, { title: string; description: string }]>).map(([value, copy]) => (
-                      <label key={value} className={`cursor-pointer rounded-xl border p-3 ${policyDraft.ng_grouping === value ? "border-gray-900 bg-gray-50" : "border-line"}`}>
-                        <input
-                          type="radio"
-                          name="ng-granularity"
-                          checked={policyDraft.ng_grouping === value}
-                          onChange={() => setPolicyDraft((current) => current ? { ...current, ng_grouping: value } : current)}
-                        />
-                        <span className="ml-2 text-sm font-semibold">{copy.title}</span>
-                        <span className="mt-1 block pl-6 text-xs leading-5 text-gray-500">{copy.description}</span>
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
-              </div>
-
-              <div className="rounded-xl border border-line bg-gray-950 p-4 text-gray-200">
-                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-gray-400">目录 / ZIP 结构预览</div>
-                <div className="mt-3 space-y-1 font-mono text-sm leading-6">
-                  {policyDraft.split_ok ? (
-                    <><div>ok/clear/</div><div>ok/borderline/</div><div className="text-gray-500">ok/ungraded/（兼容旧数据）</div></>
-                  ) : <div>ok/</div>}
-                  {policyDraft.ng_grouping === "none" && <div>ng/</div>}
-                  {policyDraft.ng_grouping === "defect_type" && <><div>ng/&#123;defect_type&#125;/</div><div className="text-gray-500">ng/unknown/</div></>}
-                  {policyDraft.ng_grouping === "severity" && <><div>ng/&#123;mild|moderate|severe&#125;/</div><div className="text-gray-500">ng/ungraded/</div></>}
-                  {policyDraft.ng_grouping === "defect_type_and_severity" && <><div>ng/&#123;defect_type&#125;/&#123;severity&#125;/</div><div className="text-gray-500">unknown 与 ungraded 作为兼容目录</div></>}
-                </div>
-                {stats && Object.keys(stats.by_export_bucket).length > 0 && (
-                  <div className="mt-4 border-t border-white/10 pt-3">
-                    <div className="text-xs text-gray-400">当前数据按已保存规则的目录计数</div>
-                    <div className="mt-2 space-y-1 text-xs">
-                      {Object.entries(stats.by_export_bucket).map(([bucket, count]) => (
-                        <div key={bucket} className="flex justify-between gap-3"><span className="truncate">{bucket}/</span><span>{count} 张</span></div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="mt-5 flex justify-end gap-2">
-              <button type="button" onClick={() => setPolicyPanelOpen(false)} className="min-h-10 rounded-lg border border-line px-4 text-sm font-medium">取消</button>
-              <button type="button" onClick={() => void savePolicy()} disabled={policySaving} className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-gray-900 px-4 text-sm font-semibold text-white disabled:opacity-50">
-                {policySaving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} 保存层级配置
-              </button>
-            </div>
-          </section>
-        )}
-
         <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <div className="rounded-xl border border-line bg-white px-4 py-3">
             <div className="text-xs text-gray-500">已处理 / 图片</div>
@@ -1013,7 +1005,7 @@ export default function TriagePage() {
                     </button>
                   )}
                   <button type="button" disabled={!triage || saving || !imageReady} onClick={() => quickAction("ng")} className="flex min-h-16 items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 text-left hover:bg-red-100 disabled:opacity-40">
-                    <span><span className="block font-semibold text-red-950">NG</span><span className="mt-1 block text-xs text-red-700">{NG_GROUPING_LABELS[ngGrouping].description}</span></span><kbd className="rounded bg-red-900 px-2 py-1 text-sm font-bold text-white">{splitOk ? "3" : "2"}</kbd>
+                    <span><span className="block font-semibold text-red-950">NG</span><span className="mt-1 block text-xs text-red-700">{NG_GROUPING_DESCRIPTIONS[ngGrouping]}</span></span><kbd className="rounded bg-red-900 px-2 py-1 text-sm font-bold text-white">{splitOk ? "3" : "2"}</kbd>
                   </button>
                   <button type="button" disabled={!triage || saving || !imageReady} onClick={() => quickAction("pending")} className="flex min-h-16 items-center justify-between rounded-xl border border-violet-200 bg-violet-50 px-4 text-left hover:bg-violet-100 disabled:opacity-40">
                     <span><span className="block font-semibold text-violet-950">待定复看</span><span className="mt-1 block text-xs text-violet-700">信息不足或边界不清时暂存</span></span><kbd className="rounded bg-violet-900 px-2 py-1 text-sm font-bold text-white">{splitOk ? "4" : "3"}</kbd>

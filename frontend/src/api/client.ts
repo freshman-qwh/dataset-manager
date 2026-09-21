@@ -93,6 +93,7 @@ import type {
   SampleTriageWrite,
   TriageNavigation,
   TriagePolicy,
+  TriagePolicyImpactPreview,
   TriagePolicyValues,
   TriageQueueScope,
   TriageStats
@@ -607,9 +608,20 @@ export async function getTriagePolicy(datasetId: number): Promise<TriagePolicy> 
 
 export async function updateTriagePolicy(
   datasetId: number,
-  payload: TriagePolicyValues
+  payload: TriagePolicyValues & { expected_version: number; complete_onboarding?: boolean }
 ): Promise<TriagePolicy> {
   const { data } = await client.put<TriagePolicy>(`/datasets/${datasetId}/triage-policy`, payload);
+  return data;
+}
+
+export async function previewTriagePolicy(
+  datasetId: number,
+  payload: TriagePolicyValues & { expected_version: number }
+): Promise<TriagePolicyImpactPreview> {
+  const { data } = await client.post<TriagePolicyImpactPreview>(
+    `/datasets/${datasetId}/triage-policy/preview`,
+    payload
+  );
   return data;
 }
 

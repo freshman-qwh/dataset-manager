@@ -14,8 +14,10 @@ from app.schemas.triage import (
     SampleTriageRead,
     SampleTriageWrite,
     TriageNavigationResponse,
+    TriagePolicyImpactPreview,
+    TriagePolicyPreviewRequest,
     TriagePolicyRead,
-    TriagePolicyValues,
+    TriagePolicyUpdateRequest,
     TriageQueueScope,
     TriageStats,
 )
@@ -51,11 +53,26 @@ def get_triage_policy(
 @router.put("/datasets/{dataset_id}/triage-policy", response_model=TriagePolicyRead)
 def update_triage_policy(
     dataset_id: int,
-    payload: TriagePolicyValues,
+    payload: TriagePolicyUpdateRequest,
     session: Session = Depends(get_session),
 ) -> TriagePolicyRead:
     try:
         return triage_service.update_triage_policy(session, dataset_id, payload)
+    except triage_service.TriageError as exc:
+        _raise_triage_error(exc)
+
+
+@router.post(
+    "/datasets/{dataset_id}/triage-policy/preview",
+    response_model=TriagePolicyImpactPreview,
+)
+def preview_triage_policy(
+    dataset_id: int,
+    payload: TriagePolicyPreviewRequest,
+    session: Session = Depends(get_session),
+) -> TriagePolicyImpactPreview:
+    try:
+        return triage_service.preview_triage_policy_change(session, dataset_id, payload)
     except triage_service.TriageError as exc:
         _raise_triage_error(exc)
 

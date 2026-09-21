@@ -60,8 +60,8 @@ class DefectTypeRead(BaseModel):
 
 
 class TriagePolicyValues(BaseModel):
-    split_ok: bool = True
-    ng_grouping: NgGrouping = "defect_type_and_severity"
+    split_ok: bool = False
+    ng_grouping: NgGrouping = "none"
     instructions: str = Field(default="", max_length=4000)
     clear_ok_definition: str = Field(
         default="无可见缺陷，可作为纯正常样本候选。",
@@ -84,6 +84,28 @@ class TriagePolicyValues(BaseModel):
 class TriagePolicyRead(TriagePolicyValues):
     dataset_id: int
     version: int = Field(ge=1)
+    onboarding_completed: bool
+
+
+class TriagePolicyPreviewRequest(TriagePolicyValues):
+    expected_version: int = Field(ge=1)
+
+
+class TriagePolicyUpdateRequest(TriagePolicyPreviewRequest):
+    complete_onboarding: bool = True
+
+
+class TriagePolicyImpactPreview(BaseModel):
+    dataset_id: int
+    current_version: int = Field(ge=1)
+    changed: bool
+    processed_count: int = Field(ge=0)
+    requires_review_count: int = Field(ge=0)
+    retained_detail_count: int = Field(ge=0)
+    missing_ok_grade_count: int = Field(ge=0)
+    missing_defect_type_count: int = Field(ge=0)
+    missing_severity_count: int = Field(ge=0)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class SampleTriageWrite(BaseModel):

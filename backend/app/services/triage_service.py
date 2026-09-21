@@ -30,7 +30,10 @@ from app.schemas.triage import (
     SampleTriageRead,
     SampleTriageWrite,
     TriageNavigationResponse,
+    TriagePolicyImpactPreview,
+    TriagePolicyPreviewRequest,
     TriagePolicyRead,
+    TriagePolicyUpdateRequest,
     TriagePolicyValues,
     TriageQueueScope,
     TriageStats,
@@ -71,6 +74,11 @@ def _ensure_schema(session: Session) -> None:
     if "triage_status" not in sample_columns:
         raise TriageSchemaUnavailableError(
             "快速分拣数据结构尚未启用，请先停止服务并运行数据库迁移。"
+        )
+    dataset_columns = {item["name"] for item in inspector.get_columns("datasets")}
+    if "triage_onboarding_completed" not in dataset_columns:
+        raise TriageSchemaUnavailableError(
+            "快速分拣首次配置数据结构尚未启用，请先停止服务并运行数据库迁移。"
         )
 
 
@@ -196,24 +204,161 @@ def get_triage_policy(session: Session, dataset_id: int) -> TriagePolicyRead:
     return TriagePolicyRead(
         dataset_id=dataset_id,
         version=dataset.triage_policy_version,
+        onboarding_completed=dataset.triage_onboarding_completed,
         **_policy_values(dataset).model_dump(),
+    )
+
+
+def _policy_from_request(payload: TriagePolicyPreviewRequest) -> TriagePolicyValues:
+    return TriagePolicyValues.model_validate(
+        payload.model_dump(exclude={"expected_version", "complete_onboarding"})
+    )
+
+
+def preview_triage_policy_change(
+    session: Session,
+    dataset_id: int,
+    payload: TriagePolicyPreviewRequest,
+) -> TriagePolicyImpactPreview:
+    _ensure_schema(session)
+    dataset = get_dataset_or_404(session, dataset_id)
+    if dataset.triage_policy_version != payload.expected_version:
+        raise TriageConflictError("分拣层级已被其他操作修改，请刷新后重试。")
+
+    current = _policy_values(dataset)
+    target = _policy_from_request(payload)
+    changed = current != target
+    image_filter = (
+        Sample.dataset_id == dataset_id,
+        Sample.file_type == "image",
+    )
+    processed_filter = (*image_filter, Sample.triage_status != "untriaged")
+    processed_count = int(
+        session.exec(select(func.count(Sample.id)).where(*processed_filter)).one()
+    )
+
+    removes_ok_grade = current.split_ok and not target.split_ok
+    current_uses_type = current.ng_grouping in {"defect_type", "defect_type_and_severity"}
+    target_uses_type = target.ng_grouping in {"defect_type", "defect_type_and_severity"}
+    current_uses_severity = current.ng_grouping in {"severity", "defect_type_and_severity"}
+    target_uses_severity = target.ng_grouping in {"severity", "defect_type_and_severity"}
+
+    retained_sample_ids: set[int] = set()
+    if removes_ok_grade:
+        retained_sample_ids.update(
+            session.exec(
+                select(Sample.id).where(
+                    *image_filter,
+                    Sample.triage_status == "ok",
+                    Sample.ok_grade.is_not(None),
+                )
+            ).all()
+        )
+    if current_uses_type and not target_uses_type:
+        retained_sample_ids.update(
+            session.exec(
+                select(SampleDefectLink.sample_id)
+                .join(Sample, Sample.id == SampleDefectLink.sample_id)
+                .where(*image_filter, Sample.triage_status == "ng")
+                .distinct()
+            ).all()
+        )
+    if current_uses_severity and not target_uses_severity:
+        retained_sample_ids.update(
+            session.exec(
+                select(Sample.id).where(
+                    *image_filter,
+                    Sample.triage_status == "ng",
+                    Sample.defect_severity.is_not(None),
+                )
+            ).all()
+        )
+
+    missing_ok_grade_count = 0
+    if not current.split_ok and target.split_ok:
+        missing_ok_grade_count = int(
+            session.exec(
+                select(func.count(Sample.id)).where(
+                    *image_filter,
+                    Sample.triage_status == "ok",
+                    Sample.ok_grade.is_(None),
+                )
+            ).one()
+        )
+    missing_defect_type_count = 0
+    if not current_uses_type and target_uses_type:
+        missing_defect_type_count = int(
+            session.exec(
+                select(func.count(Sample.id)).where(
+                    *image_filter,
+                    Sample.triage_status == "ng",
+                    ~exists().where(SampleDefectLink.sample_id == Sample.id),
+                )
+            ).one()
+        )
+    missing_severity_count = 0
+    if not current_uses_severity and target_uses_severity:
+        missing_severity_count = int(
+            session.exec(
+                select(func.count(Sample.id)).where(
+                    *image_filter,
+                    Sample.triage_status == "ng",
+                    Sample.defect_severity.is_(None),
+                )
+            ).one()
+        )
+
+    warnings: list[str] = []
+    if changed and processed_count:
+        warnings.append(f"已有 {processed_count} 张图片完成过判定，修改后会标记为待复核。")
+    if retained_sample_ids:
+        warnings.append(
+            f"其中 {len(retained_sample_ids)} 张的细分信息会保留在数据库中，但不再参与当前目录结构；重新保存后会按新规则清理。"
+        )
+    missing_total = (
+        missing_ok_grade_count + missing_defect_type_count + missing_severity_count
+    )
+    if missing_total:
+        warnings.append("启用更细层级后，旧判定缺少的新字段需要人工补充。")
+
+    return TriagePolicyImpactPreview(
+        dataset_id=dataset_id,
+        current_version=dataset.triage_policy_version,
+        changed=changed,
+        processed_count=processed_count,
+        requires_review_count=processed_count if changed else 0,
+        retained_detail_count=len(retained_sample_ids),
+        missing_ok_grade_count=missing_ok_grade_count,
+        missing_defect_type_count=missing_defect_type_count,
+        missing_severity_count=missing_severity_count,
+        warnings=warnings,
     )
 
 
 def update_triage_policy(
     session: Session,
     dataset_id: int,
-    payload: TriagePolicyValues,
+    payload: TriagePolicyUpdateRequest,
 ) -> TriagePolicyRead:
     _ensure_schema(session)
     dataset = get_dataset_or_404(session, dataset_id)
+    if dataset.triage_policy_version != payload.expected_version:
+        raise TriageConflictError("分拣层级已被其他操作修改，请刷新后重试。")
     current = _policy_values(dataset)
-    if current == payload:
+    target = _policy_from_request(payload)
+    if current == target:
+        if payload.complete_onboarding and not dataset.triage_onboarding_completed:
+            dataset.triage_onboarding_completed = True
+            session.add(dataset)
+            bump_dataset_revision(session, dataset_id)
+            session.commit()
         return get_triage_policy(session, dataset_id)
     dataset.triage_policy_json = json.dumps(
-        payload.model_dump(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        target.model_dump(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
     dataset.triage_policy_version += 1
+    if payload.complete_onboarding:
+        dataset.triage_onboarding_completed = True
     session.add(dataset)
     bump_dataset_revision(session, dataset_id)
     session.commit()

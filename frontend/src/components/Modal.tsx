@@ -7,6 +7,7 @@ interface ModalProps {
   children: ReactNode;
   onClose: () => void;
   size?: "md" | "lg" | "xl";
+  dismissible?: boolean;
 }
 
 const sizeClasses = {
@@ -15,7 +16,14 @@ const sizeClasses = {
   xl: "max-w-5xl"
 };
 
-export default function Modal({ open, title, children, onClose, size = "md" }: ModalProps) {
+export default function Modal({
+  open,
+  title,
+  children,
+  onClose,
+  size = "md",
+  dismissible = true
+}: ModalProps) {
   const titleId = useId();
   if (!open) {
     return null;
@@ -27,18 +35,20 @@ export default function Modal({ open, title, children, onClose, size = "md" }: M
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className={`w-full ${sizeClasses[size]} rounded-lg border border-line bg-white shadow-soft`}
+        className={`max-h-[calc(100vh-2rem)] w-full overflow-y-auto ${sizeClasses[size]} rounded-lg border border-line bg-white shadow-soft`}
       >
         <div className="flex items-center justify-between border-b border-line px-5 py-4">
           <h2 id={titleId} className="text-base font-semibold text-ink">{title}</h2>
-          <button
-            type="button"
-            title="关闭"
-            onClick={onClose}
-            className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-900"
-          >
-            <X size={18} />
-          </button>
+          {dismissible && (
+            <button
+              type="button"
+              title="关闭"
+              onClick={onClose}
+              className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+            >
+              <X size={18} />
+            </button>
+          )}
         </div>
         {children}
       </div>

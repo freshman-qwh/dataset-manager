@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Column, Integer, text
+from sqlalchemy import Boolean, Column, Integer, text
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
@@ -33,6 +33,10 @@ class Dataset(SQLModel, table=True):
         sa_column=Column(Integer, nullable=False, server_default=text("1")),
     )
     triage_policy_json: str | None = Field(default=None)
+    triage_onboarding_completed: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default=text("0")),
+    )
     revision: int = Field(
         default=1,
         sa_column=Column(Integer, nullable=False, server_default=text("1")),
