@@ -190,6 +190,7 @@ def commit_batch_triage(
 def get_triage_navigation(
     dataset_id: int,
     sample_id: int | None = Query(default=None, gt=0),
+    target_index: int | None = Query(default=None, ge=1),
     queue_scope: TriageQueueScope = Query(default="untriaged"),
     search: str | None = Query(default=None, max_length=300),
     split: str | None = Query(default=None, max_length=40),
@@ -207,6 +208,7 @@ def get_triage_navigation(
             session,
             dataset_id,
             sample_id=sample_id,
+            target_index=target_index,
             queue_scope=queue_scope,
             search=search,
             split=split,

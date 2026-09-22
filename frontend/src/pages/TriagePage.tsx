@@ -54,6 +54,13 @@ const QUEUE_LABELS: Record<TriageQueueScope, string> = {
   current_split: "当前划分"
 };
 
+const QUEUE_OPTIONS: TriageQueueScope[] = [
+  "untriaged",
+  "pending",
+  "current_filter",
+  "current_split"
+];
+
 const STATUS_LABELS: Record<TriageStatus, string> = {
   untriaged: "未分拣",
   pending: "待定",
@@ -187,6 +194,7 @@ export default function TriagePage() {
   const [stats, setStats] = useState<TriageStats | null>(null);
   const [defectTypes, setDefectTypes] = useState<DefectType[]>([]);
   const [navigation, setNavigation] = useState<TriageNavigation | null>(null);
+  const [navigationRevision, setNavigationRevision] = useState(0);
   const [triage, setTriage] = useState<SampleTriage | null>(null);
   const [draft, setDraft] = useState<TriageDraft>(blankDraft);
   const [mode, setMode] = useState<"quick" | "detail">("quick");
@@ -196,12 +204,18 @@ export default function TriagePage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [undoRecord, setUndoRecord] = useState<UndoRecord | null>(null);
+  const [undoStack, setUndoStack] = useState<UndoRecord[]>([]);
+  const [positionDraft, setPositionDraft] = useState<number | null>(null);
+  const [positionInput, setPositionInput] = useState("");
+  const [jumping, setJumping] = useState(false);
+  const [pendingGuidanceVisible, setPendingGuidanceVisible] = useState(false);
   const [newDefectName, setNewDefectName] = useState("");
   const [newDefectParent, setNewDefectParent] = useState<number | null>(null);
   const [creatingDefect, setCreatingDefect] = useState(false);
   const requestIdRef = useRef(0);
+  const jumpRequestIdRef = useRef(0);
   const savingRef = useRef(false);
+  const saveSequenceRef = useRef(0);
   const actionRef = useRef<(action: "ok" | "clear" | "borderline" | "ng" | "pending") => void>();
   const undoRef = useRef<() => void>();
 
@@ -227,6 +241,16 @@ export default function TriagePage() {
   const progressDone = stats
     ? (stats.by_status.ok ?? 0) + (stats.by_status.ng ?? 0) + (stats.by_status.pending ?? 0)
     : 0;
+  const pendingCount = stats?.by_status.pending ?? 0;
+  const hasActiveTriageFilters = Boolean(
+    filterStatus || filterOkGrade || filterDefectTypeId || filterSeverity
+  );
+  const currentSplitValue = queueScope === "current_split"
+    ? queueSplit
+    : currentSample ? currentSample.split ?? "unassigned" : undefined;
+  const currentSplitQueueLabel = currentSplitValue
+    ? `当前图划分：${currentSplitValue === "unassigned" ? "未指定" : currentSplitValue}`
+    : "当前图划分";
   const firstRun = Boolean(
     policy
     && stats
@@ -304,8 +328,26 @@ export default function TriagePage() {
   }, [firstRun]);
 
   useEffect(() => {
+    setUndoStack([]);
+    setPendingGuidanceVisible(false);
+  }, [datasetId]);
+
+  useEffect(() => {
+    if (navigation?.current_index === null || navigation?.current_index === undefined) {
+      setPositionDraft(null);
+      setPositionInput("");
+      return;
+    }
+    const position = navigation.current_index + 1;
+    setPositionDraft(position);
+    setPositionInput(String(position));
+  }, [navigation?.current_index, navigation?.total]);
+
+  useEffect(() => {
     if (!Number.isInteger(datasetId) || datasetId <= 0) return;
     if (!policy) return;
+    jumpRequestIdRef.current += 1;
+    setJumping(false);
     const requestId = ++requestIdRef.current;
     setLoading(true);
     setError(null);
@@ -360,6 +402,7 @@ export default function TriagePage() {
     filterSeverity,
     filterStatus,
     navigationSampleId,
+    navigationRevision,
     ngUsesDefectType,
     ngUsesSeverity,
     policy,
@@ -404,10 +447,11 @@ export default function TriagePage() {
 
   const savePayload = useCallback(async (
     payload: Omit<SampleTriageWrite, "expected_version" | "expected_file_hash">,
-    options: { advance: boolean; message: string }
+    options: { advance: boolean; message: string; pendingGuidance?: boolean }
   ) => {
     if (!currentSample || !triage || savingRef.current) return;
     savingRef.current = true;
+    const saveSequence = ++saveSequenceRef.current;
     const nextSampleId = navigation?.next_sample?.id ?? null;
     const before = triage;
     setSaving(true);
@@ -419,21 +463,34 @@ export default function TriagePage() {
         expected_version: triage.triage_version,
         expected_file_hash: triage.file_hash
       });
-      setUndoRecord({ sample: currentSample, before, savedVersion: saved.triage_version });
+      if (saved.triage_version > before.triage_version) {
+        setUndoStack((current) => [
+          ...current,
+          { sample: currentSample, before, savedVersion: saved.triage_version }
+        ].slice(-20));
+      }
       setTriage(saved);
       setDraft(draftFromTriage(saved));
       setNotice(options.message);
+      setPendingGuidanceVisible(Boolean(options.pendingGuidance));
       if (options.advance) {
         advanceAfterSave(nextSampleId);
       }
-      void getTriageStats(datasetId).then(setStats).catch(() => undefined);
+      void getTriageStats(datasetId).then((nextStats) => {
+        if (saveSequence !== saveSequenceRef.current) return;
+        setStats(nextStats);
+        if (options.pendingGuidance) {
+          const count = nextStats.by_status.pending ?? 0;
+          setNotice(`已加入待定复看；当前共有 ${count} 张，可从上方“待定复看”进入。`);
+        }
+      }).catch(() => undefined);
     } catch (saveError) {
       setError(errorMessage(saveError));
     } finally {
       savingRef.current = false;
       setSaving(false);
     }
-  }, [advanceAfterSave, currentSample, datasetId, navigation?.next_sample?.id, saving, triage]);
+  }, [advanceAfterSave, currentSample, datasetId, navigation?.next_sample?.id, triage]);
 
   const quickAction = useCallback((action: "ok" | "clear" | "borderline" | "ng" | "pending") => {
     const common = {
@@ -465,7 +522,7 @@ export default function TriagePage() {
     } else {
       void savePayload(
         { ...common, triage_status: "pending", ok_grade: null },
-        { advance: true, message: "已加入待定复看队列。" }
+        { advance: true, message: "已加入待定复看队列。", pendingGuidance: true }
       );
     }
   }, [savePayload]);
@@ -515,31 +572,59 @@ export default function TriagePage() {
         primary_defect_type_id: nextDraft.primaryDefectTypeId,
         triage_note: nextDraft.note.trim() || null
       },
-      { advance: true, message: "分拣结果与缺陷细节已保存。" }
+      {
+        advance: true,
+        message: nextDraft.status === "pending"
+          ? "已加入待定复看队列。"
+          : "分拣结果与缺陷细节已保存。",
+        pendingGuidance: nextDraft.status === "pending"
+      }
     );
   }, [draft, ngUsesDefectType, ngUsesSeverity, savePayload, splitOk]);
 
   const undoLast = useCallback(async () => {
+    const undoRecord = undoStack[undoStack.length - 1];
     if (!undoRecord || savingRef.current) return;
     savingRef.current = true;
+    saveSequenceRef.current += 1;
     setSaving(true);
     setError(null);
     try {
-      await replaceSampleTriage(
+      const reverted = await replaceSampleTriage(
         undoRecord.sample.id,
         writeFromTriage(undoRecord.before, undoRecord.savedVersion)
       );
-      setUndoRecord(null);
-      setNotice(`已撤销 ${undoRecord.sample.filename} 的上一次分拣。`);
+      setUndoStack((current) => {
+        const next = current.slice(0, -1);
+        const previousIndex = next.map((item) => item.sample.id).lastIndexOf(
+          undoRecord.sample.id
+        );
+        if (previousIndex >= 0) {
+          next[previousIndex] = {
+            ...next[previousIndex],
+            savedVersion: reverted.triage_version
+          };
+        }
+        return next;
+      });
+      setPendingGuidanceVisible(false);
+      if (currentSample?.id === undoRecord.sample.id) {
+        setTriage(reverted);
+        setDraft(draftFromTriage(reverted));
+      }
+      setNotice(
+        `已撤销 ${undoRecord.sample.filename} 的上一次分拣。${undoStack.length > 1 ? `还可撤销 ${undoStack.length - 1} 步。` : ""}`
+      );
       setStats(await getTriageStats(datasetId));
       replaceSearchParams({ sample: undoRecord.sample.id });
+      setNavigationRevision((current) => current + 1);
     } catch (undoError) {
-      setError(errorMessage(undoError));
+      setError(`无法撤销 ${undoRecord.sample.filename}：${errorMessage(undoError)} 当前数据未被覆盖。`);
     } finally {
       savingRef.current = false;
       setSaving(false);
     }
-  }, [datasetId, replaceSearchParams, saving, undoRecord]);
+  }, [currentSample?.id, datasetId, replaceSearchParams, undoStack]);
   undoRef.current = () => void undoLast();
 
   useEffect(() => {
@@ -627,6 +712,73 @@ export default function TriagePage() {
     }, { replace: true });
   }
 
+  function clearTriageFilters() {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      ["status", "okGrade", "defectType", "severity", "sample"].forEach((key) => next.delete(key));
+      return next;
+    }, { replace: true });
+  }
+
+  function selectQueue(nextQueue: TriageQueueScope) {
+    setPendingGuidanceVisible(false);
+    replaceSearchParams({
+      queue: nextQueue,
+      sample: null,
+      split: nextQueue === "current_split"
+        ? currentSample?.split ?? queueSplit ?? "unassigned"
+        : null
+    });
+  }
+
+  function queueCount(scope: TriageQueueScope): number | null {
+    if (!stats) return null;
+    if (scope === "untriaged") return stats.by_status.untriaged ?? 0;
+    if (scope === "pending") return pendingCount;
+    if (scope === "current_filter") return stats.total_images;
+    return queueScope === "current_split" ? navigation?.total ?? 0 : null;
+  }
+
+  async function jumpToPosition(position: number) {
+    const total = navigation?.total ?? 0;
+    if (!Number.isInteger(position) || position < 1 || position > total) {
+      setError(`请输入 1 至 ${total} 之间的图片位置。`);
+      return;
+    }
+    setPositionDraft(position);
+    setPositionInput(String(position));
+    if (navigation?.current_index === position - 1 || jumping) return;
+    const jumpRequestId = ++jumpRequestIdRef.current;
+    setJumping(true);
+    setError(null);
+    try {
+      const target = await getTriageNavigation({
+        datasetId,
+        targetIndex: position,
+        queueScope,
+        split: queueSplit,
+        triageStatus: filterStatus,
+        okGrade: splitOk ? filterOkGrade : undefined,
+        defectSeverity: ngUsesSeverity ? filterSeverity : undefined,
+        defectTypeId: ngUsesDefectType ? filterDefectTypeId : undefined
+      });
+      if (jumpRequestId !== jumpRequestIdRef.current) return;
+      if (!target.current_sample) {
+        setError("目标图片已不在当前队列，请刷新后重试。");
+        return;
+      }
+      replaceSearchParams({ sample: target.current_sample.id });
+    } catch (jumpError) {
+      if (jumpRequestId === jumpRequestIdRef.current) {
+        setError(errorMessage(jumpError));
+      }
+    } finally {
+      if (jumpRequestId === jumpRequestIdRef.current) {
+        setJumping(false);
+      }
+    }
+  }
+
   function openPolicyModal() {
     if (!policy) return;
     setPolicyDraft({
@@ -691,6 +843,8 @@ export default function TriagePage() {
         ? `分拣规则已更新，${reviewCount} 张已有判定已标记为待复核。`
         : "分拣规则已保存，可以开始分拣。"
     );
+    setUndoStack([]);
+    setPendingGuidanceVisible(false);
     setPolicyImpact(null);
     setPolicyPanelOpen(false);
   }
@@ -748,33 +902,47 @@ export default function TriagePage() {
             </button>
             <button
               type="button"
+              title="撤销上一步（Ctrl+Z）"
               onClick={() => void undoLast()}
-              disabled={!undoRecord || saving}
+              disabled={undoStack.length === 0 || saving}
               className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              <RotateCcw size={16} /> 撤销 Ctrl+Z
+              <RotateCcw size={16} /> 撤销 {undoStack.length}/20
             </button>
-            <select
-              aria-label="分拣队列"
-              value={queueScope}
-              onChange={(event) => {
-                const nextQueue = event.target.value as TriageQueueScope;
-                replaceSearchParams({
-                  queue: nextQueue,
-                  sample: null,
-                  split: nextQueue === "current_split"
-                    ? currentSample?.split ?? "unassigned"
-                    : null
-                });
-              }}
-              className="min-h-10 rounded-lg border border-line bg-white px-3 text-sm"
-            >
-              {Object.entries(QUEUE_LABELS).map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </select>
           </div>
         </div>
+        <nav
+          aria-label="分拣队列"
+          className="mx-auto flex max-w-[1600px] gap-1 overflow-x-auto px-5 pb-3"
+        >
+          {QUEUE_OPTIONS.map((scope) => {
+            const count = queueCount(scope);
+            const active = queueScope === scope;
+            const pending = scope === "pending" && pendingCount > 0;
+            return (
+              <button
+                key={scope}
+                type="button"
+                aria-pressed={active}
+                onClick={() => selectQueue(scope)}
+                className={`inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors ${
+                  active
+                    ? "border-gray-900 bg-gray-900 text-white"
+                    : pending
+                      ? "border-violet-300 bg-violet-50 text-violet-800 hover:bg-violet-100"
+                      : "border-line bg-white text-gray-700 hover:bg-gray-50"
+                }`}
+              >
+                {scope === "current_split" ? currentSplitQueueLabel : QUEUE_LABELS[scope]}
+                {count !== null && (
+                  <span className={`rounded-full px-2 py-0.5 text-xs ${active ? "bg-white/15 text-white" : "bg-gray-100 text-gray-600"}`}>
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
       </header>
 
       <TriagePolicyModal
@@ -833,8 +1001,17 @@ export default function TriagePage() {
           </div>
         )}
         {notice && !error && (
-          <div aria-live="polite" className="mb-4 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-            <Check size={18} /> {notice}
+          <div aria-live="polite" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            <span className="flex items-center gap-2"><Check size={18} /> {notice}</span>
+            {pendingGuidanceVisible && pendingCount > 0 && queueScope !== "pending" && (
+              <button
+                type="button"
+                onClick={() => selectQueue("pending")}
+                className="min-h-9 rounded-lg border border-violet-300 bg-white px-3 text-xs font-semibold text-violet-800 hover:bg-violet-50"
+              >
+                去复看待定（{pendingCount}）
+              </button>
+            )}
           </div>
         )}
 
@@ -876,29 +1053,75 @@ export default function TriagePage() {
                   </select>
                 </div>
               )}
-              <button type="button" onClick={() => {
-                setSearchParams((current) => {
-                  const next = new URLSearchParams(current);
-                  ["status", "okGrade", "defectType", "severity", "sample"].forEach((key) => next.delete(key));
-                  return next;
-                }, { replace: true });
-              }} className="min-h-10 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50">清除筛选</button>
+              <button type="button" onClick={clearTriageFilters} className="min-h-10 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50">清除筛选</button>
             </div>
           </section>
         )}
 
-        <div className="grid min-h-[680px] gap-4 xl:grid-cols-[minmax(0,1fr)_390px]">
-          <section className="relative flex min-h-[620px] min-w-0 flex-col overflow-hidden rounded-2xl border border-line bg-gray-950 shadow-sm">
-            <div className="flex min-h-12 items-center justify-between gap-3 border-b border-white/10 px-4 text-sm text-gray-300">
+        <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_390px]">
+          <section className="relative flex h-[640px] min-w-0 flex-col overflow-hidden rounded-2xl border border-line bg-gray-950 shadow-sm sm:h-[680px] xl:h-[clamp(620px,calc(100vh-190px),820px)]">
+            <div className="flex min-h-12 items-center border-b border-white/10 px-4 text-sm text-gray-300">
               <div className="min-w-0 truncate">
-                {currentSample ? currentSample.relative_path : QUEUE_LABELS[queueScope]}
-              </div>
-              <div className="shrink-0">
-                {navigation?.current_index !== null && navigation?.current_index !== undefined
-                  ? `${navigation.current_index + 1} / ${navigation.total}`
-                  : `${navigation?.total ?? 0} 张`}
+                {currentSample
+                  ? currentSample.relative_path
+                  : queueScope === "current_split" ? currentSplitQueueLabel : QUEUE_LABELS[queueScope]}
               </div>
             </div>
+            {currentSample && navigation && navigation.total > 1 && positionDraft !== null && (
+              <div className="flex flex-wrap items-center gap-3 border-b border-white/10 px-4 py-2.5 text-xs text-gray-300">
+                <label htmlFor="triage-position-slider" className="shrink-0 font-medium">
+                  队列进度
+                </label>
+                <input
+                  id="triage-position-slider"
+                  aria-label="拖动跳转图片位置"
+                  type="range"
+                  min={1}
+                  max={navigation.total}
+                  value={positionDraft}
+                  disabled={saving || jumping}
+                  onChange={(event) => {
+                    const value = Number(event.target.value);
+                    setPositionDraft(value);
+                    setPositionInput(String(value));
+                  }}
+                  onPointerUp={(event) => void jumpToPosition(Number(event.currentTarget.value))}
+                  onKeyUp={(event) => {
+                    if (["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"].includes(event.key)) {
+                      void jumpToPosition(Number(event.currentTarget.value));
+                    }
+                  }}
+                  className="h-2 min-w-40 flex-1 cursor-pointer accent-white disabled:cursor-wait"
+                />
+                <form
+                  noValidate
+                  className="flex items-center gap-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void jumpToPosition(Number(positionInput));
+                  }}
+                >
+                  <input
+                    aria-label="跳转位置"
+                    type="number"
+                    min={1}
+                    max={navigation.total}
+                    value={positionInput}
+                    disabled={saving || jumping}
+                    onChange={(event) => setPositionInput(event.target.value)}
+                    className="h-9 w-20 rounded-md border border-white/20 bg-white/10 px-2 text-center text-sm text-white outline-none focus:border-white/60"
+                  />
+                  <span className="text-gray-500">/ {navigation.total}</span>
+                  <button
+                    type="submit"
+                    disabled={saving || jumping}
+                    className="h-9 rounded-md border border-white/20 px-3 font-medium text-gray-100 hover:bg-white/10 disabled:opacity-40"
+                  >
+                    {jumping ? "跳转中…" : "跳转"}
+                  </button>
+                </form>
+              </div>
+            )}
             <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto p-5">
               {loading ? (
                 <div className="flex items-center gap-2 text-sm text-gray-300"><Loader2 className="animate-spin" size={20} /> 加载图片…</div>
@@ -917,16 +1140,54 @@ export default function TriagePage() {
                     setError("图片加载失败，当前判定已禁用。");
                   }}
                   style={{ transform: `scale(${zoom})` }}
-                  className="max-h-[calc(100vh-270px)] max-w-full select-none object-contain transition-transform"
+                  className="max-h-full max-w-full select-none object-contain transition-transform"
                 />
               ) : (
                 <div className="max-w-md text-center text-gray-300">
                   <ListChecks size={42} className="mx-auto mb-3 text-gray-500" />
-                  <h2 className="text-lg font-semibold text-white">这个队列已经处理完了</h2>
-                  <p className="mt-2 text-sm leading-6 text-gray-400">可切换到“待定复看”或“全部图片”检查已有结果。</p>
-                  <Link to={`/datasets/${datasetId}?directoryExport=1`} className="mt-4 inline-flex min-h-10 items-center rounded-lg bg-white px-4 text-sm font-semibold text-gray-950 hover:bg-gray-100">
-                    导出分拣目录 / ZIP
-                  </Link>
+                  <h2 className="text-lg font-semibold text-white">
+                    {queueScope === "current_filter" && hasActiveTriageFilters
+                      ? "没有符合筛选条件的图片"
+                      : queueScope === "current_filter" && (stats?.total_images ?? 0) === 0
+                        ? "数据集中没有可分拣图片"
+                        : "这个队列已经处理完了"}
+                  </h2>
+                  <p className="mt-2 text-sm leading-6 text-gray-400">
+                    {queueScope === "current_filter" && hasActiveTriageFilters
+                      ? "请调整或清除筛选条件，当前数据不会被修改。"
+                      : queueScope === "current_filter" && (stats?.total_images ?? 0) === 0
+                        ? "请先返回数据集扫描图片，再开始快速分拣。"
+                        : queueScope === "pending"
+                      ? "目前没有待定图片；遇到边界不清的样本时，可用“待定复看”暂存。"
+                      : pendingCount > 0
+                        ? `还有 ${pendingCount} 张待定图片需要复看。`
+                        : "没有待复看的图片，可检查全部结果或开始导出。"}
+                  </p>
+                  {queueScope === "current_filter" && hasActiveTriageFilters && (
+                    <button
+                      type="button"
+                      onClick={clearTriageFilters}
+                      className="mt-4 inline-flex min-h-10 items-center rounded-lg bg-white px-4 text-sm font-semibold text-gray-950 hover:bg-gray-100"
+                    >
+                      清除筛选
+                    </button>
+                  )}
+                  {!(queueScope === "current_filter" && hasActiveTriageFilters)
+                    && queueScope !== "pending" && pendingCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => selectQueue("pending")}
+                      className="mt-4 inline-flex min-h-10 items-center rounded-lg bg-violet-100 px-4 text-sm font-semibold text-violet-950 hover:bg-violet-200"
+                    >
+                      复看待定（{pendingCount}）
+                    </button>
+                  )}
+                  {!(queueScope === "current_filter" && hasActiveTriageFilters)
+                    && (stats?.total_images ?? 0) > 0 && (
+                    <Link to={`/datasets/${datasetId}?directoryExport=1`} className="mt-4 inline-flex min-h-10 items-center rounded-lg bg-white px-4 text-sm font-semibold text-gray-950 hover:bg-gray-100">
+                      导出分拣目录 / ZIP
+                    </Link>
+                  )}
                 </div>
               )}
             </div>

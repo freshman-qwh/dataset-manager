@@ -598,6 +598,47 @@ def test_quick_triage_api_workflow_and_conflict_protection(tmp_path: Path) -> No
         assert navigation.json()["total"] == 1
         assert navigation.json()["current_sample"]["filename"] == "c.png"
 
+        all_third = client.get(
+            f"/api/datasets/{dataset_id}/triage/navigation",
+            params={"queue_scope": "current_filter", "target_index": 3},
+        )
+        assert all_third.status_code == 200
+        assert all_third.json()["current_index"] == 2
+        assert all_third.json()["current_sample"]["filename"] == "c.png"
+        assert all_third.json()["previous_sample"]["filename"] == "b.png"
+        assert all_third.json()["next_sample"] is None
+
+        filtered_second = client.get(
+            f"/api/datasets/{dataset_id}/triage/navigation",
+            params={
+                "queue_scope": "current_filter",
+                "triage_status": "ok",
+                "target_index": 2,
+            },
+        )
+        assert filtered_second.status_code == 200
+        assert filtered_second.json()["total"] == 2
+        assert filtered_second.json()["current_sample"]["filename"] == "b.png"
+
+        split_second = client.get(
+            f"/api/datasets/{dataset_id}/triage/navigation",
+            params={
+                "queue_scope": "current_split",
+                "split": "unassigned",
+                "target_index": 2,
+            },
+        )
+        assert split_second.status_code == 200
+        assert split_second.json()["total"] == 3
+        assert split_second.json()["current_sample"]["filename"] == "b.png"
+
+        out_of_range = client.get(
+            f"/api/datasets/{dataset_id}/triage/navigation",
+            params={"queue_scope": "current_filter", "target_index": 4},
+        )
+        assert out_of_range.status_code == 422
+        assert "1 至 3" in out_of_range.json()["detail"]
+
         pending = client.put(
             f"/api/samples/{samples['c.png']['id']}/triage",
             json=triage_payload(samples["c.png"], triage_status="pending"),
@@ -609,6 +650,13 @@ def test_quick_triage_api_workflow_and_conflict_protection(tmp_path: Path) -> No
         ).json()
         assert pending_navigation["total"] == 1
         assert pending_navigation["current_sample"]["filename"] == "c.png"
+
+        empty_jump = client.get(
+            f"/api/datasets/{dataset_id}/triage/navigation",
+            params={"queue_scope": "untriaged", "target_index": 1},
+        )
+        assert empty_jump.status_code == 422
+        assert "没有可跳转" in empty_jump.json()["detail"]
 
         ng = client.put(
             f"/api/samples/{samples['c.png']['id']}/triage",

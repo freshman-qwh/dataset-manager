@@ -694,6 +694,7 @@ export async function commitBatchTriage(
 export async function getTriageNavigation(params: {
   datasetId: number;
   sampleId?: number | null;
+  targetIndex?: number;
   queueScope?: TriageQueueScope;
   search?: string;
   split?: string;
@@ -707,6 +708,7 @@ export async function getTriageNavigation(params: {
     {
       params: {
         sample_id: params.sampleId || undefined,
+        target_index: params.targetIndex,
         queue_scope: params.queueScope,
         search: params.search || undefined,
         split: params.split || undefined,

@@ -1123,6 +1123,7 @@ def get_triage_navigation(
     dataset_id: int,
     *,
     sample_id: int | None = None,
+    target_index: int | None = None,
     queue_scope: TriageQueueScope = "untriaged",
     search: str | None = None,
     split: str | None = None,
@@ -1150,6 +1151,8 @@ def get_triage_navigation(
         current = session.get(Sample, sample_id)
         if current is not None and current.dataset_id == dataset_id:
             effective_split = current.split or "unassigned"
+    if queue_scope == "current_split" and not effective_split:
+        raise TriageValidationError("跳转当前划分前，请先选择一个有效划分。")
 
     def filtered(statement):
         return _triage_filters(
@@ -1167,7 +1170,20 @@ def get_triage_navigation(
         session.exec(select(func.count()).select_from(filtered(select(Sample.id)).subquery())).one()
     )
     current = None
-    if sample_id is not None:
+    if target_index is not None:
+        if total == 0:
+            raise TriageValidationError("当前队列没有可跳转的图片。")
+        if target_index > total:
+            raise TriageValidationError(
+                f"目标位置超出当前队列范围，请输入 1 至 {total}。"
+            )
+        current = session.exec(
+            filtered(select(Sample))
+            .order_by(func.lower(Sample.relative_path), Sample.id)
+            .offset(target_index - 1)
+            .limit(1)
+        ).first()
+    elif sample_id is not None:
         current = session.exec(filtered(select(Sample)).where(Sample.id == sample_id)).first()
     if current is None:
         current = session.exec(
