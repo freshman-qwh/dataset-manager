@@ -7,9 +7,12 @@ import {
   CircleAlert,
   ListChecks,
   Loader2,
+  Moon,
   Plus,
   RotateCcw,
   Settings2,
+  Sun,
+  X,
   ZoomIn,
   ZoomOut
 } from "lucide-react";
@@ -94,6 +97,74 @@ interface UndoRecord {
   sample: Sample;
   before: SampleTriage;
   savedVersion: number;
+}
+
+type CanvasTone = "dark" | "light";
+type TriageToastTone = "success" | "info";
+type ResultTone = "untriaged" | "pending" | "ok" | "clear" | "borderline" | "ng";
+
+interface TriageToast {
+  id: number;
+  message: string;
+  tone: TriageToastTone;
+  action: "pending" | null;
+  exiting: boolean;
+}
+
+const RESULT_STYLES: Record<ResultTone, { badge: string; card: string; label: string }> = {
+  untriaged: {
+    badge: "border-gray-300 bg-white text-gray-700",
+    card: "border-gray-200 bg-gray-50",
+    label: "text-gray-900"
+  },
+  pending: {
+    badge: "border-violet-300 bg-violet-100 text-violet-900",
+    card: "border-violet-200 bg-violet-50",
+    label: "text-violet-950"
+  },
+  ok: {
+    badge: "border-emerald-300 bg-emerald-100 text-emerald-900",
+    card: "border-emerald-200 bg-emerald-50",
+    label: "text-emerald-950"
+  },
+  clear: {
+    badge: "border-emerald-300 bg-emerald-100 text-emerald-900",
+    card: "border-emerald-200 bg-emerald-50",
+    label: "text-emerald-950"
+  },
+  borderline: {
+    badge: "border-amber-300 bg-amber-100 text-amber-950",
+    card: "border-amber-200 bg-amber-50",
+    label: "text-amber-950"
+  },
+  ng: {
+    badge: "border-red-300 bg-red-100 text-red-950",
+    card: "border-red-200 bg-red-50",
+    label: "text-red-950"
+  }
+};
+
+function resultPresentation(value: SampleTriage | null, splitOk: boolean) {
+  if (!value || value.triage_status === "untriaged") {
+    return { tone: "untriaged" as const, label: "未分拣" };
+  }
+  if (value.triage_status === "pending") {
+    return { tone: "pending" as const, label: "待定复看" };
+  }
+  if (value.triage_status === "ng") {
+    return { tone: "ng" as const, label: "NG" };
+  }
+  if (splitOk && value.ok_grade === "clear") {
+    return { tone: "clear" as const, label: "完全 OK" };
+  }
+  if (splitOk && value.ok_grade === "borderline") {
+    return { tone: "borderline" as const, label: "勉强 OK" };
+  }
+  return { tone: "ok" as const, label: "OK" };
+}
+
+function canvasToneStorageKey(dataset: Dataset): string {
+  return `dataset-manager.triage.canvas.${dataset.id}.${dataset.created_at}`;
 }
 
 function blankDraft(): TriageDraft {
@@ -203,12 +274,13 @@ export default function TriagePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<TriageToast[]>([]);
+  const [toastsMuted, setToastsMuted] = useState(false);
+  const [canvasTone, setCanvasTone] = useState<CanvasTone>("dark");
   const [undoStack, setUndoStack] = useState<UndoRecord[]>([]);
   const [positionDraft, setPositionDraft] = useState<number | null>(null);
   const [positionInput, setPositionInput] = useState("");
   const [jumping, setJumping] = useState(false);
-  const [pendingGuidanceVisible, setPendingGuidanceVisible] = useState(false);
   const [newDefectName, setNewDefectName] = useState("");
   const [newDefectParent, setNewDefectParent] = useState<number | null>(null);
   const [creatingDefect, setCreatingDefect] = useState(false);
@@ -216,8 +288,27 @@ export default function TriagePage() {
   const jumpRequestIdRef = useRef(0);
   const savingRef = useRef(false);
   const saveSequenceRef = useRef(0);
+  const toastIdRef = useRef(0);
   const actionRef = useRef<(action: "ok" | "clear" | "borderline" | "ng" | "pending") => void>();
   const undoRef = useRef<() => void>();
+
+  const showToast = useCallback((
+    message: string,
+    options: { tone?: TriageToastTone; action?: "pending" } = {}
+  ) => {
+    if (toastsMuted) return;
+    const nextToast: TriageToast = {
+      id: ++toastIdRef.current,
+      message,
+      tone: options.tone ?? "success",
+      action: options.action ?? null,
+      exiting: false
+    };
+    setToasts((current) => [
+      ...current.map((item) => ({ ...item, exiting: true })),
+      nextToast
+    ].slice(-3));
+  }, [toastsMuted]);
 
   const currentSample = navigation?.current_sample ?? null;
   const activeDefectTypes = useMemo(
@@ -229,6 +320,9 @@ export default function TriagePage() {
     [activeDefectTypes]
   );
   const splitOk = policy?.split_ok ?? false;
+  const currentResult = resultPresentation(triage, splitOk);
+  const currentResultStyles = RESULT_STYLES[currentResult.tone];
+  const lightCanvas = canvasTone === "light";
   const ngGrouping = policy?.ng_grouping ?? "none";
   const ngUsesDefectType = ngGrouping === "defect_type" || ngGrouping === "defect_type_and_severity";
   const ngUsesSeverity = ngGrouping === "severity" || ngGrouping === "defect_type_and_severity";
@@ -329,8 +423,32 @@ export default function TriagePage() {
 
   useEffect(() => {
     setUndoStack([]);
-    setPendingGuidanceVisible(false);
+    setToasts([]);
+    setToastsMuted(false);
   }, [datasetId]);
+
+  useEffect(() => {
+    const exitingIds = toasts.filter((item) => item.exiting).map((item) => item.id);
+    if (exitingIds.length === 0) return;
+    const timeout = window.setTimeout(() => {
+      setToasts((current) => current.filter((item) => !exitingIds.includes(item.id)));
+    }, 420);
+    return () => window.clearTimeout(timeout);
+  }, [toasts]);
+
+  useEffect(() => {
+    if (error) setToasts([]);
+  }, [error]);
+
+  useEffect(() => {
+    if (!dataset) return;
+    try {
+      const stored = window.localStorage.getItem(canvasToneStorageKey(dataset));
+      setCanvasTone(stored === "light" ? "light" : "dark");
+    } catch {
+      setCanvasTone("dark");
+    }
+  }, [dataset]);
 
   useEffect(() => {
     if (navigation?.current_index === null || navigation?.current_index === undefined) {
@@ -456,7 +574,6 @@ export default function TriagePage() {
     const before = triage;
     setSaving(true);
     setError(null);
-    setNotice(null);
     try {
       const saved = await replaceSampleTriage(currentSample.id, {
         ...payload,
@@ -471,18 +588,15 @@ export default function TriagePage() {
       }
       setTriage(saved);
       setDraft(draftFromTriage(saved));
-      setNotice(options.message);
-      setPendingGuidanceVisible(Boolean(options.pendingGuidance));
+      showToast(options.message, {
+        action: options.pendingGuidance ? "pending" : undefined
+      });
       if (options.advance) {
         advanceAfterSave(nextSampleId);
       }
       void getTriageStats(datasetId).then((nextStats) => {
         if (saveSequence !== saveSequenceRef.current) return;
         setStats(nextStats);
-        if (options.pendingGuidance) {
-          const count = nextStats.by_status.pending ?? 0;
-          setNotice(`已加入待定复看；当前共有 ${count} 张，可从上方“待定复看”进入。`);
-        }
       }).catch(() => undefined);
     } catch (saveError) {
       setError(errorMessage(saveError));
@@ -490,7 +604,7 @@ export default function TriagePage() {
       savingRef.current = false;
       setSaving(false);
     }
-  }, [advanceAfterSave, currentSample, datasetId, navigation?.next_sample?.id, triage]);
+  }, [advanceAfterSave, currentSample, datasetId, navigation?.next_sample?.id, showToast, triage]);
 
   const quickAction = useCallback((action: "ok" | "clear" | "borderline" | "ng" | "pending") => {
     const common = {
@@ -502,27 +616,27 @@ export default function TriagePage() {
     if (action === "ok") {
       void savePayload(
         { ...common, triage_status: "ok", ok_grade: null },
-        { advance: true, message: "已标记为 OK。" }
+        { advance: true, message: "已保存为 OK" }
       );
     } else if (action === "clear") {
       void savePayload(
         { ...common, triage_status: "ok", ok_grade: "clear" },
-        { advance: true, message: "已标记为完全 OK。" }
+        { advance: true, message: "已保存为完全 OK" }
       );
     } else if (action === "borderline") {
       void savePayload(
         { ...common, triage_status: "ok", ok_grade: "borderline" },
-        { advance: true, message: "已标记为勉强 OK。" }
+        { advance: true, message: "已保存为勉强 OK" }
       );
     } else if (action === "ng") {
       void savePayload(
         { ...common, triage_status: "ng", ok_grade: null },
-        { advance: true, message: "已标记为 NG，可稍后补充缺陷细节。" }
+        { advance: true, message: "已保存为 NG" }
       );
     } else {
       void savePayload(
         { ...common, triage_status: "pending", ok_grade: null },
-        { advance: true, message: "已加入待定复看队列。", pendingGuidance: true }
+        { advance: true, message: "已加入待定复看", pendingGuidance: true }
       );
     }
   }, [savePayload]);
@@ -575,8 +689,8 @@ export default function TriagePage() {
       {
         advance: true,
         message: nextDraft.status === "pending"
-          ? "已加入待定复看队列。"
-          : "分拣结果与缺陷细节已保存。",
+          ? "已加入待定复看"
+          : "分拣结果已保存",
         pendingGuidance: nextDraft.status === "pending"
       }
     );
@@ -607,13 +721,13 @@ export default function TriagePage() {
         }
         return next;
       });
-      setPendingGuidanceVisible(false);
       if (currentSample?.id === undoRecord.sample.id) {
         setTriage(reverted);
         setDraft(draftFromTriage(reverted));
       }
-      setNotice(
-        `已撤销 ${undoRecord.sample.filename} 的上一次分拣。${undoStack.length > 1 ? `还可撤销 ${undoStack.length - 1} 步。` : ""}`
+      showToast(
+        undoStack.length > 1 ? `已撤销上一步 · 还可撤销 ${undoStack.length - 1} 步` : "已撤销上一步",
+        { tone: "info" }
       );
       setStats(await getTriageStats(datasetId));
       replaceSearchParams({ sample: undoRecord.sample.id });
@@ -624,7 +738,7 @@ export default function TriagePage() {
       savingRef.current = false;
       setSaving(false);
     }
-  }, [currentSample?.id, datasetId, replaceSearchParams, undoStack]);
+  }, [currentSample?.id, datasetId, replaceSearchParams, showToast, undoStack]);
   undoRef.current = () => void undoLast();
 
   useEffect(() => {
@@ -721,7 +835,6 @@ export default function TriagePage() {
   }
 
   function selectQueue(nextQueue: TriageQueueScope) {
-    setPendingGuidanceVisible(false);
     replaceSearchParams({
       queue: nextQueue,
       sample: null,
@@ -729,6 +842,17 @@ export default function TriagePage() {
         ? currentSample?.split ?? queueSplit ?? "unassigned"
         : null
     });
+  }
+
+  function toggleCanvasTone() {
+    const nextTone: CanvasTone = lightCanvas ? "dark" : "light";
+    setCanvasTone(nextTone);
+    if (!dataset) return;
+    try {
+      window.localStorage.setItem(canvasToneStorageKey(dataset), nextTone);
+    } catch {
+      // 浏览器禁用本地存储时仍允许本次页面切换。
+    }
   }
 
   function queueCount(scope: TriageQueueScope): number | null {
@@ -838,13 +962,11 @@ export default function TriagePage() {
       setTriage(triageValue);
       setDraft(draftFromTriage(triageValue));
     }
-    setNotice(
-      reviewCount > 0
-        ? `分拣规则已更新，${reviewCount} 张已有判定已标记为待复核。`
-        : "分拣规则已保存，可以开始分拣。"
+    showToast(
+      reviewCount > 0 ? `规则已更新 · ${reviewCount} 张待复核` : "分拣规则已保存",
+      { tone: "info" }
     );
     setUndoStack([]);
-    setPendingGuidanceVisible(false);
     setPolicyImpact(null);
     setPolicyPanelOpen(false);
   }
@@ -1000,21 +1122,6 @@ export default function TriagePage() {
             <CircleAlert size={18} className="mt-0.5 shrink-0" /> {error}
           </div>
         )}
-        {notice && !error && (
-          <div aria-live="polite" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-            <span className="flex items-center gap-2"><Check size={18} /> {notice}</span>
-            {pendingGuidanceVisible && pendingCount > 0 && queueScope !== "pending" && (
-              <button
-                type="button"
-                onClick={() => selectQueue("pending")}
-                className="min-h-9 rounded-lg border border-violet-300 bg-white px-3 text-xs font-semibold text-violet-800 hover:bg-violet-50"
-              >
-                去复看待定（{pendingCount}）
-              </button>
-            )}
-          </div>
-        )}
-
         {queueScope === "current_filter" && (
           <section className="mb-4 rounded-xl border border-line bg-white p-4 shadow-sm" aria-label="分拣统计筛选">
             <div className="flex flex-wrap items-end gap-3">
@@ -1059,16 +1166,34 @@ export default function TriagePage() {
         )}
 
         <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_390px]">
-          <section className="relative flex h-[640px] min-w-0 flex-col overflow-hidden rounded-2xl border border-line bg-gray-950 shadow-sm sm:h-[680px] xl:h-[clamp(620px,calc(100vh-190px),820px)]">
-            <div className="flex min-h-12 items-center border-b border-white/10 px-4 text-sm text-gray-300">
-              <div className="min-w-0 truncate">
+          <section className={`relative flex h-[640px] min-w-0 flex-col overflow-hidden rounded-2xl border shadow-sm transition-colors duration-200 sm:h-[680px] xl:h-[clamp(620px,calc(100vh-190px),820px)] ${lightCanvas ? "border-gray-300 bg-white" : "border-line bg-gray-950"}`}>
+            <div className={`flex min-h-12 items-center justify-between gap-3 border-b px-4 text-sm transition-colors duration-200 ${lightCanvas ? "border-gray-200 text-gray-700" : "border-white/10 text-gray-300"}`}>
+              <div className="min-w-0 flex-1 truncate">
                 {currentSample
                   ? currentSample.relative_path
                   : queueScope === "current_split" ? currentSplitQueueLabel : QUEUE_LABELS[queueScope]}
               </div>
+              <div className="flex shrink-0 items-center gap-2">
+                {currentSample && (
+                  <span className={`rounded-full border px-3 py-1 text-sm font-bold shadow-sm ${currentResultStyles.badge}`}>
+                    本张 · {currentResult.label}
+                    {triage?.outdated ? " · 待复核" : ""}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  aria-label={lightCanvas ? "切换为黑色画布" : "切换为白色画布"}
+                  title={lightCanvas ? "切换为黑色画布" : "切换为白色画布"}
+                  onClick={toggleCanvasTone}
+                  className={`inline-flex min-h-9 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold transition-colors ${lightCanvas ? "border-gray-300 bg-gray-50 text-gray-800 hover:bg-gray-100" : "border-white/20 bg-white/10 text-gray-100 hover:bg-white/15"}`}
+                >
+                  {lightCanvas ? <Sun size={16} /> : <Moon size={16} />}
+                  <span className="hidden sm:inline">{lightCanvas ? "白色画布" : "黑色画布"}</span>
+                </button>
+              </div>
             </div>
             {currentSample && navigation && navigation.total > 1 && positionDraft !== null && (
-              <div className="flex flex-wrap items-center gap-3 border-b border-white/10 px-4 py-2.5 text-xs text-gray-300">
+              <div className={`flex flex-wrap items-center gap-3 border-b px-4 py-2.5 text-xs transition-colors duration-200 ${lightCanvas ? "border-gray-200 text-gray-600" : "border-white/10 text-gray-300"}`}>
                 <label htmlFor="triage-position-slider" className="shrink-0 font-medium">
                   队列进度
                 </label>
@@ -1091,7 +1216,7 @@ export default function TriagePage() {
                       void jumpToPosition(Number(event.currentTarget.value));
                     }
                   }}
-                  className="h-2 min-w-40 flex-1 cursor-pointer accent-white disabled:cursor-wait"
+                  className={`h-2 min-w-40 flex-1 cursor-pointer disabled:cursor-wait ${lightCanvas ? "accent-gray-900" : "accent-white"}`}
                 />
                 <form
                   noValidate
@@ -1109,13 +1234,13 @@ export default function TriagePage() {
                     value={positionInput}
                     disabled={saving || jumping}
                     onChange={(event) => setPositionInput(event.target.value)}
-                    className="h-9 w-20 rounded-md border border-white/20 bg-white/10 px-2 text-center text-sm text-white outline-none focus:border-white/60"
+                    className={`h-9 w-20 rounded-md border px-2 text-center text-sm outline-none ${lightCanvas ? "border-gray-300 bg-gray-50 text-gray-900 focus:border-gray-700" : "border-white/20 bg-white/10 text-white focus:border-white/60"}`}
                   />
                   <span className="text-gray-500">/ {navigation.total}</span>
                   <button
                     type="submit"
                     disabled={saving || jumping}
-                    className="h-9 rounded-md border border-white/20 px-3 font-medium text-gray-100 hover:bg-white/10 disabled:opacity-40"
+                    className={`h-9 rounded-md border px-3 font-medium disabled:opacity-40 ${lightCanvas ? "border-gray-300 text-gray-800 hover:bg-gray-100" : "border-white/20 text-gray-100 hover:bg-white/10"}`}
                   >
                     {jumping ? "跳转中…" : "跳转"}
                   </button>
@@ -1124,7 +1249,7 @@ export default function TriagePage() {
             )}
             <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto p-5">
               {loading ? (
-                <div className="flex items-center gap-2 text-sm text-gray-300"><Loader2 className="animate-spin" size={20} /> 加载图片…</div>
+                <div className={`flex items-center gap-2 text-sm ${lightCanvas ? "text-gray-600" : "text-gray-300"}`}><Loader2 className="animate-spin" size={20} /> 加载图片…</div>
               ) : currentSample ? (
                 <img
                   key={`${currentSample.id}-${currentSample.file_hash}`}
@@ -1143,16 +1268,16 @@ export default function TriagePage() {
                   className="max-h-full max-w-full select-none object-contain transition-transform"
                 />
               ) : (
-                <div className="max-w-md text-center text-gray-300">
-                  <ListChecks size={42} className="mx-auto mb-3 text-gray-500" />
-                  <h2 className="text-lg font-semibold text-white">
+                <div className={`max-w-md text-center ${lightCanvas ? "text-gray-700" : "text-gray-300"}`}>
+                  <ListChecks size={42} className={`mx-auto mb-3 ${lightCanvas ? "text-gray-400" : "text-gray-500"}`} />
+                  <h2 className={`text-lg font-semibold ${lightCanvas ? "text-gray-950" : "text-white"}`}>
                     {queueScope === "current_filter" && hasActiveTriageFilters
                       ? "没有符合筛选条件的图片"
                       : queueScope === "current_filter" && (stats?.total_images ?? 0) === 0
                         ? "数据集中没有可分拣图片"
                         : "这个队列已经处理完了"}
                   </h2>
-                  <p className="mt-2 text-sm leading-6 text-gray-400">
+                  <p className={`mt-2 text-sm leading-6 ${lightCanvas ? "text-gray-600" : "text-gray-400"}`}>
                     {queueScope === "current_filter" && hasActiveTriageFilters
                       ? "请调整或清除筛选条件，当前数据不会被修改。"
                       : queueScope === "current_filter" && (stats?.total_images ?? 0) === 0
@@ -1191,20 +1316,20 @@ export default function TriagePage() {
                 </div>
               )}
             </div>
-            <div className="flex min-h-14 flex-wrap items-center justify-between gap-3 border-t border-white/10 px-4">
+            <div className={`flex min-h-14 flex-wrap items-center justify-between gap-3 border-t px-4 transition-colors duration-200 ${lightCanvas ? "border-gray-200" : "border-white/10"}`}>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   aria-label="缩小图片"
                   onClick={() => setZoom((value) => Math.max(0.5, value - 0.25))}
-                  className="rounded-md p-2 text-gray-300 hover:bg-white/10 hover:text-white"
+                  className={`rounded-md p-2 ${lightCanvas ? "text-gray-600 hover:bg-gray-100 hover:text-gray-950" : "text-gray-300 hover:bg-white/10 hover:text-white"}`}
                 ><ZoomOut size={18} /></button>
-                <span className="w-12 text-center text-xs text-gray-400">{Math.round(zoom * 100)}%</span>
+                <span className={`w-12 text-center text-xs ${lightCanvas ? "text-gray-500" : "text-gray-400"}`}>{Math.round(zoom * 100)}%</span>
                 <button
                   type="button"
                   aria-label="放大图片"
                   onClick={() => setZoom((value) => Math.min(3, value + 0.25))}
-                  className="rounded-md p-2 text-gray-300 hover:bg-white/10 hover:text-white"
+                  className={`rounded-md p-2 ${lightCanvas ? "text-gray-600 hover:bg-gray-100 hover:text-gray-950" : "text-gray-300 hover:bg-white/10 hover:text-white"}`}
                 ><ZoomIn size={18} /></button>
               </div>
               <div className="flex items-center gap-2">
@@ -1212,13 +1337,13 @@ export default function TriagePage() {
                   type="button"
                   disabled={!navigation?.previous_sample || saving}
                   onClick={() => replaceSearchParams({ sample: navigation?.previous_sample?.id ?? null })}
-                  className="inline-flex min-h-10 items-center gap-1 rounded-lg border border-white/15 px-3 text-sm text-gray-200 hover:bg-white/10 disabled:opacity-30"
+                  className={`inline-flex min-h-10 items-center gap-1 rounded-lg border px-3 text-sm disabled:opacity-30 ${lightCanvas ? "border-gray-300 text-gray-700 hover:bg-gray-100" : "border-white/15 text-gray-200 hover:bg-white/10"}`}
                 ><ChevronLeft size={17} /> 上一张</button>
                 <button
                   type="button"
                   disabled={!navigation?.next_sample || saving}
                   onClick={() => replaceSearchParams({ sample: navigation?.next_sample?.id ?? null })}
-                  className="inline-flex min-h-10 items-center gap-1 rounded-lg border border-white/15 px-3 text-sm text-gray-200 hover:bg-white/10 disabled:opacity-30"
+                  className={`inline-flex min-h-10 items-center gap-1 rounded-lg border px-3 text-sm disabled:opacity-30 ${lightCanvas ? "border-gray-300 text-gray-700 hover:bg-gray-100" : "border-white/15 text-gray-200 hover:bg-white/10"}`}
                 >下一张 <ChevronRight size={17} /></button>
               </div>
             </div>
@@ -1238,8 +1363,26 @@ export default function TriagePage() {
               >详细分拣</button>
             </div>
 
+            {currentSample && (
+              <div className={`mx-4 mt-4 flex items-center justify-between gap-3 rounded-xl border px-4 py-3 ${currentResultStyles.card}`}>
+                <div>
+                  <div className="text-xs font-semibold text-gray-500">
+                    {triage?.triage_status === "untriaged" ? "本张状态" : "本张已保存"}
+                  </div>
+                  <div className={`mt-0.5 text-xl font-bold ${currentResultStyles.label}`}>
+                    {currentResult.label}
+                  </div>
+                </div>
+                {triage?.outdated && (
+                  <span className="rounded-full border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-800">
+                    待复核
+                  </span>
+                )}
+              </div>
+            )}
+
             {triage?.outdated && (
-              <div className="m-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+              <div className="mx-4 mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
                 图片内容或分拣规则已变化，请重新确认本张结果。
               </div>
             )}
@@ -1271,10 +1414,6 @@ export default function TriagePage() {
                   <button type="button" disabled={!triage || saving || !imageReady} onClick={() => quickAction("pending")} className="flex min-h-16 items-center justify-between rounded-xl border border-violet-200 bg-violet-50 px-4 text-left hover:bg-violet-100 disabled:opacity-40">
                     <span><span className="block font-semibold text-violet-950">待定复看</span><span className="mt-1 block text-xs text-violet-700">信息不足或边界不清时暂存</span></span><kbd className="rounded bg-violet-900 px-2 py-1 text-sm font-bold text-white">{splitOk ? "4" : "3"}</kbd>
                   </button>
-                </div>
-                <div className="rounded-lg bg-gray-50 px-3 py-2 text-xs leading-5 text-gray-600">
-                  当前结果：{triage ? STATUS_LABELS[triage.triage_status] : "-"}
-                  {splitOk && triage?.ok_grade === "clear" ? " · 完全 OK" : splitOk && triage?.ok_grade === "borderline" ? " · 勉强 OK" : ""}
                 </div>
               </div>
             ) : (
@@ -1384,6 +1523,54 @@ export default function TriagePage() {
           </aside>
         </div>
       </section>
+
+      {toasts.length > 0 && (
+        <div
+          aria-live="polite"
+          aria-label="快速分拣消息"
+          className="pointer-events-none fixed bottom-3 left-3 z-50 flex w-80 max-w-[calc(100vw-6rem)] flex-col gap-2 sm:bottom-5 sm:left-5 sm:max-w-sm"
+        >
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              role="status"
+              className={`pointer-events-auto rounded-xl border px-4 py-3 shadow-lg backdrop-blur ${toast.exiting ? "triage-toast-exit" : "triage-toast-enter"} ${toast.tone === "success" ? "border-emerald-200 bg-emerald-50/95 text-emerald-950" : "border-sky-200 bg-sky-50/95 text-sky-950"}`}
+            >
+              <div className="flex items-start gap-3">
+                <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-white ${toast.tone === "success" ? "bg-emerald-600" : "bg-sky-600"}`}>
+                  <Check size={15} strokeWidth={3} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold leading-6">{toast.message}</div>
+                  {toast.action === "pending" && queueScope !== "pending" && (
+                    <button
+                      type="button"
+                      onClick={() => selectQueue("pending")}
+                      className="mt-1 text-xs font-semibold text-violet-800 underline-offset-2 hover:underline"
+                    >
+                      去复看待定{pendingCount > 0 ? `（${pendingCount}）` : ""}
+                    </button>
+                  )}
+                </div>
+                {!toast.exiting && (
+                  <button
+                    type="button"
+                    aria-label="关闭消息，本次快速分拣不再弹出"
+                    title="关闭并在本次快速分拣中静默消息"
+                    onClick={() => {
+                      setToasts([]);
+                      setToastsMuted(true);
+                    }}
+                    className="-mr-1 -mt-1 rounded-md p-1 text-current opacity-60 hover:bg-black/5 hover:opacity-100"
+                  >
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </main>
   );
 }
