@@ -101,6 +101,43 @@ def test_dataset_task_type_contract_rejects_unsupported_values():
     app.dependency_overrides.clear()
 
 
+def test_empty_dataset_stats_return_zero_counts():
+    with make_client() as client:
+        created = client.post(
+            "/api/datasets",
+            json={"name": "Empty dataset", "task_type": "segmentation"},
+        )
+        assert created.status_code == 201
+
+        response = client.get(f"/api/stats/datasets/{created.json()['id']}")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "dataset_id": created.json()["id"],
+            "sample_count": 0,
+            "total_size": 0,
+            "by_file_type": {},
+            "by_extension": {},
+            "by_status": {},
+            "by_split": {},
+            "by_annotation_progress": {},
+            "by_review_status": {},
+            "by_triage_status": {"untriaged": 0, "pending": 0, "ok": 0, "ng": 0},
+            "by_ok_grade": {"clear": 0, "borderline": 0},
+            "by_defect_severity": {"mild": 0, "moderate": 0, "severe": 0},
+            "triage_outdated": 0,
+            "tag_counts": {},
+            "duplicate_groups": 0,
+            "duplicate_samples": 0,
+            "untagged_samples": 0,
+            "samples_with_objects": 0,
+            "annotation_count": 0,
+            "by_annotation_label": {},
+        }
+
+    app.dependency_overrides.clear()
+
+
 def test_dataset_scan_batch_and_export(tmp_path: Path):
     data_root = tmp_path / "dataset"
     data_root.mkdir()

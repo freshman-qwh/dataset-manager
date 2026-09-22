@@ -143,7 +143,7 @@ def get_dataset_stats(session: Session, dataset_id: int) -> DatasetStats:
         by_triage_status=by_triage_status,
         by_ok_grade=by_ok_grade,
         by_defect_severity=by_defect_severity,
-        triage_outdated=int(triage_outdated),
+        triage_outdated=int(triage_outdated or 0),
         tag_counts=tag_counts,
         duplicate_groups=len(duplicate_counts),
         duplicate_samples=sum(duplicate_counts),
