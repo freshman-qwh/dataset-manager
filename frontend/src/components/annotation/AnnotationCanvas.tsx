@@ -11,6 +11,7 @@ import {
 
 import type { AnnotationClass, AnnotationObject, AnnotationShapeType } from "../../types/dataset";
 import type { AnnotationTool } from "./AnnotationToolbar";
+import { brushToPolygon } from "./brushToPolygon";
 
 interface Point {
   x: number;
@@ -41,6 +42,7 @@ type DragState =
       start: Point;
       previousObjects: AnnotationObject[];
     }
+  | { type: "drawing-brush" }
   | {
       type: "object";
       clientId: string;
@@ -56,7 +58,7 @@ type DragState =
     };
 
 interface DraftShape {
-  shape_type: AnnotationShapeType;
+  shape_type: AnnotationShapeType | "brush";
   points: number[];
 }
 
@@ -81,6 +83,8 @@ interface AnnotationCanvasProps {
   objects: AnnotationObject[];
   activeObjectId: string | null;
   tool: AnnotationTool;
+  brushRadius: number;
+  onBrushRadiusChange: (radius: number) => void;
   activeLabel: string;
   activeClassId: number | null;
   annotationClasses: AnnotationClass[];
@@ -221,6 +225,8 @@ export default function AnnotationCanvas({
   objects,
   activeObjectId,
   tool,
+  brushRadius,
+  onBrushRadiusChange,
   activeLabel,
   activeClassId,
   annotationClasses,
@@ -249,6 +255,7 @@ export default function AnnotationCanvas({
   const [imageSize, setImageSize] = useState<Size | null>(null);
   const [transform, setTransform] = useState<Transform>({ scale: 1, translateX: 0, translateY: 0 });
   const [draft, setDraft] = useState<DraftShape | null>(null);
+  const [brushCursor, setBrushCursor] = useState<Point | null>(null);
   const [fitKey, setFitKey] = useState(0);
   const [imageError, setImageError] = useState(false);
   const [imageReloadToken, setImageReloadToken] = useState(0);
@@ -274,6 +281,7 @@ export default function AnnotationCanvas({
 
   useEffect(() => {
     setDraft(null);
+    setBrushCursor(null);
     dragRef.current = null;
     pendingPreviewObjectsRef.current = null;
     if (previewFrameRef.current !== null) {
@@ -375,7 +383,7 @@ export default function AnnotationCanvas({
   useEffect(() => {
     onDraftStateChange?.({
       active: Boolean(draft),
-      shapeType: draft?.shape_type ?? null,
+      shapeType: draft?.shape_type === "brush" ? "polygon" : draft?.shape_type ?? null,
       canCommit: canCommitDraft(draft)
     });
   }, [draft, onDraftStateChange]);
@@ -415,7 +423,7 @@ export default function AnnotationCanvas({
         return;
       }
       if (event.key === "Escape") {
-        if (draft || dragRef.current?.type === "drawing-rectangle") {
+        if (draft || dragRef.current?.type === "drawing-rectangle" || dragRef.current?.type === "drawing-brush") {
           event.preventDefault();
           onStatusChange("已取消当前绘制草稿");
         }
@@ -530,6 +538,16 @@ export default function AnnotationCanvas({
   }
 
   function handleBackgroundPointerDown(event: PointerEvent<SVGSVGElement>) {
+    if (event.button === 2) {
+      event.preventDefault();
+      if (draft) {
+        setDraft(null);
+        dragRef.current = null;
+        onStatusChange("已取消当前绘制草稿");
+      }
+      return;
+    }
+    if (event.button !== 0) return;
     event.preventDefault();
     if (!imageSize) {
       return;
@@ -568,10 +586,21 @@ export default function AnnotationCanvas({
       );
       return;
     }
+    if (tool === "brush") {
+      if (draft?.shape_type === "polygon") {
+        onStatusChange("请先确认或取消当前画笔轮廓");
+        return;
+      }
+      dragRef.current = { type: "drawing-brush" };
+      setDraft({ shape_type: "brush", points: [point.x, point.y] });
+      event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
     onActiveObjectChange(null);
   }
 
   function handleObjectPointerDown(event: PointerEvent<SVGElement>, object: AnnotationObject) {
+    if (event.button !== 0) return;
     event.preventDefault();
     if (tool !== "select" || object.locked) {
       return;
@@ -588,6 +617,7 @@ export default function AnnotationCanvas({
   }
 
   function handleVertexPointerDown(event: PointerEvent<SVGCircleElement>, object: AnnotationObject, vertexIndex: number) {
+    if (event.button !== 0) return;
     event.preventDefault();
     if (tool !== "select" || object.locked) {
       return;
@@ -606,6 +636,7 @@ export default function AnnotationCanvas({
 
   function handlePointerMove(event: PointerEvent<SVGSVGElement>) {
     const imagePoint = clientToImage(event);
+    if (tool === "brush") setBrushCursor(imagePoint);
     scheduleStatusChange(
       imageSize
         ? `x ${imagePoint.x.toFixed(1)} / y ${imagePoint.y.toFixed(1)} · ${(transform.scale * 100).toFixed(0)}%`
@@ -634,6 +665,16 @@ export default function AnnotationCanvas({
       });
       return;
     }
+    if (drag.type === "drawing-brush") {
+      setDraft((current) => {
+        if (current?.shape_type !== "brush") return current;
+        const lastX = current.points[current.points.length - 2];
+        const lastY = current.points[current.points.length - 1];
+        if (Math.hypot(imagePoint.x - lastX, imagePoint.y - lastY) < 1) return current;
+        return { ...current, points: [...current.points, imagePoint.x, imagePoint.y] };
+      });
+      return;
+    }
 
     const dx = imagePoint.x - drag.start.x;
     const dy = imagePoint.y - drag.start.y;
@@ -658,6 +699,15 @@ export default function AnnotationCanvas({
     if (drag.type === "drawing-rectangle" && draft?.shape_type === "rectangle") {
       commitDraftShape(draft);
       setDraft(null);
+    } else if (drag.type === "drawing-brush" && draft?.shape_type === "brush" && imageSize) {
+      try {
+        const points = brushToPolygon(pairPoints(draft.points), brushRadius, imageSize);
+        setDraft({ shape_type: "polygon", points });
+        onStatusChange("画笔轮廓已拟合，请检查后确认");
+      } catch (error) {
+        setDraft(null);
+        onStatusChange(error instanceof Error ? error.message : "画笔轮廓拟合失败");
+      }
     } else if (drag.type === "object" || drag.type === "vertex") {
       cancelPendingObjectsPreview();
       onObjectsCommit(objectsRef.current, drag.previousObjects);
@@ -668,6 +718,20 @@ export default function AnnotationCanvas({
     } catch {
       // Pointer capture may already be released by the browser.
     }
+  }
+
+  function handlePointerCancel(event: PointerEvent<SVGSVGElement>) {
+    const drag = dragRef.current;
+    if (drag?.type === "drawing-brush" || drag?.type === "drawing-rectangle") {
+      setDraft(null);
+      onStatusChange("已取消中断的绘制");
+    } else if (drag?.type === "object" || drag?.type === "vertex") {
+      cancelPendingObjectsPreview();
+      objectsRef.current = drag.previousObjects;
+      onObjectsPreview(drag.previousObjects);
+    }
+    dragRef.current = null;
+    try { event.currentTarget.releasePointerCapture(event.pointerId); } catch { /* Already released. */ }
   }
 
   function handleWheel(event: WheelEvent<SVGSVGElement>) {
@@ -699,6 +763,11 @@ export default function AnnotationCanvas({
 
   return (
     <div ref={wrapperRef} className="relative min-h-0 flex-1 overflow-hidden bg-gray-100">
+      {tool === "brush" && <label className="absolute left-4 top-4 z-10 flex items-center gap-3 rounded-lg border border-line bg-white px-3 py-2 text-xs text-gray-700 shadow-sm">
+        <span className="whitespace-nowrap">画笔半径 {brushRadius}px</span>
+        <input aria-label="画笔半径" type="range" min="2" max="80" step="1" value={brushRadius}
+          onChange={(event) => onBrushRadiusChange(Number(event.target.value))} className="w-28" />
+      </label>}
       <img
         key={imageSrc}
         src={imageSrc}
@@ -730,7 +799,9 @@ export default function AnnotationCanvas({
         onPointerDown={handleBackgroundPointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
+        onPointerLeave={() => setBrushCursor(null)}
+        onContextMenu={(event) => { if (tool === "polygon" || tool === "brush") event.preventDefault(); }}
         onWheel={handleWheel}
         onDragStart={(event) => event.preventDefault()}
       >
@@ -846,6 +917,17 @@ export default function AnnotationCanvas({
               ))}
             </g>
           )}
+          {imageSize && draft?.shape_type === "brush" && (
+            <g pointerEvents="none">
+              <polyline points={polygonPoints(draft.points)} fill="none" stroke="#2563eb88"
+                strokeWidth={brushRadius * 2} strokeLinecap="round" strokeLinejoin="round" />
+              <circle cx={draft.points[0]} cy={draft.points[1]} r={brushRadius} fill="#2563eb88" />
+            </g>
+          )}
+          {imageSize && tool === "brush" && brushCursor && (
+            <circle pointerEvents="none" cx={brushCursor.x} cy={brushCursor.y} r={brushRadius}
+              fill="none" stroke="#111827" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+          )}
         </g>
       </svg>
       {!imageSize && (
@@ -872,13 +954,13 @@ export default function AnnotationCanvas({
       >
         适配
       </button>
-      {tool === "polygon" && draft?.shape_type === "polygon" && draft.points.length >= 6 && (
+      {(tool === "polygon" || tool === "brush") && draft?.shape_type === "polygon" && draft.points.length >= 6 && (
         <button
           type="button"
           onClick={() => commitDraftShape(draft)}
           className="absolute bottom-4 left-4 rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-gray-800"
         >
-          完成多边形
+          {tool === "brush" ? "确认画笔轮廓" : "完成多边形"}
         </button>
       )}
     </div>

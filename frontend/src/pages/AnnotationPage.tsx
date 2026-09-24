@@ -103,6 +103,7 @@ export default function AnnotationPage() {
   const [navigation, setNavigation] = useState<SampleNavigationResponse | null>(null);
   const [annotationClasses, setAnnotationClasses] = useState<AnnotationClass[]>([]);
   const [tool, setTool] = useState<AnnotationTool>("select");
+  const [brushRadius, setBrushRadius] = useState(12);
   const [activeObjectId, setActiveObjectId] = useState<string | null>(null);
   const [activeLabel, setActiveLabel] = useState("object");
   const [status, setStatus] = useState("准备就绪");
@@ -475,6 +476,9 @@ export default function AnnotationPage() {
         return;
       }
       const target = event.target;
+      if (target instanceof Element && target.closest('[role="dialog"]')) {
+        return;
+      }
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
         return;
       }
@@ -501,6 +505,8 @@ export default function AnnotationPage() {
         actions.changeTool("rectangle");
       } else if (key === "p") {
         actions.changeTool("polygon");
+      } else if (key === "b") {
+        actions.changeTool("brush");
       } else if (key === "h") {
         actions.changeTool("pan");
       } else if (event.key === "[") {
@@ -818,6 +824,7 @@ export default function AnnotationPage() {
     if (
       nextTool !== "select"
       && nextTool !== "pan"
+      && !(nextTool === "brush" && allowedShapeTypes.includes("polygon"))
       && !allowedShapeTypes.includes(nextTool as AnnotationShapeType)
     ) {
       setStatus(`当前${dataset?.task_capabilities.label ?? "任务"}不提供此绘制工具`);
@@ -1156,6 +1163,8 @@ export default function AnnotationPage() {
                       <>
                         <span className="font-medium text-gray-900">P</span>
                         <span>多边形</span>
+                        <span className="font-medium text-gray-900">B</span>
+                        <span>画笔</span>
                       </>
                     )}
                     <span className="font-medium text-gray-900">H</span>
@@ -1170,6 +1179,10 @@ export default function AnnotationPage() {
                     <span>删除当前对象</span>
                     <span className="font-medium text-gray-900">Esc</span>
                     <span>取消绘制中草稿</span>
+                    <span className="font-medium text-gray-900">右键</span>
+                    <span>取消绘制中草稿</span>
+                    <span className="font-medium text-gray-900">Backspace</span>
+                    <span>多边形退一个点</span>
                   </div>
                 </div>
               )}
@@ -1196,6 +1209,8 @@ export default function AnnotationPage() {
       )}
       <section className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
         <AnnotationToolbar
+          datasetId={dataset?.id ?? 0}
+          taskType={dataset?.task_type ?? "detection"}
           tool={tool}
           allowedShapeTypes={allowedShapeTypes}
           canUndo={canUndo}
@@ -1216,6 +1231,8 @@ export default function AnnotationPage() {
             objects={objects}
             activeObjectId={activeObjectId}
             tool={tool}
+            brushRadius={brushRadius}
+            onBrushRadiusChange={setBrushRadius}
             activeLabel={activeLabel}
             activeClassId={activeAnnotationClass?.id ?? null}
             annotationClasses={annotationClasses}
