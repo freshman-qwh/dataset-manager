@@ -299,6 +299,7 @@ def get_sample_navigation(
     session: Session,
     dataset_id: int,
     sample_id: int | None = None,
+    target_index: int | None = None,
     search: str | None = None,
     file_status: str | None = None,
     tag: str | None = None,
@@ -326,6 +327,8 @@ def get_sample_navigation(
         current_sample = session.get(Sample, sample_id)
         if current_sample and current_sample.dataset_id == dataset_id:
             queue_split = current_sample.split or "unassigned"
+    if safe_queue_scope == "current_split" and target_index is not None and not queue_split:
+        raise HTTPException(status_code=422, detail="Choose a split before jumping to a position.")
 
     queue_file_status = context_status if safe_queue_scope == "current_filter" else "normal"
     queue_split_filter = (
@@ -348,6 +351,18 @@ def get_sample_navigation(
         "annotation_progress": annotation_progress if safe_queue_scope == "current_filter" else None,
         "pending_only": safe_queue_scope in {"all_pending", "current_split"},
     }
+    if target_index is not None:
+        target_statement = _apply_sample_filters(
+            select(Sample.id), session, dataset_id, **filter_options
+        )
+        if queue_file_status == "duplicate":
+            target_statement = target_statement.where(Sample.file_status == "normal")
+        target_id = session.exec(
+            target_statement.order_by(*order_clauses).offset(target_index - 1).limit(1)
+        ).first()
+        if target_id is None:
+            raise HTTPException(status_code=422, detail="Target position is outside the current queue.")
+        sample_id = int(target_id)
     if queue_file_status != "duplicate":
         current_index, total, current_id, previous_id, next_id = _get_indexed_navigation_ids(
             session,

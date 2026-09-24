@@ -319,6 +319,7 @@ def list_dataset_samples(
 def dataset_sample_navigation(
     dataset_id: int,
     sample_id: int | None = Query(default=None),
+    target_index: int | None = Query(default=None, ge=1),
     search: str | None = Query(default=None),
     file_status: str | None = Query(default=None),
     tag: str | None = Query(default=None),
@@ -341,6 +342,7 @@ def dataset_sample_navigation(
         session,
         dataset_id,
         sample_id=sample_id,
+        target_index=target_index,
         search=search,
         file_status=file_status,
         tag=tag,

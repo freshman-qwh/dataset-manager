@@ -495,6 +495,17 @@ def test_sample_navigation_uses_context_and_skips_non_normal_images(tmp_path: Pa
         assert second_navigation["previous_sample"]["filename"] == "a.png"
         assert second_navigation["next_sample"] is None
 
+        jumped = client.get(
+            f"/api/datasets/{dataset['id']}/samples/navigation",
+            params={"target_index": 2, "sort_by": "filename", "sort_order": "asc"},
+        ).json()
+        assert jumped["current_sample"]["filename"] == "c.png"
+        assert jumped["current_index"] == 1
+        assert client.get(
+            f"/api/datasets/{dataset['id']}/samples/navigation",
+            params={"target_index": 3, "sort_by": "filename", "sort_order": "asc"},
+        ).status_code == 422
+
     app.dependency_overrides.clear()
 
 
@@ -577,6 +588,24 @@ def test_sample_navigation_supports_pending_filter_and_split_queues(tmp_path: Pa
         assert current_split["current_index"] == 1
         assert current_split["remaining"] == 0
         assert current_split["previous_sample"]["filename"] == "a.png"
+
+        split_jump = client.get(
+            f"/api/datasets/{dataset['id']}/samples/navigation",
+            params={
+                "queue_scope": "current_split",
+                "split": "train",
+                "target_index": 2,
+                "sort_by": "filename",
+                "sort_order": "asc",
+            },
+        ).json()
+        assert split_jump["current_sample"]["filename"] == "b.png"
+
+        review_jump = client.get(
+            f"/api/datasets/{dataset['id']}/samples/navigation",
+            params={"queue_scope": "current_filter", "target_index": 3, "sort_by": "filename", "sort_order": "asc"},
+        ).json()
+        assert review_jump["current_sample"]["filename"] == "c.png"
 
         completed_outside_queue = client.get(
             f"/api/datasets/{dataset['id']}/samples/navigation",

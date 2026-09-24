@@ -575,13 +575,15 @@ export async function listSamples(params: SampleQuery, signal?: AbortSignal): Pr
 export async function getSampleNavigation(
   params: Omit<SampleQuery, "fileType" | "page" | "pageSize"> & {
     sampleId?: number | null;
+    targetIndex?: number;
     queueScope?: AnnotationQueueScope;
   }
 ): Promise<SampleNavigationResponse> {
-  const { datasetId, sampleId, search, fileStatus, tag, split, reviewStatus, annotationProgress, queueScope, sortBy, sortOrder } = params;
+  const { datasetId, sampleId, targetIndex, search, fileStatus, tag, split, reviewStatus, annotationProgress, queueScope, sortBy, sortOrder } = params;
   const { data } = await client.get<SampleNavigationResponse>(`/datasets/${datasetId}/samples/navigation`, {
     params: {
       sample_id: sampleId || undefined,
+      target_index: targetIndex || undefined,
       search: search || undefined,
       file_status: fileStatus || undefined,
       tag: tag || undefined,

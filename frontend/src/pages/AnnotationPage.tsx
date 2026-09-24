@@ -46,7 +46,7 @@ import type {
   SampleNavigationResponse,
   SampleQuery
 } from "../types/dataset";
-import { annotationQueueCopy, buildQueueChangeParams, writeAnnotationQueue } from "../utils/annotationQueue";
+import { buildQueueChangeParams, writeAnnotationQueue } from "../utils/annotationQueue";
 import { annotationProgressCopy, reviewStatusCopy } from "../utils/workflow";
 
 const EMPTY_DRAFT_STATE: AnnotationDraftState = { active: false, shapeType: null, canCommit: false };
@@ -113,6 +113,9 @@ export default function AnnotationPage() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [navigationLoading, setNavigationLoading] = useState(false);
+  const [jumping, setJumping] = useState(false);
+  const [positionDraft, setPositionDraft] = useState<number | null>(null);
+  const [positionInput, setPositionInput] = useState("");
   const [sampleLoading, setSampleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [workspaceLoadFailed, setWorkspaceLoadFailed] = useState(false);
@@ -192,8 +195,8 @@ export default function AnnotationPage() {
           : "不在当前筛选结果";
   const queueSplit = new URLSearchParams(searchParamsText).get("queueSplit") || sample?.split || "unassigned";
   const queueLabel = queueScope === "current_split"
-    ? `${annotationQueueCopy.current_split} · ${queueSplit === "unassigned" ? "未划分" : queueSplit}`
-    : annotationQueueCopy[queueScope];
+    ? `待标注 · ${queueSplit === "unassigned" ? "未划分" : queueSplit}`
+    : queueScope === "all_pending" ? "待标注" : "浏览图片";
   const queueDescription = useMemo(() => {
     const sortLabel = SAMPLE_SORT_COPY[navigationQuery.sortBy] ?? navigationQuery.sortBy;
     const sortDescription = `${sortLabel}${navigationQuery.sortOrder === "asc" ? "正序" : "倒序"}`;
@@ -225,7 +228,13 @@ export default function AnnotationPage() {
     context.push(sortDescription);
     return context.join(" · ");
   }, [navigationQuery, queueScope, queueSplit]);
-  const queueRemaining = navigation?.remaining ?? 0;
+  const queueMode = queueScope === "current_filter" ? "browse" : "pending";
+  const queueRange = queueScope === "current_split" || (queueScope === "current_filter" && navigationQuery.split)
+    ? "split" : "all";
+  const hasBrowseFilters = Boolean(
+    navigationQuery.search || navigationQuery.tag || navigationQuery.reviewStatus
+    || navigationQuery.annotationProgress || navigationQuery.fileStatus === "duplicate"
+  );
   const hasQueueContinuation = (navigation?.total ?? 0) > (navigation?.current_index === null ? 0 : 1);
   const hasUnsavedState = dirty || draftState.active;
   const allowedShapeTypes = useMemo<AnnotationShapeType[]>(
@@ -408,6 +417,13 @@ export default function AnnotationPage() {
       workspaceRequestIdRef.current += 1;
     };
   }, [loadWorkspace]);
+
+  useEffect(() => {
+    const position = navigation?.current_index === null || navigation?.current_index === undefined
+      ? null : navigation.current_index + 1;
+    setPositionDraft(position);
+    setPositionInput(position === null ? "" : String(position));
+  }, [navigation?.current_index, navigation?.total]);
 
   useEffect(() => {
     try {
@@ -823,18 +839,74 @@ export default function AnnotationPage() {
     }
   }
 
-  function handleQueueScopeChange(nextScope: AnnotationQueueScope) {
-    if (nextScope === queueScope) {
+  function handleQueueChoice(nextMode: "pending" | "browse", nextRange: "all" | "split", clearFilters = false) {
+    if (nextMode === queueMode && nextRange === queueRange && !clearFilters) {
       return;
     }
     const changeQueue = () => {
-      const nextParams = buildQueueChangeParams(searchParams, nextScope, sample?.split);
+      const targetSplit = nextRange === "split"
+        ? queueScope === "current_split" ? queueSplit : sample?.split || navigationQuery.split || "unassigned"
+        : null;
+      const nextScope: AnnotationQueueScope = nextMode === "browse"
+        ? "current_filter" : targetSplit ? "current_split" : "all_pending";
+      const nextParams = buildQueueChangeParams(searchParams, nextScope, targetSplit);
+      nextParams.delete("split");
+      nextParams.delete("queueSplit");
+      if (targetSplit) {
+        nextParams.set(nextMode === "browse" ? "split" : "queueSplit", targetSplit);
+      }
+      if (clearFilters || nextMode !== queueMode) {
+        for (const key of ["search", "tag", "reviewStatus", "annotationProgress"]) {
+          nextParams.delete(key);
+        }
+        nextParams.set("fileStatus", "normal");
+      }
+      if (nextMode === "browse" && sample) {
+        nextParams.set("sample", String(sample.id));
+      }
       setSearchParams(nextParams);
     };
     requestNavigationAction(
       changeQueue,
       "切换标注队列前，请选择保存当前标注、放弃修改或取消切换。"
     );
+  }
+
+  function jumpToPosition(position: number) {
+    if (!navigation || !Number.isInteger(position) || position < 1 || position > navigation.total) {
+      setStatus(`请输入 1 至 ${navigation?.total ?? 0} 之间的位置`);
+      return;
+    }
+    if ((navigation.current_index !== null && position === navigation.current_index + 1)
+      || jumping || navigationLoading || sampleLoading) {
+      return;
+    }
+    requestSampleNavigationAction(async () => {
+      setJumping(true);
+      setError(null);
+      try {
+        const destination = await getSampleNavigation({
+          datasetId,
+          sampleId: sample?.id,
+          targetIndex: position,
+          ...navigationQuery
+        });
+        if (!destination.current_sample) {
+          throw new Error("Target image is no longer in the queue");
+        }
+        pendingNavigationStatusRef.current = {
+          sampleId: destination.current_sample.id,
+          message: `已跳转到第 ${position} 张，标注完成状态未改变`
+        };
+        setSampleInUrl(destination.current_sample.id);
+      } catch {
+        setError("跳转失败，队列可能已变化；请重新选择位置");
+        setPositionDraft(navigation.current_index === null ? null : navigation.current_index + 1);
+        setPositionInput(navigation.current_index === null ? "" : String(navigation.current_index + 1));
+      } finally {
+        setJumping(false);
+      }
+    });
   }
 
   function handleToolChange(nextTool: AnnotationTool) {
@@ -1102,33 +1174,43 @@ export default function AnnotationPage() {
                 <span className="truncate">{sample.relative_path}</span>
               </span>
             )}
-            <label
+            <div
               title={`队列条件：${queueDescription}`}
-              className="inline-flex min-h-10 w-full min-w-0 items-center gap-2 rounded-lg border border-line bg-white px-3 py-1.5 text-gray-700 sm:w-auto"
+              className="inline-flex min-h-10 w-full min-w-0 items-center gap-2 rounded-lg border border-line bg-white px-2 py-1.5 text-gray-700 sm:w-auto"
             >
               <ListFilter size={16} className="shrink-0" />
-              <span className="sr-only">标注队列</span>
-              <span className="flex min-w-0 flex-1 flex-col sm:flex-none">
-                <select
-                  aria-label="标注队列范围"
-                  value={queueScope}
-                  onChange={(event) => handleQueueScopeChange(event.target.value as AnnotationQueueScope)}
-                  className="max-w-40 bg-transparent text-sm font-medium outline-none"
-                >
-                  <option value="all_pending">{annotationQueueCopy.all_pending}</option>
-                  <option value="current_filter">{annotationQueueCopy.current_filter}</option>
-                  <option value="current_split" disabled={!sample && queueScope !== "current_split"}>
-                    {annotationQueueCopy.current_split}
-                  </option>
-                </select>
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-none">
+                <span className="inline-flex rounded-md bg-gray-100 p-0.5" role="group" aria-label="标注浏览模式">
+                  <button type="button" aria-pressed={queueMode === "pending"}
+                    onClick={() => handleQueueChoice("pending", queueRange)}
+                    className={`rounded px-2 py-0.5 text-xs font-medium ${queueMode === "pending" ? "bg-white text-ink shadow-sm" : "text-gray-500 hover:text-ink"}`}>
+                    待标注
+                  </button>
+                  <button type="button" aria-pressed={queueMode === "browse"}
+                    onClick={() => handleQueueChoice("browse", queueRange)}
+                    className={`rounded px-2 py-0.5 text-xs font-medium ${queueMode === "browse" ? "bg-white text-ink shadow-sm" : "text-gray-500 hover:text-ink"}`}>
+                    浏览图片
+                  </button>
+                </span>
                 <span aria-label={`队列条件：${queueDescription}`} className="max-w-56 truncate text-[11px] leading-4 text-gray-400">
                   {queueDescription}
                 </span>
               </span>
+              <select aria-label="图片范围" value={queueRange}
+                onChange={(event) => handleQueueChoice(queueMode, event.target.value as "all" | "split")}
+                disabled={!sample && queueRange !== "split"}
+                className="max-w-24 border-l border-line bg-transparent pl-2 text-xs outline-none disabled:text-gray-400">
+                <option value="all">全部</option>
+                <option value="split">当前划分</option>
+              </select>
               <span className="whitespace-nowrap border-l border-line pl-2 text-xs text-gray-500">
-                后续 {queueRemaining}
+                {queueMode === "pending" ? "待标注" : "共"} {navigation?.total ?? 0}
               </span>
-            </label>
+              {queueMode === "browse" && hasBrowseFilters && (
+                <button type="button" onClick={() => handleQueueChoice("browse", queueRange, true)}
+                  className="shrink-0 text-xs text-blue-700 hover:underline">清除筛选</button>
+              )}
+            </div>
             <span
               aria-live="polite"
               className={`min-w-24 rounded-lg px-3 py-2 text-center ${
@@ -1213,6 +1295,41 @@ export default function AnnotationPage() {
             </div>
           </div>
         </div>
+        {navigation && navigation.total > 1 && navigation.current_index !== null && positionDraft !== null && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-2 text-xs text-gray-600">
+            <label htmlFor="annotation-position-slider" className="shrink-0 font-medium">图片位置</label>
+            <input id="annotation-position-slider" aria-label="拖动跳转图片位置" type="range"
+              min={1} max={navigation.total} value={positionDraft}
+              disabled={jumping || navigationLoading || sampleLoading || saving}
+              onChange={(event) => {
+                const value = Number(event.target.value);
+                setPositionDraft(value);
+                setPositionInput(String(value));
+              }}
+              onPointerUp={(event) => jumpToPosition(Number(event.currentTarget.value))}
+              onKeyUp={(event) => {
+                if (["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"].includes(event.key)) {
+                  jumpToPosition(Number(event.currentTarget.value));
+                }
+              }}
+              className="h-2 min-w-32 flex-1 cursor-pointer accent-gray-900 disabled:cursor-wait"
+            />
+            <form className="flex items-center gap-1" noValidate onSubmit={(event) => {
+              event.preventDefault();
+              jumpToPosition(Number(positionInput));
+            }}>
+              <input aria-label="跳转位置" type="number" min={1} max={navigation.total}
+                value={positionInput} disabled={jumping || navigationLoading || sampleLoading || saving}
+                onChange={(event) => setPositionInput(event.target.value)}
+                className="h-8 w-16 rounded-md border border-line px-1 text-center text-sm outline-none" />
+              <span>/ {navigation.total}</span>
+              <button type="submit" disabled={jumping || navigationLoading || sampleLoading || saving}
+                className="h-8 rounded-md border border-line px-2 font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40">
+                {jumping ? "跳转中" : "跳转"}
+              </button>
+            </form>
+          </div>
+        )}
       </header>
 
       {error && (
