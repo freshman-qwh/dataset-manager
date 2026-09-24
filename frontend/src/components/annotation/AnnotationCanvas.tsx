@@ -242,6 +242,7 @@ export default function AnnotationCanvas({
   onFocusCommandHandled
 }: AnnotationCanvasProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const imageRef = useRef<HTMLImageElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const objectsRef = useRef<AnnotationObject[]>(objects);
   const dragRef = useRef<DragState | null>(null);
@@ -293,6 +294,16 @@ export default function AnnotationCanvas({
     setImageReloadToken(0);
     setTransform({ scale: 1, translateX: 0, translateY: 0 });
     setFitKey((value) => value + 1);
+    // A cached image can finish before this effect runs; recover its dimensions
+    // after the reset instead of leaving the canvas in "loading" indefinitely.
+    const image = imageRef.current;
+    if (image?.complete) {
+      if (image.naturalWidth > 0) {
+        setImageSize({ width: image.naturalWidth, height: image.naturalHeight });
+      } else {
+        setImageError(true);
+      }
+    }
   }, [imageUrl]);
 
   useEffect(() => {
@@ -769,6 +780,7 @@ export default function AnnotationCanvas({
           onChange={(event) => onBrushRadiusChange(Number(event.target.value))} className="w-28" />
       </label>}
       <img
+        ref={imageRef}
         key={imageSrc}
         src={imageSrc}
         alt=""

@@ -491,7 +491,7 @@ def test_sample_navigation_uses_context_and_skips_non_normal_images(tmp_path: Pa
             },
         ).json()
         assert second_navigation["current_index"] == 1
-        assert second_navigation["remaining"] == 1
+        assert second_navigation["remaining"] == 0
         assert second_navigation["previous_sample"]["filename"] == "a.png"
         assert second_navigation["next_sample"] is None
 
@@ -575,7 +575,7 @@ def test_sample_navigation_supports_pending_filter_and_split_queues(tmp_path: Pa
         assert current_split["queue_scope"] == "current_split"
         assert current_split["total"] == 2
         assert current_split["current_index"] == 1
-        assert current_split["remaining"] == 1
+        assert current_split["remaining"] == 0
         assert current_split["previous_sample"]["filename"] == "a.png"
 
         completed_outside_queue = client.get(

@@ -446,7 +446,7 @@ def get_sample_navigation(
         ),
         current_index=current_index,
         total=total,
-        remaining=max(total - (1 if current_index is not None else 0), 0),
+        remaining=max(total - current_index - 1, 0) if current_index is not None else total,
         queue_scope=safe_queue_scope,
         sort_by=safe_sort_by,
         sort_order=safe_sort_order,

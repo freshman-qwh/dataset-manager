@@ -226,7 +226,7 @@ export default function AnnotationPage() {
     return context.join(" · ");
   }, [navigationQuery, queueScope, queueSplit]);
   const queueRemaining = navigation?.remaining ?? 0;
-  const hasQueueContinuation = queueRemaining > 0;
+  const hasQueueContinuation = (navigation?.total ?? 0) > (navigation?.current_index === null ? 0 : 1);
   const hasUnsavedState = dirty || draftState.active;
   const allowedShapeTypes = useMemo<AnnotationShapeType[]>(
     () => dataset?.task_capabilities.allowed_shape_types ?? [],
@@ -1126,7 +1126,7 @@ export default function AnnotationPage() {
                 </span>
               </span>
               <span className="whitespace-nowrap border-l border-line pl-2 text-xs text-gray-500">
-                剩余 {queueRemaining}
+                后续 {queueRemaining}
               </span>
             </label>
             <span
