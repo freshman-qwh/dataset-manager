@@ -3,8 +3,8 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleSlash2,
+  Folder,
   HelpCircle,
-  Image as ImageIcon,
   ListFilter,
   Loader2,
   RefreshCw,
@@ -89,6 +89,27 @@ function normalizeObjects(objects: AnnotationObject[]): AnnotationObject[] {
 
 function isAnnotatableImage(sample: Sample): boolean {
   return sample.file_type === "image" && sample.file_status === "normal";
+}
+
+function sampleFolder(relativePath: string): string {
+  const parts = relativePath.replace(/\\/g, "/").split("/");
+  return parts.length > 1 ? parts.slice(0, -1).join("/") : "根目录";
+}
+
+function triageBadge(sample: Sample): { label: string; className: string } {
+  if (sample.triage_outdated) {
+    return { label: "分拣待复核", className: "border-amber-200 bg-amber-50 text-amber-800" };
+  }
+  if (sample.triage_status === "ok") {
+    return { label: "OK", className: "border-emerald-200 bg-emerald-50 text-emerald-800" };
+  }
+  if (sample.triage_status === "ng") {
+    return { label: "NG", className: "border-red-200 bg-red-50 text-red-800" };
+  }
+  if (sample.triage_status === "pending") {
+    return { label: "待定", className: "border-violet-200 bg-violet-50 text-violet-800" };
+  }
+  return { label: "未分拣", className: "border-gray-200 bg-gray-50 text-gray-600" };
 }
 
 export default function AnnotationPage() {
@@ -184,15 +205,6 @@ export default function AnnotationPage() {
   const sampleCompleted =
     sample?.annotation_progress === "completed_empty"
     || sample?.annotation_progress === "completed_with_objects";
-  const currentPendingQueueCompleted = queueScope !== "current_filter" && sampleCompleted;
-  const navigationLabel =
-    !navigation || navigation.total === 0
-      ? "无可导航图片"
-      : currentPendingQueueCompleted
-        ? "当前样本已完成"
-        : navigation.current_index !== null
-          ? `${navigation.current_index + 1} / ${navigation.total}`
-          : "不在当前筛选结果";
   const queueSplit = new URLSearchParams(searchParamsText).get("queueSplit") || sample?.split || "unassigned";
   const queueLabel = queueScope === "current_split"
     ? `待标注 · ${queueSplit === "unassigned" ? "未划分" : queueSplit}`
@@ -229,6 +241,7 @@ export default function AnnotationPage() {
     return context.join(" · ");
   }, [navigationQuery, queueScope, queueSplit]);
   const queueMode = queueScope === "current_filter" ? "browse" : "pending";
+  const sampleTriage = sample ? triageBadge(sample) : null;
   const queueRange = queueScope === "current_split" || (queueScope === "current_filter" && navigationQuery.split)
     ? "split" : "all";
   const hasBrowseFilters = Boolean(
@@ -1161,7 +1174,7 @@ export default function AnnotationPage() {
                   </span>
                 )}
                 <span aria-live="polite" className="shrink-0 rounded-md bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
-                  {navigationLoading ? "加载队列" : `${queueLabel} · ${navigationLabel}`}
+                  {navigationLoading ? "加载队列" : queueLabel}
                 </span>
               </div>
               <h1 className="truncate text-lg font-semibold text-ink">{sample?.filename ?? "未选择样本"}</h1>
@@ -1169,10 +1182,27 @@ export default function AnnotationPage() {
           </div>
           <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
             {sample && (
-              <span className="hidden min-w-0 max-w-full items-center gap-2 rounded-lg border border-line bg-gray-50 px-3 py-2 text-gray-600 md:inline-flex lg:max-w-md">
-                <ImageIcon className="shrink-0" size={16} />
-                <span className="truncate">{sample.relative_path}</span>
+              <span title={sample.relative_path} aria-label={`所在文件夹：${sampleFolder(sample.relative_path)}；完整路径：${sample.relative_path}`}
+                className="hidden min-w-0 max-w-36 items-center gap-2 rounded-lg border border-line bg-gray-50 px-2 py-2 text-xs text-gray-600 md:inline-flex">
+                <Folder className="shrink-0" size={16} />
+                <span className="truncate">{sampleFolder(sample.relative_path)}</span>
               </span>
+            )}
+            {sample && sampleTriage && (
+              <details key={sample.id} className="relative shrink-0 text-xs">
+                <summary title="查看分拣详情" aria-label={`分拣结果：${sampleTriage.label}`}
+                  className={`cursor-pointer list-none rounded-lg border px-2.5 py-2 font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 ${sampleTriage.className}`}>
+                  {sampleTriage.label}
+                </summary>
+                <div role="group" aria-label="快速分拣详情" className="absolute right-0 top-full z-40 mt-2 w-64 rounded-lg border border-line bg-white p-3 text-gray-700 shadow-lg">
+                  <div className="mb-2 font-semibold text-ink">快速分拣结果</div>
+                  <div>判定：{sample.triage_status === "ok" ? "OK" : sample.triage_status === "ng" ? "NG" : sample.triage_status === "pending" ? "待定" : "未分拣"}</div>
+                  {sample.ok_grade && <div className="mt-1">OK 等级：{sample.ok_grade === "clear" ? "完全 OK" : "勉强 OK"}</div>}
+                  {sample.defect_severity && <div className="mt-1">缺陷程度：{{ mild: "轻微", moderate: "中等", severe: "严重" }[sample.defect_severity]}</div>}
+                  {sample.triage_outdated && <div className="mt-1 text-amber-700">原判定需要重新核对</div>}
+                  {sample.triage_note && <div className="mt-2 max-h-28 overflow-auto break-words border-t border-line pt-2">备注：{sample.triage_note}</div>}
+                </div>
+              </details>
             )}
             <div
               title={`队列条件：${queueDescription}`}
