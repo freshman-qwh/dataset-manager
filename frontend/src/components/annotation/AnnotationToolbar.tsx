@@ -44,7 +44,8 @@ function readSettings(key: string, taskType: string): { preset: Preset; order: A
     const order = Array.isArray(value?.order)
       ? [...new Set(value.order.filter((id): id is AnnotationTool => tools.some((item) => item.id === id)))]
       : presets[fallback];
-    return { preset, order: order.length ? order : presets[fallback] };
+    const customOrder = order.length ? order : presets[fallback];
+    return { preset, order: customOrder.includes("select") ? customOrder : ["select", ...customOrder] };
   } catch {
     return { preset: fallback, order: presets[fallback] };
   }
@@ -72,16 +73,21 @@ export default function AnnotationToolbar({
       .filter((id) => supported(id, allowedShapeTypes))
       .map((id) => tools.find((item) => item.id === id)!);
   }, [settings, tool, allowedShapeTypes]);
-  const candidateTools = useMemo(() => [
-    ...settings.order.map((id) => tools.find((item) => item.id === id)!),
-    ...tools.filter((item) => !settings.order.includes(item.id))
-  ], [settings.order]);
+  const activeOrder = settings.preset === "custom" ? settings.order : presets[settings.preset];
+  const selectedTools = activeOrder.filter((id) => supported(id, allowedShapeTypes))
+    .map((id) => tools.find((item) => item.id === id)!);
+  const availableTools = tools.filter((item) => !settings.order.includes(item.id));
+  const temporaryTool = !activeOrder.includes(tool) ? tools.find((item) => item.id === tool) : null;
 
-  function toggle(id: AnnotationTool) {
+  function add(id: AnnotationTool) {
     setSettings((current) => ({
       preset: "custom",
-      order: current.order.includes(id) ? current.order.filter((item) => item !== id) : [...current.order, id]
+      order: current.order.includes(id) ? current.order : [...current.order, id]
     }));
+  }
+  function remove(id: AnnotationTool) {
+    if (id === "select" || id === tool) return;
+    setSettings((current) => ({ ...current, order: current.order.filter((item) => item !== id) }));
   }
   function move(id: AnnotationTool, delta: number) {
     setSettings((current) => {
@@ -130,8 +136,8 @@ export default function AnnotationToolbar({
             <div className="grid gap-3 sm:grid-cols-3">
               {(["detection", "segmentation", "custom"] as const).map((preset) => {
                 const enabled = preset === "custom" || preset === taskType;
-                const title = preset === "detection" ? "目标检测" : preset === "segmentation" ? "多边形分割" : "自定义";
-                const description = preset === "detection" ? "选择 · 矩形 · 平移" : preset === "segmentation" ? "选择 · 多边形 · 画笔 · 平移" : "自行选择并排序";
+                const title = preset === "detection" ? "目标检测" : preset === "segmentation" ? "实例分割" : "自定义";
+                const description = preset === "detection" ? "选择 · 矩形 · 平移" : preset === "segmentation" ? "选择 · 多边形 · 画笔 · 平移" : `独立保存 ${settings.order.length} 项工具及顺序`;
                 return <button key={preset} type="button" disabled={!enabled} aria-pressed={settings.preset === preset}
                   onClick={() => setSettings((current) => ({ ...current, preset }))}
                   className={`rounded-xl border p-4 text-left ${settings.preset === preset ? "border-gray-900 bg-gray-50" : "border-line"} ${enabled ? "hover:border-gray-500" : "cursor-not-allowed opacity-50"}`}>
@@ -141,34 +147,51 @@ export default function AnnotationToolbar({
                 </button>;
               })}
             </div>
-            <h3 className="mt-6 text-sm font-semibold text-ink">自定义工具</h3>
-            <p className="mt-1 text-xs text-gray-500">下方保存的是自定义方案；勾选或排序会切换到自定义。当前使用的工具不能移除。</p>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              {candidateTools.map((item) => {
-                const enabled = supported(item.id, allowedShapeTypes);
-                const selected = settings.order.includes(item.id);
-                const index = settings.order.indexOf(item.id);
-                return <div key={item.id} className={`flex items-center gap-2 rounded-lg border border-line px-3 py-2 ${enabled ? "" : "opacity-50"}`}>
-                  <input type="checkbox" aria-label={`在自定义工具栏显示${item.title}`}
-                    disabled={!enabled || (selected && tool === item.id)} checked={selected}
-                    onChange={() => toggle(item.id)} className="h-4 w-4" />
-                  <span className="text-gray-600">{item.icon}</span><span className="min-w-0 flex-1 text-sm text-ink">{item.title}</span>
-                  {!enabled ? <span className="text-xs text-gray-400">当前不可用</span> : <>
-                    <button type="button" aria-label={`${item.title}上移`} disabled={!selected || index <= 0}
-                      onClick={() => move(item.id, -1)} className="rounded px-1 text-sm disabled:text-gray-300">↑</button>
-                    <button type="button" aria-label={`${item.title}下移`} disabled={!selected || index >= settings.order.length - 1}
-                      onClick={() => move(item.id, 1)} className="rounded px-1 text-sm disabled:text-gray-300">↓</button>
+            <h3 className="mt-6 text-sm font-semibold text-ink">{settings.preset === "custom" ? "自定义工具顺序" : "当前预设工具"}</h3>
+            <p className="mt-1 text-xs text-gray-500">{settings.preset === "custom"
+              ? "从上到下为工具栏顺序；自定义方案会单独保留。当前使用的工具不能移除。"
+              : "预设顺序固定；切回自定义时会恢复上次选择和排序。"}</p>
+            <ol className="mt-3 space-y-2">
+              {selectedTools.map((item, index) => (
+                <li key={item.id} className="flex items-center gap-3 rounded-lg border border-line px-3 py-2">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-gray-100 text-xs font-semibold tabular-nums text-gray-700" aria-label={`第 ${index + 1} 位`}>{index + 1}</span>
+                  <span className="text-gray-600">{item.icon}</span>
+                  <span className="min-w-0 flex-1 text-sm text-ink">{item.title}</span>
+                  {settings.preset === "custom" && <>
+                    <button type="button" aria-label={`${item.title}上移`} disabled={index === 0}
+                      onClick={() => move(item.id, -1)} className="rounded px-2 py-1 text-sm hover:bg-gray-100 disabled:text-gray-300 disabled:hover:bg-transparent">↑</button>
+                    <button type="button" aria-label={`${item.title}下移`} disabled={index === selectedTools.length - 1}
+                      onClick={() => move(item.id, 1)} className="rounded px-2 py-1 text-sm hover:bg-gray-100 disabled:text-gray-300 disabled:hover:bg-transparent">↓</button>
+                    <button type="button" aria-label={`移除${item.title}`} disabled={item.id === "select" || item.id === tool}
+                      onClick={() => remove(item.id)} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 disabled:text-gray-300 disabled:hover:bg-transparent">移除</button>
                   </>}
-                </div>;
-              })}
-            </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-3">
-              {["橡皮擦", "边缘吸附", "智能辅助"].map((name) =>
-                <label key={name} className="flex items-center gap-2 rounded-lg border border-dashed border-line bg-gray-50 px-3 py-2 text-xs text-gray-400">
-                  <input type="checkbox" disabled aria-label={`${name}，规划中`} />{name}<span className="ml-auto">规划中</span>
-                </label>
-              )}
-            </div>
+                </li>
+              ))}
+            </ol>
+            {temporaryTool && <p className="mt-2 text-xs text-gray-500">
+              正在使用的“{temporaryTool.title}”会暂时留在工具栏；切换到已选工具后即隐藏。
+            </p>}
+            {settings.preset === "custom" && <>
+              <h3 className="mt-6 text-sm font-semibold text-ink">可添加工具</h3>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {availableTools.map((item) => {
+                  const enabled = supported(item.id, allowedShapeTypes);
+                  return <div key={item.id} className={`flex items-center gap-2 rounded-lg border border-line px-3 py-2 ${enabled ? "" : "opacity-50"}`}>
+                    <span className="text-gray-600">{item.icon}</span>
+                    <span className="min-w-0 flex-1 text-sm text-ink">{item.title}</span>
+                    <button type="button" aria-label={`添加${item.title}`} disabled={!enabled} onClick={() => add(item.id)}
+                      className="rounded px-2 py-1 text-xs text-gray-700 hover:bg-gray-100 disabled:text-gray-400 disabled:hover:bg-transparent">{enabled ? "添加" : "当前不可用"}</button>
+                  </div>;
+                })}
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                {["橡皮擦", "边缘吸附", "智能辅助"].map((name) =>
+                  <div key={name} className="flex items-center justify-between rounded-lg border border-dashed border-line bg-gray-50 px-3 py-2 text-xs text-gray-400">
+                    {name}<span>规划中</span>
+                  </div>
+                )}
+              </div>
+            </>}
           </div>
           <div className="flex justify-end border-t border-line px-6 py-4">
             <button type="button" autoFocus onClick={() => setOpen(false)} className="rounded-lg bg-gray-900 px-5 py-2 text-sm font-medium text-white">完成</button>

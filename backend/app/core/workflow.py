@@ -53,7 +53,7 @@ TASK_CAPABILITIES: dict[str, dict[str, object]] = {
         "unsupported_reason": None,
     },
     "segmentation": {
-        "label": "多边形分割",
+        "label": "实例分割",
         "annotation_mode": "geometry",
         "allowed_shape_types": ["polygon"],
         "default_export_format": "coco_segmentation",
@@ -81,5 +81,5 @@ def task_capabilities(task_type: str | None) -> dict[str, object]:
         "allowed_shape_types": [],
         "default_export_format": "manifest",
         "supported": False,
-        "unsupported_reason": "该旧任务类型不再驱动标注流程，请在数据集设置中改为目标检测、多边形分割或分类整理。",
+        "unsupported_reason": "该旧任务类型不再驱动标注流程，请在数据集设置中改为目标检测、实例分割或分类整理。",
     }

@@ -93,6 +93,8 @@ def test_dataset_task_type_contract_rejects_unsupported_values():
             json={"task_type": "segmentation"},
         )
         assert updated.status_code == 200
+        assert updated.json()["task_type"] == "segmentation"
+        assert updated.json()["task_capabilities"]["label"] == "实例分割"
         assert updated.json()["task_capabilities"]["allowed_shape_types"] == ["polygon"]
 
         assert client.post("/api/datasets", json={"name": "Legacy", "task_type": "tabular"}).status_code == 422
