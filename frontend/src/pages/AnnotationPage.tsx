@@ -72,6 +72,8 @@ interface PendingAction {
 interface KeyboardShortcutActions {
   requestSave: () => void;
   saveAndNext: () => void;
+  canCompleteWithEnter: boolean;
+  canNavigate: boolean;
   undoAndMarkDirty: () => void;
   redoAndMarkDirty: () => void;
   changeTool: (tool: AnnotationTool) => void;
@@ -475,11 +477,15 @@ export default function AnnotationPage() {
       if (pendingDraftAction || pendingDirtyAction) {
         return;
       }
+      if (event.defaultPrevented || event.isComposing) {
+        return;
+      }
       const target = event.target;
       if (target instanceof Element && target.closest('[role="dialog"]')) {
         return;
       }
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement
+        || (target instanceof HTMLElement && target.isContentEditable)) {
         return;
       }
       const actions = keyboardShortcutsRef.current;
@@ -499,6 +505,17 @@ export default function AnnotationPage() {
       } else if ((event.ctrlKey || event.metaKey) && key === "y") {
         event.preventDefault();
         actions.redoAndMarkDirty();
+      } else if (event.ctrlKey || event.metaKey || event.altKey) {
+        return;
+      } else if (event.key === "Enter" && actions.canCompleteWithEnter && !event.repeat
+        && !(target instanceof Element && target.closest('button, a, summary, [role="button"]'))) {
+        event.preventDefault();
+        actions.saveAndNext();
+      } else if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && actions.canNavigate && !event.repeat
+        && !(target instanceof Element && target.closest('button, a, summary, [role="button"]'))) {
+        event.preventDefault();
+        if (event.key === "ArrowLeft") actions.switchPrevious();
+        else actions.switchNext();
       } else if (key === "v") {
         actions.changeTool("select");
       } else if (key === "r") {
@@ -972,6 +989,9 @@ export default function AnnotationPage() {
   keyboardShortcutsRef.current = {
     requestSave,
     saveAndNext: requestSaveAndNext,
+    canCompleteWithEnter: tool === "select" && Boolean(sample && isAnnotatableImage(sample))
+      && objects.length > 0 && !draftState.active && !saving && !sampleLoading && !navigationLoading,
+    canNavigate: !saving && !sampleLoading && !navigationLoading,
     undoAndMarkDirty: () => {
       undo();
       markDirty();
@@ -1041,8 +1061,8 @@ export default function AnnotationPage() {
             <div className="flex items-center gap-1">
               <button
                 type="button"
-                title="查看上一张（不改变完成状态）"
-                aria-label="查看上一张（不改变完成状态）"
+                title="查看上一张（←，不改变完成状态）"
+                aria-label="查看上一张（←，不改变完成状态）"
                 disabled={!previousSample || navigationLoading}
                 onClick={() => switchSample(previousSample)}
                 className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-line text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300"
@@ -1051,8 +1071,8 @@ export default function AnnotationPage() {
               </button>
               <button
                 type="button"
-                title="跳过当前，查看队列下一张"
-                aria-label="跳过当前，查看队列下一张"
+                title="跳过当前，查看队列下一张（→）"
+                aria-label="跳过当前，查看队列下一张（→）"
                 disabled={(!nextSample && !hasQueueContinuation) || navigationLoading}
                 onClick={switchToNextQueueSample}
                 className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-line text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300"
@@ -1169,8 +1189,12 @@ export default function AnnotationPage() {
                     )}
                     <span className="font-medium text-gray-900">H</span>
                     <span>平移</span>
-                    <span className="font-medium text-gray-900">[ / ]</span>
+                    <span className="font-medium text-gray-900">← / →</span>
                     <span>上一张 / 跳过到下一张</span>
+                    <span className="font-medium text-gray-900">[ / ]</span>
+                    <span>同上，保留原快捷键</span>
+                    <span className="font-medium text-gray-900">Enter</span>
+                    <span>选择模式且已有对象：完成并下一张</span>
                     <span className="font-medium text-gray-900">Ctrl+S</span>
                     <span>保存草稿</span>
                     <span className="font-medium text-gray-900">Ctrl+Enter</span>

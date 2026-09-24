@@ -1,4 +1,5 @@
 import { CheckCircle2, CircleSlash2, Eye, EyeOff, Lock, Plus, Save, Tags, Trash2, Unlock } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import type { AnnotationClass, AnnotationObject } from "../../types/dataset";
 import { tagChipStyle } from "../../utils/colors";
@@ -52,6 +53,8 @@ export default function AnnotationObjectList({
   onSaveAndNext,
   onSyncClassesToTags
 }: AnnotationObjectListProps) {
+  const [expandedObjectId, setExpandedObjectId] = useState<string | null>(activeObjectId);
+  useEffect(() => setExpandedObjectId(activeObjectId), [activeObjectId]);
   const classByName = new Map(annotationClasses.map((annotationClass) => [annotationClass.name.toLowerCase(), annotationClass]));
   const activeClass = classByName.get(activeLabel.trim().toLowerCase());
   const canCreateClass = Boolean(activeLabel.trim()) && !activeClass;
@@ -130,7 +133,14 @@ export default function AnnotationObjectList({
           <div className="space-y-2">
             {objects.map((object, index) => {
               const active = object.client_id === activeObjectId;
+              const expanded = object.client_id === expandedObjectId;
               const annotationClass = classByName.get(object.label.toLowerCase());
+              const selectedAttributes = [
+                ["occluded", "遮挡"],
+                ["truncated", "截断"],
+                ["difficult", "困难"]
+              ].filter(([key]) => Boolean(object.attributes[key])).map(([, label]) => label);
+              const detailSummary = [...selectedAttributes, ...(object.notes?.trim() ? ["有备注"] : [])];
               return (
                 <div
                   key={object.client_id}
@@ -140,13 +150,24 @@ export default function AnnotationObjectList({
                 >
                   <button
                     type="button"
-                    title="选择并聚焦对象"
-                    onClick={() => onSelect(object.client_id)}
+                    title={expanded ? "收起对象详情" : "选择并聚焦对象"}
+                    aria-expanded={expanded}
+                    onClick={(event) => {
+                      if (expanded) {
+                        setExpandedObjectId(null);
+                      } else {
+                        setExpandedObjectId(object.client_id);
+                        onSelect(object.client_id);
+                      }
+                      if (event.detail > 0) event.currentTarget.blur();
+                    }}
                     className="flex w-full items-start justify-between gap-3 text-left"
                   >
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium text-ink">{objectTitle(object, index)}</div>
-                      <div className="mt-1 text-xs text-gray-500">{object.shape_type}</div>
+                      <div className="mt-1 truncate text-xs text-gray-500">
+                        {object.shape_type}{detailSummary.length > 0 ? ` · ${detailSummary.join(" · ")}` : ""}
+                      </div>
                     </div>
                     <span
                       className="rounded-md border border-line bg-gray-50 px-2 py-0.5 text-xs text-gray-600"
@@ -155,7 +176,7 @@ export default function AnnotationObjectList({
                       {index + 1}
                     </span>
                   </button>
-                  {active && (
+                  {expanded && (
                     <div className="mt-3 space-y-3 border-t border-line pt-3">
                       <label className="block">
                         <span className="text-xs font-medium text-gray-500">类别</span>
@@ -181,38 +202,45 @@ export default function AnnotationObjectList({
                           ))}
                         </select>
                       </label>
-                      <label className="block">
-                        <span className="text-xs font-medium text-gray-500">备注</span>
-                        <textarea
-                          value={object.notes ?? ""}
-                          onChange={(event) => onUpdate(object.client_id, { notes: event.target.value || null })}
-                          className="mt-1 min-h-20 w-full rounded-lg border border-line px-3 py-2 text-sm outline-none transition focus:border-gray-900"
-                        />
-                      </label>
-                      <fieldset>
-                        <legend className="text-xs font-medium text-gray-500">训练属性</legend>
-                        <div className="mt-2 grid grid-cols-3 gap-2">
-                          {[
-                            ["occluded", "遮挡"],
-                            ["truncated", "截断"],
-                            ["difficult", "困难"]
-                          ].map(([key, label]) => (
-                            <label key={key} className="flex items-center gap-1.5 rounded-md border border-line px-2 py-2 text-xs text-gray-700">
-                              <input
-                                type="checkbox"
-                                checked={Boolean(object.attributes[key])}
-                                onChange={(event) =>
-                                  onUpdate(object.client_id, {
-                                    attributes: { ...object.attributes, [key]: event.target.checked }
-                                  })
-                                }
-                                className="h-4 w-4 rounded border-gray-300"
-                              />
-                              {label}
-                            </label>
-                          ))}
+                      <details className="rounded-lg border border-line px-3 py-2">
+                        <summary className="cursor-pointer text-xs font-medium text-gray-700">
+                          更多信息{detailSummary.length > 0 ? ` · ${detailSummary.join("、")}` : ""}
+                        </summary>
+                        <div className="mt-3 space-y-3 border-t border-line pt-3">
+                          <fieldset>
+                            <legend className="text-xs font-medium text-gray-500">训练属性</legend>
+                            <div className="mt-2 grid grid-cols-3 gap-2">
+                              {[
+                                ["occluded", "遮挡"],
+                                ["truncated", "截断"],
+                                ["difficult", "困难"]
+                              ].map(([key, label]) => (
+                                <label key={key} className="flex items-center gap-1.5 rounded-md border border-line px-2 py-2 text-xs text-gray-700">
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(object.attributes[key])}
+                                    onChange={(event) =>
+                                      onUpdate(object.client_id, {
+                                        attributes: { ...object.attributes, [key]: event.target.checked }
+                                      })
+                                    }
+                                    className="h-4 w-4 rounded border-gray-300"
+                                  />
+                                  {label}
+                                </label>
+                              ))}
+                            </div>
+                          </fieldset>
+                          <label className="block">
+                            <span className="text-xs font-medium text-gray-500">备注</span>
+                            <textarea
+                              value={object.notes ?? ""}
+                              onChange={(event) => onUpdate(object.client_id, { notes: event.target.value || null })}
+                              className="mt-1 min-h-20 w-full rounded-lg border border-line px-3 py-2 text-sm outline-none transition focus:border-gray-900"
+                            />
+                          </label>
                         </div>
-                      </fieldset>
+                      </details>
                       <div className="flex gap-2">
                         <button
                           type="button"

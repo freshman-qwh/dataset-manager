@@ -107,7 +107,10 @@ export default function AnnotationToolbar({
           <button key={item.id} type="button"
             title={`${item.title}${item.shortcut ? ` (${item.shortcut})` : ""}`}
             aria-label={`${item.title}${item.shortcut ? `，快捷键 ${item.shortcut}` : ""}`}
-            aria-pressed={tool === item.id} onClick={() => onToolChange(item.id)}
+            aria-pressed={tool === item.id} onClick={(event) => {
+              onToolChange(item.id);
+              if (event.detail > 0) event.currentTarget.blur();
+            }}
             className={`inline-flex h-11 w-11 items-center justify-center rounded-lg border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 ${tool === item.id ? "border-gray-900 bg-gray-900 text-white" : "border-line bg-white text-gray-600 hover:bg-gray-50"}`}
           >{item.icon}</button>
         ))}
