@@ -69,6 +69,12 @@ interface PendingAction {
   cancelLabel?: string;
 }
 
+interface SaveToast {
+  id: number;
+  message: string;
+  exiting: boolean;
+}
+
 interface KeyboardShortcutActions {
   requestSave: () => void;
   saveAndNext: () => void;
@@ -132,7 +138,7 @@ export default function AnnotationPage() {
   const [status, setStatus] = useState("准备就绪");
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [recentlySavedSampleId, setRecentlySavedSampleId] = useState<number | null>(null);
+  const [saveToast, setSaveToast] = useState<SaveToast | null>(null);
   const [loading, setLoading] = useState(true);
   const [navigationLoading, setNavigationLoading] = useState(false);
   const [jumping, setJumping] = useState(false);
@@ -169,14 +175,21 @@ export default function AnnotationPage() {
   const pendingNavigationStatusRef = useRef<{ sampleId: number | null; message: string } | null>(null);
   const workspaceRequestIdRef = useRef(0);
   const guardFocusReturnRef = useRef<HTMLElement | null>(null);
+  const saveToastIdRef = useRef(0);
 
   useEffect(() => {
-    if (recentlySavedSampleId === null) {
-      return;
-    }
-    const timeout = window.setTimeout(() => setRecentlySavedSampleId(null), 2500);
-    return () => window.clearTimeout(timeout);
-  }, [recentlySavedSampleId]);
+    if (!saveToast) return;
+    const id = saveToast.id;
+    const exit = window.setTimeout(() => setSaveToast((current) =>
+      current?.id === id ? { ...current, exiting: true } : current), 2200);
+    const remove = window.setTimeout(() => setSaveToast((current) =>
+      current?.id === id ? null : current), 2620);
+    return () => { window.clearTimeout(exit); window.clearTimeout(remove); };
+  }, [saveToast?.id]);
+
+  const showSaveToast = useCallback((message: string) => {
+    setSaveToast({ id: ++saveToastIdRef.current, message, exiting: false });
+  }, []);
 
   const queueScope = useMemo<AnnotationQueueScope>(() => {
     const value = new URLSearchParams(searchParamsText).get("queue");
@@ -256,9 +269,8 @@ export default function AnnotationPage() {
   );
   const hasQueueContinuation = (navigation?.total ?? 0) > (navigation?.current_index === null ? 0 : 1);
   const saveFailed = error?.startsWith("标注保存失败") ?? false;
-  const saveStatus = saving ? "保存中" : saveFailed ? "保存失败" : draftState.active
-    ? "有未提交草稿" : dirty ? "有未保存修改"
-      : recentlySavedSampleId === sample?.id ? "已保存" : null;
+  const saveHint = saving ? "保存中" : saveFailed ? "保存失败" : draftState.active
+    ? "有未提交草稿" : dirty ? "有未保存修改" : null;
   const allowedShapeTypes = useMemo<AnnotationShapeType[]>(
     () => dataset?.task_capabilities.allowed_shape_types ?? [],
     [dataset?.task_capabilities.allowed_shape_types]
@@ -276,7 +288,6 @@ export default function AnnotationPage() {
   const markDirty = useCallback(() => {
     dirtyRef.current = true;
     setDirty(true);
-    setRecentlySavedSampleId(null);
   }, []);
 
   const loadAnnotations = useCallback((sampleId: number) => {
@@ -675,13 +686,6 @@ export default function AnnotationPage() {
       ) {
         setSessionCompletedCount((current) => current + 1);
       }
-      setStatus(
-        saveMode === "complete"
-          ? "已标记为完成（有对象）"
-          : saveMode === "confirm_empty"
-            ? "已确认无目标"
-            : "标注草稿已保存"
-      );
       try {
         const [nextSample, nextAnnotationClasses] = await Promise.all([
           getSample(sample.id),
@@ -689,7 +693,8 @@ export default function AnnotationPage() {
         ]);
         setSample(nextSample);
         setAnnotationClasses(nextAnnotationClasses);
-        setRecentlySavedSampleId(sample.id);
+        showSaveToast(saveMode === "complete" ? "已完成并保存" : saveMode === "confirm_empty"
+          ? "已确认无目标并保存" : "标注草稿已保存");
       } catch {
         setWorkspaceLoadFailed(true);
         setStatus("标注已保存，状态刷新未完成");
@@ -1251,17 +1256,12 @@ export default function AnnotationPage() {
                 <option value="split">当前划分</option>
               </select>
             </div>
-            {saveStatus && (
-              <span aria-live="polite" className={`rounded-lg px-3 py-2 text-center ${
-                saving ? "bg-blue-50 text-blue-700"
-                  : saveFailed || dirty || draftState.active ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"
-              }`}>
-                {saveStatus}
-              </span>
-            )}
             {sample && (
-              <span title={`标注状态：${annotationProgressCopy[sample.annotation_progress]}`} className="rounded-lg border border-line bg-white px-2 py-2 text-gray-700 sm:px-3">
+              <span title={`标注状态：${annotationProgressCopy[sample.annotation_progress]}${saveHint ? `；${saveHint}` : ""}`}
+                className="relative min-w-28 rounded-lg border border-line bg-white px-2 py-2 text-center text-gray-700 sm:px-3">
                 标注：{annotationStatus}
+                {saveHint && <span role="img" aria-label={saveHint}
+                  className={`absolute right-1 top-1 h-2 w-2 rounded-full ${saving ? "bg-blue-500" : "bg-amber-500"}`} />}
               </span>
             )}
             <label
@@ -1541,6 +1541,14 @@ export default function AnnotationPage() {
                 {saving ? "保存中" : "保存并继续"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {saveToast && (
+        <div aria-live="polite" aria-label="标注保存消息"
+          className="pointer-events-none fixed bottom-12 left-3 z-50 w-72 max-w-[calc(100vw-2rem)] sm:left-20">
+          <div role="status" className={`rounded-xl border border-emerald-200 bg-emerald-50/95 px-4 py-3 text-sm font-medium text-emerald-950 shadow-lg backdrop-blur ${saveToast.exiting ? "triage-toast-exit" : "triage-toast-enter"}`}>
+            {saveToast.message}
           </div>
         </div>
       )}
