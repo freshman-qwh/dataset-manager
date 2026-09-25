@@ -98,18 +98,18 @@ function sampleFolder(relativePath: string): string {
 
 function triageBadge(sample: Sample): { label: string; className: string } {
   if (sample.triage_outdated) {
-    return { label: "分拣待复核", className: "border-amber-200 bg-amber-50 text-amber-800" };
+    return { label: "快速分拣：待复核", className: "border-amber-200 bg-amber-50 text-amber-800" };
   }
   if (sample.triage_status === "ok") {
-    return { label: "OK", className: "border-emerald-200 bg-emerald-50 text-emerald-800" };
+    return { label: "快速分拣：OK", className: "border-emerald-200 bg-emerald-50 text-emerald-800" };
   }
   if (sample.triage_status === "ng") {
-    return { label: "NG", className: "border-red-200 bg-red-50 text-red-800" };
+    return { label: "快速分拣：NG", className: "border-red-200 bg-red-50 text-red-800" };
   }
   if (sample.triage_status === "pending") {
-    return { label: "待定", className: "border-violet-200 bg-violet-50 text-violet-800" };
+    return { label: "快速分拣：待定", className: "border-violet-200 bg-violet-50 text-violet-800" };
   }
-  return { label: "未分拣", className: "border-gray-200 bg-gray-50 text-gray-600" };
+  return { label: "快速分拣：未分拣", className: "border-gray-200 bg-gray-50 text-gray-600" };
 }
 
 export default function AnnotationPage() {
@@ -132,6 +132,7 @@ export default function AnnotationPage() {
   const [status, setStatus] = useState("准备就绪");
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [recentlySavedSampleId, setRecentlySavedSampleId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [navigationLoading, setNavigationLoading] = useState(false);
   const [jumping, setJumping] = useState(false);
@@ -168,6 +169,14 @@ export default function AnnotationPage() {
   const pendingNavigationStatusRef = useRef<{ sampleId: number | null; message: string } | null>(null);
   const workspaceRequestIdRef = useRef(0);
   const guardFocusReturnRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (recentlySavedSampleId === null) {
+      return;
+    }
+    const timeout = window.setTimeout(() => setRecentlySavedSampleId(null), 2500);
+    return () => window.clearTimeout(timeout);
+  }, [recentlySavedSampleId]);
 
   const queueScope = useMemo<AnnotationQueueScope>(() => {
     const value = new URLSearchParams(searchParamsText).get("queue");
@@ -206,9 +215,6 @@ export default function AnnotationPage() {
     sample?.annotation_progress === "completed_empty"
     || sample?.annotation_progress === "completed_with_objects";
   const queueSplit = new URLSearchParams(searchParamsText).get("queueSplit") || sample?.split || "unassigned";
-  const queueLabel = queueScope === "current_split"
-    ? `待标注 · ${queueSplit === "unassigned" ? "未划分" : queueSplit}`
-    : queueScope === "all_pending" ? "待标注" : "浏览图片";
   const queueDescription = useMemo(() => {
     const sortLabel = SAMPLE_SORT_COPY[navigationQuery.sortBy] ?? navigationQuery.sortBy;
     const sortDescription = `${sortLabel}${navigationQuery.sortOrder === "asc" ? "正序" : "倒序"}`;
@@ -249,13 +255,18 @@ export default function AnnotationPage() {
     || navigationQuery.annotationProgress || navigationQuery.fileStatus === "duplicate"
   );
   const hasQueueContinuation = (navigation?.total ?? 0) > (navigation?.current_index === null ? 0 : 1);
-  const hasUnsavedState = dirty || draftState.active;
+  const saveFailed = error?.startsWith("标注保存失败") ?? false;
+  const saveStatus = saving ? "保存中" : saveFailed ? "保存失败" : draftState.active
+    ? "有未提交草稿" : dirty ? "有未保存修改"
+      : recentlySavedSampleId === sample?.id ? "已保存" : null;
   const allowedShapeTypes = useMemo<AnnotationShapeType[]>(
     () => dataset?.task_capabilities.allowed_shape_types ?? [],
     [dataset?.task_capabilities.allowed_shape_types]
   );
   const geometryTask = dataset?.task_capabilities.supported === true && dataset.task_capabilities.annotation_mode === "geometry";
-  const progressLabel = dataset?.task_type === "segmentation" ? "分割进度" : "检测进度";
+  const annotationStatus = sample?.annotation_progress === "in_progress" ? "草稿中"
+    : sample?.annotation_progress === "completed_empty" || sample?.annotation_progress === "completed_with_objects"
+      ? "已完成" : "未开始";
 
   const setClean = useCallback(() => {
     dirtyRef.current = false;
@@ -265,6 +276,7 @@ export default function AnnotationPage() {
   const markDirty = useCallback(() => {
     dirtyRef.current = true;
     setDirty(true);
+    setRecentlySavedSampleId(null);
   }, []);
 
   const loadAnnotations = useCallback((sampleId: number) => {
@@ -677,6 +689,7 @@ export default function AnnotationPage() {
         ]);
         setSample(nextSample);
         setAnnotationClasses(nextAnnotationClasses);
+        setRecentlySavedSampleId(sample.id);
       } catch {
         setWorkspaceLoadFailed(true);
         setStatus("标注已保存，状态刷新未完成");
@@ -1173,9 +1186,6 @@ export default function AnnotationPage() {
                     {dataset.task_capabilities.label}
                   </span>
                 )}
-                <span aria-live="polite" className="shrink-0 rounded-md bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
-                  {navigationLoading ? "加载队列" : queueLabel}
-                </span>
               </div>
               <h1 className="truncate text-lg font-semibold text-ink">{sample?.filename ?? "未选择样本"}</h1>
             </div>
@@ -1190,7 +1200,7 @@ export default function AnnotationPage() {
             )}
             {sample && sampleTriage && (
               <details key={sample.id} className="relative shrink-0 text-xs">
-                <summary title="查看分拣详情" aria-label={`分拣结果：${sampleTriage.label}`}
+                <summary title="查看快速分拣详情" aria-label={sampleTriage.label}
                   className={`cursor-pointer list-none rounded-lg border px-2.5 py-2 font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 ${sampleTriage.className}`}>
                   {sampleTriage.label}
                 </summary>
@@ -1206,11 +1216,11 @@ export default function AnnotationPage() {
             )}
             <div
               title={`队列条件：${queueDescription}`}
-              className="inline-flex min-h-10 w-full min-w-0 items-center gap-2 rounded-lg border border-line bg-white px-2 py-1.5 text-gray-700 sm:w-auto"
+              className="grid min-h-10 w-full min-w-0 grid-cols-[16px_minmax(0,1fr)_88px] items-center gap-2 rounded-lg border border-line bg-white px-2 py-1.5 text-gray-700 sm:w-[300px] sm:shrink-0"
             >
-              <ListFilter size={16} className="shrink-0" />
-              <span className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-none">
-                <span className="inline-flex rounded-md bg-gray-100 p-0.5" role="group" aria-label="标注浏览模式">
+              <ListFilter size={16} />
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span className="inline-flex w-fit rounded-md bg-gray-100 p-0.5" role="group" aria-label="标注浏览模式">
                   <button type="button" aria-pressed={queueMode === "pending"}
                     onClick={() => handleQueueChoice("pending", queueRange)}
                     className={`rounded px-2 py-0.5 text-xs font-medium ${queueMode === "pending" ? "bg-white text-ink shadow-sm" : "text-gray-500 hover:text-ink"}`}>
@@ -1222,37 +1232,36 @@ export default function AnnotationPage() {
                     浏览图片
                   </button>
                 </span>
-                <span aria-label={`队列条件：${queueDescription}`} className="max-w-56 truncate text-[11px] leading-4 text-gray-400">
-                  {queueDescription}
+                <span className="flex min-w-0 items-center gap-1 text-[11px] leading-4">
+                  <span aria-label={`队列条件：${queueDescription}`} className="min-w-0 flex-1 truncate text-gray-400">
+                    {queueDescription}
+                  </span>
+                  {queueMode === "browse" && hasBrowseFilters && (
+                    <button type="button" onClick={() => handleQueueChoice("browse", queueRange, true)}
+                      aria-label="清除浏览筛选"
+                      className="shrink-0 text-blue-700 hover:underline">清除</button>
+                  )}
                 </span>
               </span>
               <select aria-label="图片范围" value={queueRange}
                 onChange={(event) => handleQueueChoice(queueMode, event.target.value as "all" | "split")}
                 disabled={!sample && queueRange !== "split"}
-                className="max-w-24 border-l border-line bg-transparent pl-2 text-xs outline-none disabled:text-gray-400">
+                className="w-[88px] min-w-0 border-l border-line bg-transparent pl-2 text-xs outline-none disabled:text-gray-400">
                 <option value="all">全部</option>
                 <option value="split">当前划分</option>
               </select>
-              <span className="whitespace-nowrap border-l border-line pl-2 text-xs text-gray-500">
-                {queueMode === "pending" ? "待标注" : "共"} {navigation?.total ?? 0}
-              </span>
-              {queueMode === "browse" && hasBrowseFilters && (
-                <button type="button" onClick={() => handleQueueChoice("browse", queueRange, true)}
-                  className="shrink-0 text-xs text-blue-700 hover:underline">清除筛选</button>
-              )}
             </div>
-            <span
-              aria-live="polite"
-              className={`min-w-24 rounded-lg px-3 py-2 text-center ${
-                hasUnsavedState ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"
-              }`}
-            >
-              {saving ? "保存中" : sampleLoading ? "加载中" : draftState.active ? "有未提交草稿" : dirty ? "有未保存修改" : "已保存"}
-            </span>
+            {saveStatus && (
+              <span aria-live="polite" className={`rounded-lg px-3 py-2 text-center ${
+                saving ? "bg-blue-50 text-blue-700"
+                  : saveFailed || dirty || draftState.active ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"
+              }`}>
+                {saveStatus}
+              </span>
+            )}
             {sample && (
-              <span className="rounded-lg border border-line bg-white px-2 py-2 text-gray-700 sm:px-3">
-                <span className="hidden sm:inline">{progressLabel}：</span>
-                {annotationProgressCopy[sample.annotation_progress]}
+              <span title={`标注状态：${annotationProgressCopy[sample.annotation_progress]}`} className="rounded-lg border border-line bg-white px-2 py-2 text-gray-700 sm:px-3">
+                标注：{annotationStatus}
               </span>
             )}
             <label
@@ -1358,6 +1367,12 @@ export default function AnnotationPage() {
                 {jumping ? "跳转中" : "跳转"}
               </button>
             </form>
+          </div>
+        )}
+        {navigation && (navigation.total <= 1 || navigation.current_index === null || positionDraft === null) && (
+          <div className="flex items-center gap-2 border-t border-line px-4 py-2 text-xs text-gray-600">
+            <span className="font-medium">图片位置</span>
+            <span>{navigation.current_index === null ? 0 : navigation.current_index + 1} / {navigation.total}</span>
           </div>
         )}
       </header>
