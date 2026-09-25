@@ -95,7 +95,7 @@ def precheck_annotation_export(
         annotations = annotations_by_sample.get(sample_id, [])
         if annotations:
             annotated_sample_count += 1
-        elif not payload.include_empty:
+        elif not payload.include_empty or sample.annotation_progress != "completed_empty":
             if sample.annotation_progress == "completed_empty":
                 message = "Confirmed negative sample has no objects and is excluded by the current empty-sample option."
                 code = "CONFIRMED_EMPTY_SAMPLE_SKIPPED"

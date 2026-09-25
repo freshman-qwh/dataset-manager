@@ -215,6 +215,39 @@ def test_yolo_segmentation_export_writes_polygon_vertices(tmp_path: Path):
     app.dependency_overrides.clear()
 
 
+def test_yolo_empty_option_only_exports_confirmed_negative_images(tmp_path: Path):
+    with make_client() as client:
+        dataset_id, samples = create_export_dataset(client, tmp_path)
+        confirmed_path = tmp_path / "export-dataset" / "confirmed.png"
+        confirmed_path.write_bytes(png_bytes(64, 64))
+        assert client.post(
+            f"/api/datasets/{dataset_id}/scan",
+            json={"folder_path": str(confirmed_path.parent)},
+        ).status_code == 200
+        refreshed = client.get(f"/api/datasets/{dataset_id}/samples", params={"page_size": 20}).json()["items"]
+        confirmed = next(item for item in refreshed if item["filename"] == "confirmed.png")
+        assert client.put(
+            f"/api/samples/{confirmed['id']}/annotations",
+            json={"annotations": [], "save_mode": "confirm_empty"},
+        ).status_code == 200
+
+        response = export_response(client, dataset_id, "yolo_segmentation", include_empty=True)
+        assert response.status_code == 200
+        with ZipFile(BytesIO(response.content)) as archive:
+            names = set(archive.namelist())
+            assert "labels/unassigned/confirmed.txt" in names
+            assert archive.read("labels/unassigned/confirmed.txt") == b""
+            assert "labels/unassigned/empty.txt" not in names
+
+        precheck = client.post(
+            f"/api/datasets/{dataset_id}/annotation-export-precheck",
+            json={"format": "yolo_segmentation", "include_empty": True},
+        ).json()
+        assert any(issue["code"] == "UNFINISHED_SAMPLE_SKIPPED" for issue in precheck["issues"])
+
+    app.dependency_overrides.clear()
+
+
 def test_voc_export_filters_by_split_and_has_bbox_xml(tmp_path: Path):
     with make_client() as client:
         dataset_id, _ = create_export_dataset(client, tmp_path)

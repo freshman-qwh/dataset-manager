@@ -393,12 +393,14 @@ def _prepare_export_samples(
     result: list[_ExportSample] = []
     skipped_empty_count = 0
     for sample in samples:
+        all_annotations = annotations_by_sample.get(sample.id or 0, [])
         annotations = [
             annotation
-            for annotation in annotations_by_sample.get(sample.id or 0, [])
+            for annotation in all_annotations
             if _shape_is_compatible(export_format, annotation.shape_type)
         ]
-        if not annotations and not include_empty:
+        confirmed_empty = sample.annotation_progress == "completed_empty" and not all_annotations
+        if not annotations and not (include_empty and confirmed_empty):
             skipped_empty_count += 1
             continue
         size = read_image_size(Path(sample.absolute_path))
