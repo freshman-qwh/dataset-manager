@@ -35,6 +35,7 @@ class AnnotationExportPrecheckRequest(BaseModel):
     format: AnnotationExportFormat
     sample_query: AnnotationExportSampleQuery = Field(default_factory=AnnotationExportSampleQuery)
     include_empty: bool = False
+    include_images: bool = False
 
 
 class AnnotationClassMapItem(BaseModel):
@@ -80,6 +81,7 @@ class AnnotationExportJobCreateRequest(BaseModel):
     ] = "labelme"
     sample_query: AnnotationExportSampleQuery = Field(default_factory=AnnotationExportSampleQuery)
     include_empty: bool = False
+    include_images: bool = False
 
 
 class AnnotationExportJobParameters(AnnotationExportJobCreateRequest):

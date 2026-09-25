@@ -106,6 +106,78 @@ def _archive_contents(payload: bytes) -> dict[str, bytes]:
         return {name: archive.read(name) for name in archive.namelist()}
 
 
+def test_yolo_training_package_contains_images_labels_and_split_yaml(tmp_path: Path, monkeypatch) -> None:
+    engine = create_engine(
+        f"sqlite:///{(tmp_path / 'training-package.db').as_posix()}",
+        connect_args={"check_same_thread": False},
+    )
+    SQLModel.metadata.create_all(engine)
+    monkeypatch.setattr(job_artifact_service, "job_artifact_root", lambda: tmp_path / "artifacts")
+    app = _make_app(engine)
+    raw_root = tmp_path / "raw"
+
+    with TestClient(app) as client:
+        dataset_id = _create_export_dataset(client, raw_root, count=3)
+        empty_sample = next(
+            item for item in client.get(f"/api/datasets/{dataset_id}/samples", params={"page_size": 20}).json()["items"]
+            if item["filename"] == "sample-02.png"
+        )
+        assert client.put(
+            f"/api/samples/{empty_sample['id']}/annotations",
+            json={"annotations": [], "save_mode": "confirm_empty"},
+        ).status_code == 200
+        original = {path.name: path.read_bytes() for path in raw_root.iterdir()}
+        payload = {"format": "yolo_segmentation", "include_images": True, "include_empty": True}
+        precheck = client.post(f"/api/datasets/{dataset_id}/annotation-export-precheck", json=payload)
+        assert precheck.status_code == 200
+        assert precheck.json()["blocked"] is False
+        created = client.post(f"/api/datasets/{dataset_id}/annotation-export-jobs", json=payload)
+        assert created.status_code == 201
+        job_id = created.json()["job"]["id"]
+        runner = JobRunner(engine)
+        runner.register_handler(
+            annotation_export_job_service.ANNOTATION_EXPORT_JOB_TYPE,
+            annotation_export_job_service.run_annotation_export_job,
+        )
+        assert runner.run_once() is True
+        artifact = client.get(f"/api/jobs/{job_id}/artifact")
+        assert artifact.status_code == 200
+        assert "yolo-segmentation-training.zip" in artifact.headers["content-disposition"]
+        files = _archive_contents(artifact.content)
+        for filename, split_name in (("sample-00.png", "train"), ("sample-01.png", "val")):
+            assert files[f"images/{split_name}/{filename}"] == original[filename]
+            assert files[f"labels/{split_name}/{filename[:-4]}.txt"].startswith(b"0 ")
+        assert files["images/train/sample-02.png"] == original["sample-02.png"]
+        assert files["labels/train/sample-02.txt"] == b""
+        assert b"train: images/train" in files["data.yaml"]
+        assert b"val: images/val" in files["data.yaml"]
+        assert b"test: images/test" not in files["data.yaml"]
+        assert {path.name: path.read_bytes() for path in raw_root.iterdir()} == original
+
+    engine.dispose()
+
+
+def test_yolo_training_package_requires_assigned_split(tmp_path: Path) -> None:
+    engine = create_engine(
+        f"sqlite:///{(tmp_path / 'training-split.db').as_posix()}",
+        connect_args={"check_same_thread": False},
+    )
+    SQLModel.metadata.create_all(engine)
+    app = _make_app(engine)
+    with TestClient(app) as client:
+        dataset_id = _create_export_dataset(client, tmp_path / "raw")
+        sample = client.get(f"/api/datasets/{dataset_id}/samples", params={"page_size": 20}).json()["items"][0]
+        assert client.patch(f"/api/samples/{sample['id']}", json={"split": None}).status_code == 200
+        checked = client.post(
+            f"/api/datasets/{dataset_id}/annotation-export-precheck",
+            json={"format": "yolo_segmentation", "include_images": True},
+        ).json()
+        assert checked["blocked"] is True
+        assert any(issue["code"] == "TRAINING_SPLIT_REQUIRED" for issue in checked["issues"])
+
+    engine.dispose()
+
+
 def _wait_for_terminal(engine, job_id: int, timeout: float = 5.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -307,6 +379,7 @@ def test_cancelled_annotation_export_removes_partial_artifact(
             *,
             query,
             include_empty,
+            include_images,
             checkpoint,
             progress,
         ):

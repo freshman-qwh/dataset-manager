@@ -46,6 +46,7 @@ def create_annotation_export_job(
         format=payload.format,
         sample_query=payload.sample_query,
         include_empty=payload.include_empty,
+        include_images=payload.include_images,
     )
     precheck = annotation_export_precheck_service.precheck_annotation_export(
         session,
@@ -122,6 +123,7 @@ def run_annotation_export_job(
         artifact_spec = annotation_export_service.annotation_export_artifact_spec(
             job.dataset_id,
             snapshot.format,
+            include_images=snapshot.include_images,
         )
         with job_artifact_service.JobArtifactWorkspace(
             job_artifact_service.job_artifact_root(),
@@ -136,6 +138,7 @@ def run_annotation_export_job(
                 workspace.path,
                 query=snapshot.sample_query,
                 include_empty=snapshot.include_empty,
+                include_images=snapshot.include_images,
                 checkpoint=context.checkpoint,
                 progress=lambda current, total: context.report_progress(
                     current=current,

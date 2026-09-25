@@ -24,6 +24,7 @@ export interface AnnotationExportPrecheckRequest {
   format: AnnotationExportFormat;
   sample_query: AnnotationExportSampleQuery;
   include_empty: boolean;
+  include_images?: boolean;
 }
 
 export interface AnnotationClassMapItem {
@@ -73,4 +74,5 @@ export interface AnnotationExportJobCreateRequest {
     | "voc";
   sample_query: AnnotationExportSampleQuery;
   include_empty: boolean;
+  include_images?: boolean;
 }

@@ -205,6 +205,7 @@ function jobMatchesRequest(
   return job.job_type === "annotation.export"
     && job.parameters.format === format
     && job.parameters.include_empty === includeEmpty
+    && (job.parameters.include_images === true) === (format === "yolo_detection" || format === "yolo_segmentation")
     && stableSerialize(job.parameters.sample_query) === stableSerialize(query);
 }
 
@@ -232,6 +233,9 @@ function precheckIssueMessage(issue: AnnotationExportIssue) {
     EMPTY_CLASS_MAP: "没有可用于生成类别映射的有效标注标签。",
     NO_EXPORTABLE_OBJECTS: "所选格式下没有可导出的标注对象，请调整格式、范围或标注内容。",
     SPLIT_LEAKAGE: "相同文件内容出现在多个训练划分中，可能造成评估数据泄漏。",
+    TRAINING_SPLIT_REQUIRED: "训练包需要先将这张图片分配到 train、val 或 test；来源文件夹名称不会自动成为划分。",
+    DUPLICATE_TRAINING_LABEL_PATH: "两张图片会生成同名 YOLO 标签，请调整图片名称或导出范围。",
+    TRAINING_PACKAGE_UNSUPPORTED: "当前只有 YOLO 格式支持同时打包原图。",
     UNSUPPORTED_FILE_TYPE: "标注训练格式只支持图片样本，请调整当前文件类型筛选。",
     ANNOTATION_LABEL_REQUIRED: "标注对象缺少类别名称，补充类别后才能导出。",
     INVALID_CLASS_NAME: "类别名称包含不支持的控制字符，请修改后重试。",
@@ -381,19 +385,21 @@ export default function TrainingReadinessModal({
       if (isAnnotationExportFormat(lastConfig.format)) {
         setFormat(lastConfig.format);
       }
-      setScope(lastConfig.scope);
-      setSelectedSplit(lastConfig.split ?? "train");
-      setIncludeEmpty(lastConfig.include_empty);
-      setConfiguredQuery(lastConfig.sample_query);
-      setConfiguredSelectedSampleIds(
-        lastConfig.sample_query.sample_ids ?? selectedSampleIds
-      );
-      setRestoredSavedAt(lastConfig.saved_at);
+      const legacyScope = !classificationTask && (lastConfig.scope === "all" || lastConfig.scope === "split")
+        && !lastConfig.sample_query.completed_only;
+      if (!legacyScope) {
+        setScope(lastConfig.scope);
+        setSelectedSplit(lastConfig.split ?? "train");
+        setIncludeEmpty(lastConfig.include_empty);
+        setConfiguredQuery(lastConfig.sample_query);
+        setConfiguredSelectedSampleIds(lastConfig.sample_query.sample_ids ?? selectedSampleIds);
+        setRestoredSavedAt(lastConfig.saved_at);
+      }
     } else if (isAnnotationExportFormat(report.recommended_export_format)) {
       setFormat(report.recommended_export_format);
     }
     restoredConfigRef.current = true;
-  }, [open, report, selectedSampleIds]);
+  }, [classificationTask, open, report, selectedSampleIds]);
 
   useEffect(() => {
     precheckRequestRef.current += 1;
@@ -516,7 +522,8 @@ export default function TrainingReadinessModal({
       const result = await precheckAnnotationExport(datasetId, {
         format,
         sample_query: sampleQuery,
-        include_empty: includeEmpty
+        include_empty: includeEmpty,
+        include_images: format === "yolo_detection" || format === "yolo_segmentation"
       });
       if (precheckRequestRef.current !== requestId) {
         return;
@@ -572,7 +579,8 @@ export default function TrainingReadinessModal({
       const response = await createAnnotationExportJob(datasetId, {
         format,
         sample_query: sampleQuery,
-        include_empty: includeEmpty
+        include_empty: includeEmpty,
+        include_images: format === "yolo_detection" || format === "yolo_segmentation"
       });
       setExportJob(response.job);
       setDownloadCompleted(false);
@@ -889,8 +897,17 @@ export default function TrainingReadinessModal({
         </section>
 
         <section aria-labelledby="training-export-scope">
+          {(format === "yolo_detection" || format === "yolo_segmentation") && (
+            <p className="mb-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-800">
+              YOLO 训练包包含原图副本、标签和 data.yaml。图片需先分配到 train、val 或 test；原始文件不会改动。
+            </p>
+          )}
           <h3 id="training-export-scope" className="text-sm font-semibold text-ink">确认样本范围</h3>
-          <p className="mt-1 text-xs text-gray-500">常用范围只包含已完成标注的图片；未划分图片可用于标签归档，训练前仍需划分。</p>
+          <p className="mt-1 text-xs text-gray-500">
+            常用范围只包含已完成标注的图片；{format === "yolo_detection" || format === "yolo_segmentation"
+              ? "未划分图片需先分配到 train、val 或 test。"
+              : "未划分图片也可导出标签。"}
+          </p>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {([
               ["all", "全部已标注", "包含各划分及未划分的已完成图片"],
@@ -928,7 +945,7 @@ export default function TrainingReadinessModal({
             </label>
           )}
           <details className="mt-3 rounded-xl border border-line bg-white px-3 py-3 text-sm text-gray-700" open={scope === "filtered" || scope === "selected" ? true : undefined}>
-            <summary className="cursor-pointer font-medium">更多范围与选项</summary>
+            <summary className="cursor-pointer font-medium">更多范围与选项{!includeEmpty ? " · 不含确认无目标" : ""}</summary>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               {([
                 ["filtered", "当前筛选结果", "使用样本页面的筛选条件"],

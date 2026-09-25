@@ -194,16 +194,18 @@ def export_annotations_to_path(
     *,
     query: AnnotationExportSampleQuery,
     include_empty: bool,
+    include_images: bool = False,
     checkpoint: Callable[[], None] | None = None,
     progress: Callable[[int, int], None] | None = None,
 ) -> AnnotationExportFileArtifact:
-    spec = annotation_export_artifact_spec(dataset_id, export_format)
+    spec = annotation_export_artifact_spec(dataset_id, export_format, include_images=include_images)
     prepared = _prepare_export(
         session,
         dataset_id,
         export_format,
         query=query,
         include_empty=include_empty,
+        include_images=include_images,
         checkpoint=checkpoint,
     )
     if export_format == "labelme":
@@ -233,6 +235,7 @@ def export_annotations_to_path(
             prepared.precheck.class_map,
             prepared.report,
             destination,
+            include_images=include_images,
             checkpoint=checkpoint,
             progress=progress,
         )
@@ -258,6 +261,8 @@ def export_annotations_to_path(
 def annotation_export_artifact_spec(
     dataset_id: int,
     export_format: AnnotationExportFormat,
+    *,
+    include_images: bool = False,
 ) -> AnnotationExportArtifactSpec:
     if export_format == "labelme":
         return AnnotationExportArtifactSpec(
@@ -276,12 +281,12 @@ def annotation_export_artifact_spec(
         )
     if export_format == "yolo_detection":
         return AnnotationExportArtifactSpec(
-            filename=f"dataset-{dataset_id}-yolo-detection.zip",
+            filename=f"dataset-{dataset_id}-yolo-detection{'-training' if include_images else ''}.zip",
             media_type="application/zip",
         )
     if export_format == "yolo_segmentation":
         return AnnotationExportArtifactSpec(
-            filename=f"dataset-{dataset_id}-yolo-segmentation.zip",
+            filename=f"dataset-{dataset_id}-yolo-segmentation{'-training' if include_images else ''}.zip",
             media_type="application/zip",
         )
     if export_format == "voc":
@@ -299,6 +304,7 @@ def _prepare_export(
     *,
     query: AnnotationExportSampleQuery,
     include_empty: bool,
+    include_images: bool = False,
     checkpoint: Callable[[], None] | None = None,
 ) -> _PreparedExport:
     precheck = annotation_export_precheck_service.precheck_annotation_export(
@@ -308,6 +314,7 @@ def _prepare_export(
             format=export_format,
             sample_query=query,
             include_empty=include_empty,
+            include_images=include_images,
         ),
     )
     if precheck.blocked:
@@ -602,6 +609,7 @@ def _write_yolo_zip(
     report: dict[str, object],
     destination: Path | BinaryIO,
     *,
+    include_images: bool = False,
     checkpoint: Callable[[], None] | None = None,
     progress: Callable[[int, int], None] | None = None,
 ) -> None:
@@ -627,25 +635,34 @@ def _write_yolo_zip(
             split_name = _safe_split(item.sample.split)
             label_path = PurePosixPath("labels") / split_name / _safe_relative_path(item.sample.relative_path).with_suffix(".txt")
             archive.writestr(str(label_path), ("\n".join(lines) + ("\n" if lines else "")).encode("utf-8"))
+            if include_images:
+                image_path = PurePosixPath("images") / split_name / _safe_relative_path(item.sample.relative_path)
+                archive.write(item.sample.absolute_path, arcname=str(image_path))
             if progress is not None and (index == total or index % 25 == 0):
                 progress(index, total)
         if checkpoint is not None:
             checkpoint()
-        archive.writestr("data.yaml", _yolo_data_yaml(export_format, class_map).encode("utf-8"))
+        included_splits = {item.sample.split for item in export_samples} if include_images else None
+        archive.writestr("data.yaml", _yolo_data_yaml(export_format, class_map, included_splits).encode("utf-8"))
         archive.writestr("classes.txt", ("\n".join(item.name for item in class_map) + "\n").encode("utf-8"))
         archive.writestr("export_report.json", _json_bytes(report))
 
 
-def _yolo_data_yaml(export_format: AnnotationExportFormat, class_map: list[AnnotationClassMapItem]) -> str:
+def _yolo_data_yaml(
+    export_format: AnnotationExportFormat,
+    class_map: list[AnnotationClassMapItem],
+    included_splits: set[str | None] | None = None,
+) -> str:
     task = "detect" if export_format == "yolo_detection" else "segment"
     lines = [
         "path: .",
-        "train: images/train",
-        "val: images/val",
-        "test: images/test",
-        f"task: {task}",
-        "names:",
     ]
+    lines.extend(
+        f"{split_name}: images/{split_name}"
+        for split_name in ("train", "val", "test")
+        if included_splits is None or split_name in included_splits
+    )
+    lines.extend([f"task: {task}", "names:"])
     lines.extend(f"  {item.yolo_id}: {_yaml_scalar(item.name)}" for item in class_map)
     return "\n".join(lines) + "\n"
 

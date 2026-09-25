@@ -1,6 +1,6 @@
 from collections import defaultdict
 from collections.abc import Iterable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from sqlmodel import Session
 
@@ -86,6 +86,10 @@ def precheck_annotation_export(
     annotated_sample_count = 0
     exportable_object_count = 0
     skipped_object_count = 0
+    training_label_paths: set[str] = set()
+
+    if payload.include_images and payload.format not in {"yolo_detection", "yolo_segmentation"}:
+        issues.add("error", "TRAINING_PACKAGE_UNSUPPORTED", "Image-inclusive training packages currently support YOLO formats only.")
 
     if not samples:
         issues.add("error", "NO_IMAGE_SAMPLES", "No image samples match the export query.")
@@ -124,6 +128,7 @@ def precheck_annotation_export(
             continue
         image_width, image_height = image_size
 
+        exportable_for_sample = 0
         for annotation in annotations:
             outcome = _check_annotation(
                 payload.format,
@@ -137,8 +142,29 @@ def precheck_annotation_export(
             if outcome == "exportable":
                 labels.add(annotation.label.strip())
                 exportable_object_count += 1
+                exportable_for_sample += 1
             else:
                 skipped_object_count += 1
+
+        confirmed_empty = sample.annotation_progress == "completed_empty" and not annotations
+        if payload.include_images and (exportable_for_sample or confirmed_empty):
+            split_name = (sample.split or "").strip()
+            if split_name not in {"train", "val", "test"}:
+                issues.add(
+                    "error", "TRAINING_SPLIT_REQUIRED",
+                    "Training package images must be assigned to train, val, or test.",
+                    sample_id=sample_id, sample_path=sample.relative_path,
+                )
+                continue
+            label_path = str(PurePosixPath(sample.relative_path.replace("\\", "/")).with_suffix(".txt")).casefold()
+            label_key = f"{split_name}/{label_path}"
+            if label_key in training_label_paths:
+                issues.add(
+                    "error", "DUPLICATE_TRAINING_LABEL_PATH",
+                    "Two images would produce the same YOLO label path.",
+                    sample_id=sample_id, sample_path=sample.relative_path,
+                )
+            training_label_paths.add(label_key)
 
     class_map = _build_class_map(labels)
     if not class_map and annotations_by_sample:
