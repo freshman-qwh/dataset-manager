@@ -25,6 +25,7 @@ class AnnotationExportSampleQuery(BaseModel):
     split: str | None = None
     review_status: str | None = None
     annotation_progress: str | None = None
+    completed_only: bool = False
     sample_ids: list[int] | None = None
     sort_by: str = "relative_path"
     sort_order: Literal["asc", "desc"] = "asc"

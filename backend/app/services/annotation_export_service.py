@@ -325,10 +325,13 @@ def _prepare_export(
         tag=query.tag,
         split=query.split,
         review_status=query.review_status,
+        annotation_progress=query.annotation_progress,
         sample_ids=query.sample_ids,
         sort_by=query.sort_by,
         sort_order=query.sort_order,
     )
+    if query.completed_only:
+        samples = [sample for sample in samples if sample.annotation_progress in {"completed_with_objects", "completed_empty"}]
     annotations_by_sample = annotation_service.annotations_by_sample(
         session,
         [sample.id for sample in samples if sample.id is not None],

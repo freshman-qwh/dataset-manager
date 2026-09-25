@@ -248,6 +248,35 @@ def test_yolo_empty_option_only_exports_confirmed_negative_images(tmp_path: Path
     app.dependency_overrides.clear()
 
 
+def test_completed_only_query_matches_precheck_and_export(tmp_path: Path):
+    with make_client() as client:
+        dataset_id, samples = create_export_dataset(client, tmp_path)
+        annotations = client.get(f"/api/samples/{samples['a.png']['id']}/annotations").json()
+        response = client.put(
+            f"/api/samples/{samples['a.png']['id']}/annotations",
+            json={"annotations": [
+                {"label": item["label"], "shape_type": item["shape_type"], "points": item["points"]}
+                for item in annotations
+            ], "save_mode": "complete"},
+        )
+        assert response.status_code == 200
+        query = {"completed_only": True, "sort_by": "relative_path", "sort_order": "asc"}
+        precheck = client.post(
+            f"/api/datasets/{dataset_id}/annotation-export-precheck",
+            json={"format": "yolo_detection", "sample_query": query},
+        ).json()
+        assert precheck["sample_count"] == 1
+        assert precheck["blocked"] is False
+
+        response = client.post(
+            f"/api/datasets/{dataset_id}/annotation-export-jobs",
+            json={"format": "yolo_detection", "sample_query": query},
+        )
+        assert response.status_code in {200, 201}
+
+    app.dependency_overrides.clear()
+
+
 def test_voc_export_filters_by_split_and_has_bbox_xml(tmp_path: Path):
     with make_client() as client:
         dataset_id, _ = create_export_dataset(client, tmp_path)

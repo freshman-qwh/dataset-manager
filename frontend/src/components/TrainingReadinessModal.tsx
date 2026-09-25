@@ -304,9 +304,9 @@ export default function TrainingReadinessModal({
 }: TrainingReadinessModalProps) {
   const [step, setStep] = useState<ReadinessStep>(1);
   const [format, setFormat] = useState<AnnotationExportFormat>("labelme");
-  const [scope, setScope] = useState<TrainingReadinessScope>("filtered");
+  const [scope, setScope] = useState<TrainingReadinessScope>("all");
   const [selectedSplit, setSelectedSplit] = useState("train");
-  const [includeEmpty, setIncludeEmpty] = useState(false);
+  const [includeEmpty, setIncludeEmpty] = useState(true);
   const [configuredQuery, setConfiguredQuery] = useState<AnnotationExportSampleQuery>(currentQuery);
   const [configuredSelectedSampleIds, setConfiguredSelectedSampleIds] = useState<number[]>(selectedSampleIds);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -336,10 +336,10 @@ export default function TrainingReadinessModal({
   );
   const sampleQuery = useMemo<AnnotationExportSampleQuery>(() => {
     if (scope === "all") {
-      return { sort_by: "relative_path", sort_order: "asc" };
+      return { completed_only: true, sort_by: "relative_path", sort_order: "asc" };
     }
     if (scope === "split") {
-      return { split: selectedSplit, sort_by: "relative_path", sort_order: "asc" };
+      return { split: selectedSplit, completed_only: true, sort_by: "relative_path", sort_order: "asc" };
     }
     if (scope === "selected") {
       return { sample_ids: configuredSelectedSampleIds, sort_by: "relative_path", sort_order: "asc" };
@@ -355,9 +355,9 @@ export default function TrainingReadinessModal({
       return;
     }
     setStep(1);
-    setScope("filtered");
+    setScope("all");
     setSelectedSplit("train");
-    setIncludeEmpty(false);
+    setIncludeEmpty(true);
     setConfiguredQuery(currentQuery);
     setConfiguredSelectedSampleIds(selectedSampleIds);
     setShowAdvanced(false);
@@ -890,12 +890,11 @@ export default function TrainingReadinessModal({
 
         <section aria-labelledby="training-export-scope">
           <h3 id="training-export-scope" className="text-sm font-semibold text-ink">确认样本范围</h3>
+          <p className="mt-1 text-xs text-gray-500">常用范围只包含已完成标注的图片；未划分图片可用于标签归档，训练前仍需划分。</p>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {([
-              ["filtered", "当前筛选结果", "使用页面中正在查看的筛选条件"],
-              ["all", "全部图片", "忽略页面筛选，导出所有图片"],
-              ["split", "指定 split", "只导出 train、val、test 或未划分样本"],
-              ["selected", `已选样本（${configuredSelectedSampleIds.length}）`, "只导出样本列表中已选择的图片"]
+              ["all", "全部已标注", "包含各划分及未划分的已完成图片"],
+              ["split", "指定划分", "只导出 train、val 或 test 中已标注图片"]
             ] as Array<[TrainingReadinessScope, string, string]>).map(([value, label, description]) => (
               <button
                 key={value}
@@ -925,22 +924,32 @@ export default function TrainingReadinessModal({
                 <option value="train">train</option>
                 <option value="val">val</option>
                 <option value="test">test</option>
-                <option value="unassigned">未划分</option>
               </select>
             </label>
           )}
-          <label className="mt-3 flex items-start gap-3 rounded-xl border border-line bg-white px-3 py-3 text-sm text-gray-700">
-            <input
-              type="checkbox"
-              checked={includeEmpty}
-              onChange={(event) => setIncludeEmpty(event.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-gray-300"
-            />
-            <span>
-              包含确认空样本
-              <span className="mt-1 block text-xs leading-5 text-gray-500">启用后会为没有目标的图片生成空记录或空标签文件。</span>
-            </span>
-          </label>
+          <details className="mt-3 rounded-xl border border-line bg-white px-3 py-3 text-sm text-gray-700" open={scope === "filtered" || scope === "selected" ? true : undefined}>
+            <summary className="cursor-pointer font-medium">更多范围与选项</summary>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {([
+                ["filtered", "当前筛选结果", "使用样本页面的筛选条件"],
+                ["selected", `已选样本（${configuredSelectedSampleIds.length}）`, "只使用样本列表中已选择的图片"]
+              ] as Array<[TrainingReadinessScope, string, string]>).map(([value, label, description]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => selectScope(value)}
+                  className={`rounded-lg border p-3 text-left ${scope === value ? "border-gray-900 bg-gray-50" : "border-line hover:border-gray-300"}`}
+                >
+                  <span className="flex items-center justify-between gap-2 font-medium">{label}{scope === value && <Check size={15} />}</span>
+                  <span className="mt-1 block text-xs text-gray-500">{description}</span>
+                </button>
+              ))}
+            </div>
+            <label className="mt-3 flex items-start gap-2 text-xs text-gray-600">
+              <input type="checkbox" checked={includeEmpty} onChange={(event) => setIncludeEmpty(event.target.checked)} className="mt-0.5 h-4 w-4 rounded border-gray-300" />
+              包含已确认无目标图片（YOLO 为其生成空 .txt；未标注图片始终跳过）
+            </label>
+          </details>
           {scope === "selected" && configuredSelectedSampleIds.length === 0 && (
             <div role="alert" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
               当前没有已选样本，请返回样本列表选择，或改用其他范围。

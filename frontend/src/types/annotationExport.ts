@@ -14,6 +14,7 @@ export interface AnnotationExportSampleQuery {
   split?: string;
   review_status?: string;
   annotation_progress?: string;
+  completed_only?: boolean;
   sample_ids?: number[];
   sort_by?: string;
   sort_order?: "asc" | "desc";

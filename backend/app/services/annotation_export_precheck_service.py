@@ -193,7 +193,7 @@ def _filtered_image_samples(
     if query.file_type and query.file_type != "image":
         issues.add("error", "UNSUPPORTED_FILE_TYPE", "Annotation export only supports image samples.")
         return []
-    return sample_service.get_filtered_samples(
+    samples = sample_service.get_filtered_samples(
         session,
         dataset_id,
         search=query.search,
@@ -207,6 +207,9 @@ def _filtered_image_samples(
         sort_by=query.sort_by,
         sort_order=query.sort_order,
     )
+    if query.completed_only:
+        return [sample for sample in samples if sample.annotation_progress in {"completed_with_objects", "completed_empty"}]
+    return samples
 
 
 def _check_annotation(

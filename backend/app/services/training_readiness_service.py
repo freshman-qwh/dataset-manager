@@ -88,16 +88,22 @@ def _normalized_sample_query(
     sort_by = payload.sample_query.sort_by
     sort_order = payload.sample_query.sort_order
     if payload.scope == "all":
-        return AnnotationExportSampleQuery(sort_by=sort_by, sort_order=sort_order)
+        return AnnotationExportSampleQuery(
+            completed_only=payload.sample_query.completed_only,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
     if payload.scope == "split":
         return AnnotationExportSampleQuery(
             split=payload.split,
+            completed_only=payload.sample_query.completed_only,
             sort_by=sort_by,
             sort_order=sort_order,
         )
     if payload.scope == "selected":
         return AnnotationExportSampleQuery(
             sample_ids=payload.sample_query.sample_ids,
+            completed_only=payload.sample_query.completed_only,
             sort_by=sort_by,
             sort_order=sort_order,
         )
