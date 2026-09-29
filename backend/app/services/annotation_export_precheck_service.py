@@ -216,6 +216,11 @@ def _filtered_image_samples(
     issues: _IssueCollector,
 ):
     query = payload.sample_query
+    if query.expected_dataset_revision is not None:
+        dataset = dataset_service.get_dataset_or_404(session, dataset_id)
+        if dataset.revision != query.expected_dataset_revision:
+            issues.add("error", "TRAINING_PLAN_STALE", "Training data changed after split confirmation; preview the split again.")
+            return []
     if query.file_type and query.file_type != "image":
         issues.add("error", "UNSUPPORTED_FILE_TYPE", "Annotation export only supports image samples.")
         return []

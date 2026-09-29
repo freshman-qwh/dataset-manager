@@ -7,6 +7,7 @@ export type AnnotationExportFormat =
   | "voc";
 
 export interface AnnotationExportSampleQuery {
+  expected_dataset_revision?: number;
   search?: string;
   file_type?: string;
   file_status?: string;

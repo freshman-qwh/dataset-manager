@@ -98,6 +98,9 @@ def export_annotations(
     review_status: str | None = None,
     sample_ids: list[int] | None = None,
     include_empty: bool = False,
+    include_images: bool = False,
+    completed_only: bool = False,
+    expected_dataset_revision: int | None = None,
     sort_by: str = "relative_path",
     sort_order: str = "asc",
 ) -> AnnotationExportArtifact:
@@ -109,6 +112,8 @@ def export_annotations(
         split=split,
         review_status=review_status,
         sample_ids=sample_ids,
+        completed_only=completed_only,
+        expected_dataset_revision=expected_dataset_revision,
         sort_by=sort_by,
         sort_order="asc" if sort_order.lower() == "asc" else "desc",
     )
@@ -118,6 +123,7 @@ def export_annotations(
         export_format,
         query=query,
         include_empty=include_empty,
+        include_images=include_images,
     )
     precheck = prepared.precheck
     export_samples = prepared.export_samples
@@ -147,12 +153,12 @@ def export_annotations(
             precheck=precheck,
         )
     if export_format in {"yolo_detection", "yolo_segmentation"}:
-        content = _export_yolo_zip(export_format, export_samples, precheck.class_map, report)
+        content = _export_yolo_zip(export_format, export_samples, precheck.class_map, report, include_images=include_images)
         suffix = "detection" if export_format == "yolo_detection" else "segmentation"
         return AnnotationExportArtifact(
             content=content,
             media_type="application/zip",
-            filename=f"dataset-{dataset_id}-yolo-{suffix}.zip",
+            filename=f"dataset-{dataset_id}-yolo-{suffix}{'-training' if include_images else ''}.zip",
             precheck=precheck,
         )
     content = _export_voc_zip(prepared.dataset_name, export_samples, report)
@@ -596,9 +602,11 @@ def _export_yolo_zip(
     export_samples: list[_ExportSample],
     class_map: list[AnnotationClassMapItem],
     report: dict[str, object],
+    *,
+    include_images: bool = False,
 ) -> bytes:
     buffer = BytesIO()
-    _write_yolo_zip(export_format, export_samples, class_map, report, buffer)
+    _write_yolo_zip(export_format, export_samples, class_map, report, buffer, include_images=include_images)
     return buffer.getvalue()
 
 

@@ -47,6 +47,7 @@ import type {
 } from "../types/dataset";
 import type { Job } from "../types/job";
 import Modal from "./Modal";
+import TrainingSplitPlanner from "./TrainingSplitPlanner";
 
 type ReadinessStep = 1 | 2 | 3 | 4;
 
@@ -234,6 +235,7 @@ function precheckIssueMessage(issue: AnnotationExportIssue) {
     NO_EXPORTABLE_OBJECTS: "所选格式下没有可导出的标注对象，请调整格式、范围或标注内容。",
     SPLIT_LEAKAGE: "相同文件内容出现在多个训练划分中，可能造成评估数据泄漏。",
     TRAINING_SPLIT_REQUIRED: "训练包需要先将这张图片分配到 train、val 或 test；来源文件夹名称不会自动成为划分。",
+    TRAINING_PLAN_STALE: "确认划分后数据发生变化，请返回重新预览划分。",
     DUPLICATE_TRAINING_LABEL_PATH: "两张图片会生成同名 YOLO 标签，请调整图片名称或导出范围。",
     TRAINING_PACKAGE_UNSUPPORTED: "当前只有 YOLO 格式支持同时打包原图。",
     UNSUPPORTED_FILE_TYPE: "标注训练格式只支持图片样本，请调整当前文件类型筛选。",
@@ -303,7 +305,6 @@ export default function TrainingReadinessModal({
   onShowSplit,
   onOpenQuality,
   onOpenIssue,
-  onOpenSplitPlan,
   onExportClassification
 }: TrainingReadinessModalProps) {
   const [step, setStep] = useState<ReadinessStep>(1);
@@ -323,6 +324,8 @@ export default function TrainingReadinessModal({
   const [exportError, setExportError] = useState<string | null>(null);
   const [restoredSavedAt, setRestoredSavedAt] = useState<string | null>(null);
   const [configStatus, setConfigStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [plannedSampleIds, setPlannedSampleIds] = useState<number[] | null>(null);
+  const [plannedRevision, setPlannedRevision] = useState<number | null>(null);
   const restoredConfigRef = useRef(false);
   const precheckRequestRef = useRef(0);
   const exportJobId = exportJob?.id ?? null;
@@ -340,7 +343,7 @@ export default function TrainingReadinessModal({
   );
   const sampleQuery = useMemo<AnnotationExportSampleQuery>(() => {
     if (scope === "all") {
-      return { completed_only: true, sort_by: "relative_path", sort_order: "asc" };
+      return { completed_only: true, ...(plannedSampleIds !== null ? { sample_ids: plannedSampleIds, expected_dataset_revision: plannedRevision ?? undefined } : {}), sort_by: "relative_path", sort_order: "asc" };
     }
     if (scope === "split") {
       return { split: selectedSplit, completed_only: true, sort_by: "relative_path", sort_order: "asc" };
@@ -349,7 +352,7 @@ export default function TrainingReadinessModal({
       return { sample_ids: configuredSelectedSampleIds, sort_by: "relative_path", sort_order: "asc" };
     }
     return configuredQuery;
-  }, [configuredQuery, configuredSelectedSampleIds, scope, selectedSplit]);
+  }, [configuredQuery, configuredSelectedSampleIds, plannedRevision, plannedSampleIds, scope, selectedSplit]);
 
   useEffect(() => {
     if (!open) {
@@ -372,6 +375,8 @@ export default function TrainingReadinessModal({
     setExportError(null);
     setRestoredSavedAt(null);
     setConfigStatus("idle");
+    setPlannedSampleIds(null);
+    setPlannedRevision(null);
     restoredConfigRef.current = false;
     precheckRequestRef.current += 1;
   }, [open]);
@@ -495,6 +500,8 @@ export default function TrainingReadinessModal({
 
   function selectScope(nextScope: TrainingReadinessScope) {
     setScope(nextScope);
+    setPlannedSampleIds(null);
+    setPlannedRevision(null);
     if (nextScope === "filtered") {
       setConfiguredQuery(currentQuery);
     }
@@ -529,7 +536,11 @@ export default function TrainingReadinessModal({
         return;
       }
       setPrecheck(result);
-      await persistConfig(result.class_map);
+      // Saving readiness preferences advances the dataset revision. Keep the confirmed
+      // split revision stable until this export has finished.
+      if (plannedRevision === null) {
+        await persistConfig(result.class_map);
+      }
     } catch {
       if (precheckRequestRef.current !== requestId) {
         return;
@@ -598,7 +609,7 @@ export default function TrainingReadinessModal({
           return;
         }
         try {
-          const result = await downloadAnnotationExport(datasetId, format, sampleQuery, includeEmpty);
+          const result = await downloadAnnotationExport(datasetId, format, sampleQuery, includeEmpty, format === "yolo_detection" || format === "yolo_segmentation");
           triggerDownload(result.blob, result.filename);
           setDownloadCompleted(true);
           setCompatibilityNotice("任务中心尚未启用，本次已使用兼容导出。");
@@ -691,7 +702,7 @@ export default function TrainingReadinessModal({
                   已划分 {report.split_covered_sample_count} / {report.scoped_sample_count}（{report.split_coverage_percent}%）
                 </p>
               </div>
-              <button type="button" onClick={onOpenSplitPlan} className="text-xs font-semibold text-gray-700 hover:text-black">配置划分</button>
+          <button type="button" onClick={() => setStep(3)} className="text-xs font-semibold text-gray-700 hover:text-black">配置划分</button>
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
               {splitOrder.map((split) => (
@@ -963,7 +974,7 @@ export default function TrainingReadinessModal({
               ))}
             </div>
             <label className="mt-3 flex items-start gap-2 text-xs text-gray-600">
-              <input type="checkbox" checked={includeEmpty} onChange={(event) => setIncludeEmpty(event.target.checked)} className="mt-0.5 h-4 w-4 rounded border-gray-300" />
+              <input type="checkbox" checked={includeEmpty} onChange={(event) => { setIncludeEmpty(event.target.checked); setPlannedSampleIds(null); setPlannedRevision(null); }} className="mt-0.5 h-4 w-4 rounded border-gray-300" />
               包含已确认无目标图片（YOLO 为其生成空 .txt；未标注图片始终跳过）
             </label>
           </details>
@@ -973,6 +984,19 @@ export default function TrainingReadinessModal({
             </div>
           )}
         </section>
+        {scope === "all" && (
+          <TrainingSplitPlanner
+            datasetId={datasetId}
+            includeEmpty={includeEmpty}
+            onConfirmed={(sampleIds, revision) => { setPlannedSampleIds(sampleIds); setPlannedRevision(revision); onRefresh(); }}
+            onInvalidate={() => { setPlannedSampleIds(null); setPlannedRevision(null); }}
+          />
+        )}
+        {plannedSampleIds !== null && scope === "all" && (
+          <p role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+            已确认训练划分，本次导出仅使用方案中的 {plannedSampleIds.length} 张图片。
+          </p>
+        )}
       </div>
     );
   }

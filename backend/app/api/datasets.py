@@ -37,6 +37,7 @@ from app.schemas.sample import (
 )
 from app.schemas.scan import ScanJobCreateResponse, ScanRequest, ScanResult
 from app.schemas.split import SplitPlanRequest, SplitPlanResult
+from app.schemas.training_split import TrainingSplitCommitRequest, TrainingSplitCommitResult, TrainingSplitPreview, TrainingSplitRequest
 from app.schemas.stats import DatasetStats
 from app.schemas.tag import TagCreate, TagRead
 from app.schemas.thumbnail import ThumbnailJobCreateResponse, ThumbnailJobRequest
@@ -65,6 +66,7 @@ from app.services import (
     tag_service,
     thumbnail_job_service,
     training_readiness_service,
+    training_split_service,
     triage_service,
 )
 
@@ -372,6 +374,16 @@ def apply_dataset_split_plan(
     session: Session = Depends(get_session),
 ) -> SplitPlanResult:
     return split_service.apply_split_plan(session, dataset_id, payload)
+
+
+@router.post("/datasets/{dataset_id}/training-split/preview", response_model=TrainingSplitPreview)
+def preview_training_split(dataset_id: int, payload: TrainingSplitRequest, session: Session = Depends(get_session)) -> TrainingSplitPreview:
+    return training_split_service.preview_training_split(session, dataset_id, payload)
+
+
+@router.post("/datasets/{dataset_id}/training-split/commit", response_model=TrainingSplitCommitResult)
+def commit_training_split(dataset_id: int, payload: TrainingSplitCommitRequest, session: Session = Depends(get_session)) -> TrainingSplitCommitResult:
+    return training_split_service.commit_training_split(session, dataset_id, payload)
 
 
 @router.post("/datasets/{dataset_id}/samples/delete", response_model=SampleDeleteResult)

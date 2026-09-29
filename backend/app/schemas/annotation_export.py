@@ -18,6 +18,7 @@ AnnotationExportIssueSeverity = Literal["error", "warning", "info"]
 
 
 class AnnotationExportSampleQuery(BaseModel):
+    expected_dataset_revision: int | None = None
     search: str | None = None
     file_type: str | None = None
     file_status: str | None = None

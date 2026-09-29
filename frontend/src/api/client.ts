@@ -8,6 +8,7 @@ import type {
   AnnotationExportPrecheckResponse,
   AnnotationExportSampleQuery
 } from "../types/annotationExport";
+import type { TrainingSplitCommitResult, TrainingSplitPreview, TrainingSplitRequest } from "../types/trainingSplit";
 import type {
   AnnotationClass,
   AnnotationClassCreate,
@@ -780,6 +781,16 @@ export async function applySplitPlan(datasetId: number, payload: SplitPlanReques
   return data;
 }
 
+export async function previewTrainingSplit(datasetId: number, payload: TrainingSplitRequest): Promise<TrainingSplitPreview> {
+  const { data } = await client.post<TrainingSplitPreview>(`/datasets/${datasetId}/training-split/preview`, payload);
+  return data;
+}
+
+export async function commitTrainingSplit(datasetId: number, payload: TrainingSplitRequest & { fingerprint: string }): Promise<TrainingSplitCommitResult> {
+  const { data } = await client.post<TrainingSplitCommitResult>(`/datasets/${datasetId}/training-split/commit`, payload);
+  return data;
+}
+
 export async function deleteSamples(datasetId: number, sampleIds: number[]): Promise<SampleDeleteResult> {
   const { data } = await client.post<SampleDeleteResult>(`/datasets/${datasetId}/samples/delete`, {
     sample_ids: sampleIds
@@ -985,11 +996,14 @@ export async function downloadAnnotationExport(
   datasetId: number,
   format: AnnotationExportFormat,
   query: AnnotationExportSampleQuery,
-  includeEmpty: boolean
+  includeEmpty: boolean,
+  includeImages = false
 ): Promise<AnnotationExportDownload> {
   const params = new URLSearchParams({
     format,
     include_empty: String(includeEmpty),
+    include_images: String(includeImages),
+    completed_only: String(query.completed_only ?? false),
     sort_by: query.sort_by ?? "relative_path",
     sort_order: query.sort_order ?? "asc"
   });
@@ -999,6 +1013,7 @@ export async function downloadAnnotationExport(
   if (query.tag) params.set("tag", query.tag);
   if (query.split) params.set("split", query.split);
   if (query.review_status) params.set("review_status", query.review_status);
+  if (query.expected_dataset_revision !== undefined) params.set("expected_dataset_revision", String(query.expected_dataset_revision));
   query.sample_ids?.forEach((sampleId) => params.append("sample_ids", String(sampleId)));
 
   const response = await client.get<Blob>(
