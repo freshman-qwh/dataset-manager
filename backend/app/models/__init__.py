@@ -8,6 +8,7 @@ from app.models.job import Job
 from app.models.sample import Sample, SampleTagLink
 from app.models.tag import Tag
 from app.models.training_readiness_state import TrainingReadinessState
+from app.models.training_split_receipt import TrainingSplitReceipt
 
 __all__ = [
     "Annotation",
@@ -22,4 +23,5 @@ __all__ = [
     "SampleTagLink",
     "Tag",
     "TrainingReadinessState",
+    "TrainingSplitReceipt",
 ]

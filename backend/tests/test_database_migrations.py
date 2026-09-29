@@ -26,6 +26,7 @@ EXPECTED_TABLES = {
     "samples",
     "tags",
     "training_readiness_states",
+    "training_split_receipts",
 }
 
 

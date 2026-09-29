@@ -55,6 +55,14 @@ def test_training_split_preview_commit_and_stale_rejection(tmp_path: Path) -> No
 
             with Session(engine) as session:
                 sample = session.exec(select(Sample).where(Sample.relative_path == "a.png")).one()
+                sample.triaged_file_hash = sample.file_hash
+                sample.triage_policy_version = 1
+                session.add(sample)
+                session.commit()
+            assert client.post(f"{base}/preview", json={**request, "triage_filter": "ok"}).json()["candidate_count"] == 1
+
+            with Session(engine) as session:
+                sample = session.exec(select(Sample).where(Sample.relative_path == "a.png")).one()
                 sample.review_status = "in_review"
                 session.add(sample)
                 session.commit()
@@ -69,6 +77,7 @@ def test_training_split_preview_commit_and_stale_rejection(tmp_path: Path) -> No
             assert committed.json()["updated"] == 2
             assert len(committed.json()["sample_ids"]) == 3
             assert committed.json()["dataset_revision"] > 1
+            assert client.post(f"{base}/commit", json={**request, "fingerprint": refreshed["fingerprint"]}).json() == committed.json()
             stale_export = client.post(
                 f"/api/datasets/{dataset_id}/annotation-export-precheck",
                 json={"format": "yolo_detection", "include_images": True,
@@ -160,6 +169,7 @@ def test_training_split_manual_exclusion_and_conflict(tmp_path: Path) -> None:
             assert fixed["blocked"] is False
             assert client.post(f"{base}/commit", json={**request, "overrides": {str(first_id): "val"}, "fingerprint": fixed["fingerprint"]}).status_code == 409
             assert client.post(f"{base}/commit", json={**request, "overrides": {str(first_id): "train"}, "fingerprint": fixed["fingerprint"]}).status_code == 200
+            assert client.post(f"{base}/commit", json={**request, "overrides": {str(first_id): "train"}, "fingerprint": fixed["fingerprint"]}).status_code == 200
             excluded = client.post(f"{base}/preview", json={**request, "overrides": {str(first_id): None}}).json()
             assert excluded["blocked"] is False
             result = client.post(f"{base}/commit", json={**request, "overrides": {str(first_id): None}, "fingerprint": excluded["fingerprint"]})
@@ -169,5 +179,6 @@ def test_training_split_manual_exclusion_and_conflict(tmp_path: Path) -> None:
                 samples = {item.relative_path: item for item in session.exec(select(Sample)).all()}
                 assert samples["a.png"].split == samples["b.png"].split == "train"
                 assert samples["c.png"].split == "val"
+            assert client.delete(f"/api/datasets/{dataset_id}").status_code == 204
     finally:
         app.dependency_overrides.clear()

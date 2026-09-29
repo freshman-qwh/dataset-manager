@@ -1,7 +1,7 @@
 from datetime import timezone
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, func
+from sqlalchemy import delete, func, inspect
 from sqlmodel import Session, select
 
 from app.models.dataset import Dataset, utc_now
@@ -10,6 +10,7 @@ from app.models.annotation_class import AnnotationClass
 from app.models.sample import Sample
 from app.models.tag import Tag
 from app.models.training_readiness_state import TrainingReadinessState
+from app.models.training_split_receipt import TrainingSplitReceipt
 from app.schemas.dataset import DatasetCreate, DatasetRead, DatasetUpdate
 from app.core.workflow import task_capabilities
 from app.services.dataset_revision_service import bump_dataset_revision
@@ -72,6 +73,7 @@ def update_dataset(session: Session, dataset_id: int, payload: DatasetUpdate) ->
 def delete_dataset(session: Session, dataset_id: int) -> None:
     from app.services import annotation_service, dataset_saved_view_service, dataset_snapshot_service
 
+    has_split_receipts = inspect(session.connection()).has_table("training_split_receipts")
     dataset = get_dataset_or_404(session, dataset_id)
     # Read/delete saved-view rows before mutating the sample graph. The service
     # performs a schema inspection and SELECT, both of which may autoflush.
@@ -113,6 +115,11 @@ def delete_dataset(session: Session, dataset_id: int) -> None:
     ).all()
     for training_state in training_states:
         session.delete(training_state)
+
+    if has_split_receipts:
+        split_receipt = session.get(TrainingSplitReceipt, dataset_id)
+        if split_receipt is not None:
+            session.delete(split_receipt)
 
     snapshot_artifacts = dataset_snapshot_service.delete_dataset_snapshot_records(
         session,

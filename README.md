@@ -338,6 +338,8 @@ python -m app.cli.database upgrade --database ../database/app.db --backup-dir ..
 
 如果命令报告数据库占用或存在 WAL/SHM/journal 侧车文件，先停止相关进程，不要手工删除仍在使用的侧车文件。迁移失败时原库保持不变，可从命令返回的备份路径恢复。完整边界和验收步骤见 `docs/database-migrations.md` 与 `ACCEPTANCE_TESTS.md`。
 
+训练划分建议的确认回执需要 `20260929_0008` 迁移；旧数据库可先预览，确认写入前请按上述流程升级。便携版启动器会在启动前执行有备份的迁移。
+
 数据集列表右上角的“数据库维护”提供只读完整性检查。孤立元数据默认不选择；必须先到达当前 migration head，再选择项目、生成最新预览、输入动态确认文本，系统才会在创建可恢复备份后清理 SQLite 元数据。该流程不会删除原始文件。
 
 ## 测试

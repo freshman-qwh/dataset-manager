@@ -6,10 +6,12 @@ import json
 from random import Random
 
 from fastapi import HTTPException
+from sqlalchemy import inspect, text
 from sqlmodel import Session, select
 
 from app.models.dataset import utc_now
 from app.models.sample import Sample
+from app.models.training_split_receipt import TrainingSplitReceipt
 from app.schemas.training_split import (
     TrainingSplitCommitRequest,
     TrainingSplitCommitResult,
@@ -153,6 +155,13 @@ def preview_training_split(session: Session, dataset_id: int, payload: TrainingS
 
 
 def commit_training_split(session: Session, dataset_id: int, payload: TrainingSplitCommitRequest) -> TrainingSplitCommitResult:
+    if not inspect(session.get_bind()).has_table("training_split_receipts"):
+        raise HTTPException(409, "Training split storage requires the latest database migration.")
+    # Serialize confirmations so a retried request observes the first receipt.
+    session.exec(text("BEGIN IMMEDIATE"))
+    receipt = session.get(TrainingSplitReceipt, dataset_id)
+    if receipt is not None and receipt.fingerprint == payload.fingerprint:
+        return TrainingSplitCommitResult.model_validate_json(receipt.result_json)
     preview, assignments = _build(session, dataset_id, payload)
     if preview.fingerprint != payload.fingerprint:
         raise HTTPException(409, "Training data changed; preview the split again.")
@@ -167,10 +176,18 @@ def commit_training_split(session: Session, dataset_id: int, payload: TrainingSp
             changed += 1
     if changed:
         bump_dataset_revision(session, dataset_id)
-    session.commit()
-    return TrainingSplitCommitResult(
+    session.flush()
+    result = TrainingSplitCommitResult(
         updated=changed,
         sample_ids=sorted(sample_id for sample_id, split in assignments.items() if split is not None),
         split_counts=preview.split_counts,
         dataset_revision=get_dataset_or_404(session, dataset_id).revision,
     )
+    if receipt is None:
+        receipt = TrainingSplitReceipt(dataset_id=dataset_id, fingerprint=payload.fingerprint, result_json=result.model_dump_json())
+    else:
+        receipt.fingerprint = payload.fingerprint
+        receipt.result_json = result.model_dump_json()
+    session.add(receipt)
+    session.commit()
+    return result
