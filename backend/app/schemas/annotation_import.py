@@ -18,6 +18,7 @@ class LabelmeImportRequest(BaseModel):
     strategy: LabelmeImportStrategy = "replace"
     dry_run: bool = False
     sync_sample_tags: bool = False
+    completion: Literal["draft", "complete"] = "draft"
     expected_source_sha256: str | None = Field(
         default=None,
         pattern="^[0-9a-fA-F]{64}$",
@@ -69,6 +70,9 @@ class LabelmeImportResult(BaseModel):
     warnings: list[LabelmeImportIssue] = Field(default_factory=list)
     errors: list[LabelmeImportIssue] = Field(default_factory=list)
     matched_sample: AnnotationImportMatchedSample | None = None
+    completion: Literal["draft", "complete"] = "draft"
+    planned_confirmed_samples: int = 0
+    planned_pending_samples: int = 0
 
 
 class LabelmeImportJobCreateRequest(BaseModel):
@@ -77,6 +81,7 @@ class LabelmeImportJobCreateRequest(BaseModel):
     sample_id: int | None = None
     strategy: LabelmeImportStrategy = "replace"
     sync_sample_tags: bool = False
+    completion: Literal["draft", "complete"] = "draft"
     expected_source_sha256: str = Field(pattern="^[0-9a-fA-F]{64}$")
     expected_plan_fingerprint: str = Field(pattern="^[0-9a-fA-F]{64}$")
 
@@ -121,6 +126,20 @@ class LabelmeImportRollbackJobCreateResponse(BaseModel):
 AnnotationImportResult = LabelmeImportResult
 AnnotationImportJobCreateResponse = LabelmeImportJobCreateResponse
 AnnotationImportRollbackJobCreateResponse = LabelmeImportRollbackJobCreateResponse
+
+
+class AnnotationImportReview(BaseModel):
+    job_id: int
+    total: int
+    completed: int
+    confirmable: int
+    needs_individual_review: int
+    first_sample_id: int | None
+    fingerprint: str
+
+
+class AnnotationImportConfirmRequest(BaseModel):
+    expected_fingerprint: str = Field(pattern="^[0-9a-f]{64}$")
 
 
 def _validate_format_source(import_format: AnnotationImportFormat, mode: LabelmeImportMode, sample_id: int | None) -> None:

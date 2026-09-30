@@ -1,6 +1,7 @@
 import axios from "axios";
 import { Check, CircleHelp } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { createAnnotationImportJob, getJob, importAnnotations } from "../api/client";
 import type {
@@ -26,6 +27,8 @@ interface LabelmeImportModalProps {
 }
 
 export default function AnnotationImportModal({ datasetId, datasetRoot, datasetCreatedAt, open, onClose, onImported }: LabelmeImportModalProps) {
+  const navigate = useNavigate();
+  const [completion, setCompletion] = useState<"draft" | "complete">("complete");
   const [format, setFormat] = useState<AnnotationImportFormat>("labelme");
   const [path, setPath] = useState("");
   const [mode, setMode] = useState<AnnotationImportMode>("file");
@@ -73,6 +76,7 @@ export default function AnnotationImportModal({ datasetId, datasetRoot, datasetC
     setSamplePickerOpen(false);
     setHelpOpen(false);
     setStrategy("replace");
+    setCompletion("complete");
     setSyncSampleTags(false);
     setPreview(null);
     setJob(null);
@@ -121,6 +125,7 @@ export default function AnnotationImportModal({ datasetId, datasetRoot, datasetC
       mode,
       sample_id: format === "labelme" && mode === "file" ? selectedSample?.id : undefined,
       strategy,
+      completion,
       sync_sample_tags: syncSampleTags
     };
   }
@@ -260,6 +265,16 @@ export default function AnnotationImportModal({ datasetId, datasetRoot, datasetC
             </select>
             <span className="mt-1 block text-xs text-gray-500">{strategy === "replace" ? "将替换本次匹配图片的已有标注；其他图片不受影响。" : "保留原有对象，追加本次导入的对象。"}</span>
           </label>
+        <label className="block">
+          <span className="text-sm font-medium text-gray-700">导入后的标注状态</span>
+          <select aria-label="导入后的标注状态" value={completion} disabled={locked}
+            onChange={(event) => { setCompletion(event.target.value as "draft" | "complete"); invalidatePreview(); }}
+            className="mt-2 w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm outline-none focus:border-gray-900">
+            <option value="complete">确认标注</option>
+            <option value="draft">待确认</option>
+          </select>
+          <span className="mt-1 block text-xs leading-5 text-gray-500">{completion === "complete" ? "包含无目标图片；有跳过或解析问题的图片保留待确认。" : "先保存标注，复查或抽查后可确认本批剩余图片。"}</span>
+        </label>
         <label className="flex items-start gap-3 rounded-lg border border-line p-3">
           <input
             type="checkbox"
@@ -281,6 +296,9 @@ export default function AnnotationImportModal({ datasetId, datasetRoot, datasetC
 
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <button type="button" disabled={busy} onClick={onClose} className="min-h-11 rounded-lg border border-line px-4 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40">关闭</button>
+          {job?.status === "succeeded" && job.result?.review_available ? <button type="button"
+            onClick={() => { onClose(); navigate(`/datasets/${datasetId}/annotate?queue=current_filter&importJobId=${job.id}&sortBy=filename&sortOrder=asc`); }}
+            className="min-h-11 rounded-lg bg-gray-900 px-4 text-sm font-semibold text-white hover:bg-gray-800">复查标注结果</button> : null}
           {!job && !compatibilityNotice ? (
             <button
               type="submit"
@@ -311,6 +329,7 @@ function PreviewSummary({ result }: { result: AnnotationImportResult }) {
         <span>跳过 {result.skipped_shapes} 个 shape</span>
       </div>
       {result.matched_sample ? <p className="mt-2 break-all text-sm text-gray-700">对应图片：{result.matched_sample.relative_path}</p> : null}
+      <p className="mt-2 text-sm text-gray-700">导入后：确认 {result.planned_confirmed_samples} 张 · 待确认 {result.planned_pending_samples} 张</p>
       <details className="mt-2 text-xs text-gray-500"><summary className="cursor-pointer">技术详情</summary><p className="mt-1 break-all">源指纹：{result.source_sha256}</p></details>
       {issues.length > 0 ? (
         <div className="mt-3 max-h-40 space-y-2 overflow-y-auto">

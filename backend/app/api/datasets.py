@@ -322,6 +322,7 @@ def dataset_sample_navigation(
     dataset_id: int,
     sample_id: int | None = Query(default=None),
     target_index: int | None = Query(default=None, ge=1),
+    import_job_id: int | None = Query(default=None, gt=0),
     search: str | None = Query(default=None),
     file_status: str | None = Query(default=None),
     tag: str | None = Query(default=None),
@@ -340,11 +341,19 @@ def dataset_sample_navigation(
     session: Session = Depends(get_session),
 ) -> SampleNavigationResponse:
     dataset_service.get_dataset_or_404(session, dataset_id)
+    sample_ids = None
+    if import_job_id is not None:
+        from app.services import annotation_import_review_service
+        sample_ids = annotation_import_review_service.review_sample_ids(session, dataset_id, import_job_id)
+        queue_scope = "current_filter"
+        search = tag = split = review_status = annotation_progress = None
+        file_status = "normal"
     return sample_service.get_sample_navigation(
         session,
         dataset_id,
         sample_id=sample_id,
         target_index=target_index,
+        sample_ids=sample_ids,
         search=search,
         file_status=file_status,
         tag=tag,

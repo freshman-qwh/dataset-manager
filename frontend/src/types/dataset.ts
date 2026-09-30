@@ -490,6 +490,7 @@ export interface AnnotationImportJobCreateRequest extends LabelmeImportJobCreate
 }
 
 export interface LabelmeImportRequest {
+  completion?: "draft" | "complete";
   path: string;
   mode: LabelmeImportMode;
   sample_id?: number;
@@ -501,6 +502,7 @@ export interface LabelmeImportRequest {
 }
 
 export interface LabelmeImportJobCreateRequest {
+  completion?: "draft" | "complete";
   path: string;
   mode: LabelmeImportMode;
   sample_id?: number;
@@ -520,6 +522,8 @@ export interface LabelmeImportIssue {
 }
 
 export interface LabelmeImportResult {
+  planned_confirmed_samples: number;
+  planned_pending_samples: number;
   matched_sample?: { id: number; relative_path: string } | null;
   format?: AnnotationImportFormat;
   dataset_id: number;
@@ -541,6 +545,16 @@ export interface LabelmeImportResult {
 
 export type AnnotationImportIssue = LabelmeImportIssue;
 export type AnnotationImportResult = LabelmeImportResult & { format: AnnotationImportFormat };
+
+export interface AnnotationImportReview {
+  job_id: number;
+  total: number;
+  completed: number;
+  confirmable: number;
+  needs_individual_review: number;
+  first_sample_id: number | null;
+  fingerprint: string;
+}
 
 export interface ExportTemplateResponse {
   dataset_id: number;

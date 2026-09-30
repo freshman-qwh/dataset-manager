@@ -37,6 +37,7 @@ import type {
   AnnotationImportRequest,
   AnnotationImportJobCreateRequest,
   AnnotationImportResult,
+  AnnotationImportReview,
   Sample,
   SampleDeleteResult,
   SampleListResponse,
@@ -490,6 +491,18 @@ export async function importAnnotations(
   return data;
 }
 
+export async function getAnnotationImportReview(datasetId: number, jobId?: number, signal?: AbortSignal): Promise<AnnotationImportReview | null> {
+  const { data } = await client.get<AnnotationImportReview | null>(jobId
+    ? `/datasets/${datasetId}/annotation-import-jobs/${jobId}/review`
+    : `/datasets/${datasetId}/annotation-import-review`, { signal });
+  return data;
+}
+
+export async function confirmAnnotationImport(datasetId: number, jobId: number, fingerprint: string): Promise<AnnotationImportReview> {
+  const { data } = await client.post<AnnotationImportReview>(`/datasets/${datasetId}/annotation-import-jobs/${jobId}/confirm`, { expected_fingerprint: fingerprint });
+  return data;
+}
+
 export async function createAnnotationImportJob(
   datasetId: number,
   payload: AnnotationImportJobCreateRequest
@@ -585,14 +598,16 @@ export async function getSampleNavigation(
   params: Omit<SampleQuery, "fileType" | "page" | "pageSize"> & {
     sampleId?: number | null;
     targetIndex?: number;
+    importJobId?: number;
     queueScope?: AnnotationQueueScope;
   }
 ): Promise<SampleNavigationResponse> {
-  const { datasetId, sampleId, targetIndex, search, fileStatus, tag, split, reviewStatus, annotationProgress, queueScope, sortBy, sortOrder } = params;
+  const { datasetId, sampleId, targetIndex, importJobId, search, fileStatus, tag, split, reviewStatus, annotationProgress, queueScope, sortBy, sortOrder } = params;
   const { data } = await client.get<SampleNavigationResponse>(`/datasets/${datasetId}/samples/navigation`, {
     params: {
       sample_id: sampleId || undefined,
       target_index: targetIndex || undefined,
+      import_job_id: importJobId,
       search: search || undefined,
       file_status: fileStatus || undefined,
       tag: tag || undefined,

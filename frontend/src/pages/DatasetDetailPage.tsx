@@ -38,6 +38,7 @@ import {
   deleteSamples,
   getDuplicateReport,
   getDataset,
+  getAnnotationImportReview,
   getDatasetQualityReport,
   getDatasetStats,
   getExportTemplate,
@@ -82,6 +83,7 @@ import TrainingReadinessModal from "../components/TrainingReadinessModal";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import type {
   AnnotationProgress,
+  AnnotationImportReview,
   Dataset,
   DatasetQualityReport,
   DatasetStats,
@@ -224,6 +226,7 @@ export default function DatasetDetailPage() {
   const [pageSearchParams, setPageSearchParams] = useSearchParams();
   const [initialCache] = useState(() => readDatasetDetailCache(datasetId));
   const [dataset, setDataset] = useState<Dataset | null>(initialCache?.dataset ?? null);
+  const [importReview, setImportReview] = useState<AnnotationImportReview | null>(null);
   const [stats, setStats] = useState<DatasetStats | null>(initialCache?.stats ?? null);
   const [samples, setSamples] = useState<Sample[]>(initialCache?.samples ?? []);
   const [thumbnailPrefetchSampleIds, setThumbnailPrefetchSampleIds] = useState<number[]>([]);
@@ -312,11 +315,12 @@ export default function DatasetDetailPage() {
 
   const loadOverview = useCallback(async (signal?: AbortSignal) => {
     const requestId = ++overviewRequestIdRef.current;
-    const [nextDataset, nextStats, nextDuplicateReport, nextTags] = await Promise.all([
+    const [nextDataset, nextStats, nextDuplicateReport, nextTags, nextImportReview] = await Promise.all([
       getDataset(datasetId, signal),
       getDatasetStats(datasetId, signal),
       getDuplicateReport(datasetId, { signal }),
-      listTags(datasetId, signal)
+      listTags(datasetId, signal),
+      getAnnotationImportReview(datasetId, undefined, signal)
     ]);
     if (signal?.aborted || requestId !== overviewRequestIdRef.current) {
       return;
@@ -325,6 +329,7 @@ export default function DatasetDetailPage() {
     setStats(nextStats);
     setDuplicateReport(nextDuplicateReport);
     setAvailableTags(nextTags);
+    setImportReview(nextImportReview);
   }, [datasetId]);
 
   const loadSamples = useCallback(async (signal?: AbortSignal) => {
@@ -877,6 +882,10 @@ export default function DatasetDetailPage() {
       focusSampleWorkspace({ tag: workflowPending > 0 ? "__untagged__" : undefined });
       return;
     }
+    if (importReview) {
+      navigate(`/datasets/${datasetId}/annotate?queue=current_filter&importJobId=${importReview.job_id}&sortBy=filename&sortOrder=asc`);
+      return;
+    }
 
     const query = workflowPending > 0
       ? storedAnnotationQueue?.query ?? buildDefaultPendingQueue()
@@ -896,7 +905,7 @@ export default function DatasetDetailPage() {
             ? "处理不可用文件"
             : classificationTask
               ? workflowPending > 0 ? "整理未分类样本" : "查看分类结果"
-              : workflowPending > 0
+              : importReview ? "复查标注结果" : workflowPending > 0
                 ? storedAnnotationQueue ? "继续标注" : "开始标注"
                 : "复查标注结果";
 
@@ -1367,6 +1376,7 @@ export default function DatasetDetailPage() {
                   {scanning ? <RefreshCw size={18} className="animate-spin" /> : <Play size={18} />}
                   {scanning ? (scanJobId !== null ? "扫描任务运行中" : "兼容扫描中") : primaryActionLabel}
                 </button>
+                {geometryTask && importReview ? <p className="mt-2 text-xs leading-5 text-gray-600">本次导入 {importReview.total} 张，可直接复查或抽查。</p> : null}
                 {scanNotice ? (
                   <p aria-live="polite" className="mt-2 text-xs leading-5 text-gray-600">{scanNotice}</p>
                 ) : null}

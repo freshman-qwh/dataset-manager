@@ -47,6 +47,7 @@ class LabelmeImportPlan:
     errors: list[LabelmeImportIssue]
     operations: list[LabelmeImportOperation]
     format: str = "labelme"
+    unconfirmable_sample_ids: frozenset[int] = frozenset()
 
 
 def prepare_annotation_import(
@@ -99,7 +100,7 @@ def _apply_import_plan(session: Session, dataset_id: int, plan: LabelmeImportPla
         annotation_service.replace_sample_annotations(
             session,
             operation.sample_id,
-            AnnotationReplaceRequest(annotations=next_annotations, save_mode="draft"),
+            import_save_payload(plan, operation, next_annotations, payload.completion),
             commit=False,
             bump_revision=False,
         )
@@ -172,6 +173,11 @@ def prepare_labelme_import(
         seen_sample_ids.add(sample_id)
         matched_files += 1
 
+        if not isinstance(parsed.get("shapes"), list):
+            errors.append(_issue("error", "INVALID_SHAPES", "Labelme JSON must contain a shapes array.",
+                                 file_path=str(source_file), sample_id=sample_id, sample_path=sample.relative_path))
+            continue
+
         annotations, skipped, raw_shape_count = _annotations_from_labelme_shapes(parsed, source_file, sample, warnings, errors)
         skipped_shapes += skipped
         if raw_shape_count > 0 and not annotations and skipped > 0:
@@ -215,6 +221,7 @@ def prepare_labelme_import(
     plan_fingerprint = sha256(
         json.dumps(plan_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+    plan_fingerprint = completion_fingerprint(plan_fingerprint, payload.completion)
     if payload.expected_plan_fingerprint is not None and plan_fingerprint != payload.expected_plan_fingerprint.lower():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -232,6 +239,7 @@ def prepare_labelme_import(
         warnings=warnings[:100],
         errors=errors[:100],
         operations=operations,
+        unconfirmable_sample_ids=unconfirmable_samples(operations, warnings, errors),
     )
 
 
@@ -253,6 +261,7 @@ def labelme_import_result(plan: LabelmeImportPlan, payload: LabelmeImportRequest
         warnings=plan.warnings,
         errors=plan.errors,
         matched_sample=_single_matched_sample(plan, payload),
+        **completion_summary(plan, payload),
     )
 
 
@@ -275,7 +284,39 @@ def annotation_import_result(plan: LabelmeImportPlan, payload: AnnotationImportR
         warnings=plan.warnings,
         errors=plan.errors,
         matched_sample=_single_matched_sample(plan, payload),
+        **completion_summary(plan, payload),
     )
+
+
+def completion_fingerprint(fingerprint: str, completion: str) -> str:
+    # Preserve the fingerprint of legacy draft imports and bind the new choice.
+    return sha256(f"{fingerprint}:complete".encode()).hexdigest() if completion == "complete" else fingerprint
+
+
+def unconfirmable_samples(operations: list[LabelmeImportOperation], warnings: list[LabelmeImportIssue],
+                          errors: list[LabelmeImportIssue]) -> frozenset[int]:
+    # Use all diagnostics before response truncation; partial parses are drafts.
+    issues = [*warnings, *errors]
+    sample_ids = {issue.sample_id for issue in issues if issue.sample_id is not None}
+    source_files = {issue.file_path for issue in issues if issue.sample_id is None}
+    return frozenset(operation.sample_id for operation in operations
+                     if operation.sample_id in sample_ids or None in source_files or str(operation.source_file) in source_files)
+
+
+def import_save_payload(plan: LabelmeImportPlan, operation: LabelmeImportOperation,
+                        annotations: list[AnnotationCreate], completion: str) -> AnnotationReplaceRequest:
+    confirmed = completion == "complete" and operation.sample_id not in plan.unconfirmable_sample_ids
+    return AnnotationReplaceRequest(
+        annotations=annotations,
+        save_mode=("complete" if annotations else "confirm_empty") if confirmed else "draft",
+        review_status="in_review" if confirmed else "not_reviewed",
+    )
+
+
+def completion_summary(plan: LabelmeImportPlan, payload: LabelmeImportRequest) -> dict[str, object]:
+    confirmed = len(plan.operations) - len(plan.unconfirmable_sample_ids) if payload.completion == "complete" else 0
+    return {"completion": payload.completion, "planned_confirmed_samples": confirmed,
+            "planned_pending_samples": len(plan.operations) - confirmed}
 
 
 def _single_matched_sample(plan: LabelmeImportPlan, payload: LabelmeImportRequest) -> AnnotationImportMatchedSample | None:
@@ -513,8 +554,6 @@ def _warn_on_image_size_mismatch(
 ) -> None:
     expected_width = parsed.get("imageWidth")
     expected_height = parsed.get("imageHeight")
-    if expected_width is None or expected_height is None:
-        return
     actual_size = read_image_size(Path(sample.absolute_path))
     if actual_size is None:
         warnings.append(
@@ -527,6 +566,8 @@ def _warn_on_image_size_mismatch(
                 sample_path=sample.relative_path,
             )
         )
+        return
+    if expected_width is None or expected_height is None:
         return
     actual_width, actual_height = actual_size
     try:

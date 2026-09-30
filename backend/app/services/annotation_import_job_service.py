@@ -29,6 +29,7 @@ from app.schemas.annotation_import import (
 )
 from app.schemas.job import JobCreate, JobRead
 from app.services import annotation_import_service, annotation_service, dataset_service, job_service
+from app.services import annotation_import_review_service
 from app.services.dataset_revision_service import DatasetRevisionTracker
 from app.services.job_runner import JobCancelled, JobContext, JobFailed, JobInterrupted
 from app.services.sample_service import _get_or_create_tag
@@ -83,6 +84,7 @@ def _create_annotation_import_job(
         strategy=payload.strategy,
         dry_run=True,
         sync_sample_tags=payload.sync_sample_tags,
+        completion=payload.completion,
         expected_source_sha256=payload.expected_source_sha256,
     )
     plan = annotation_import_service.prepare_annotation_import(session, dataset_id, preview_payload)
@@ -98,6 +100,7 @@ def _create_annotation_import_job(
         "sample_id": payload.sample_id,
         "strategy": payload.strategy,
         "sync_sample_tags": payload.sync_sample_tags,
+        "completion": payload.completion,
         "expected_source_sha256": plan.source_sha256,
         "expected_plan_fingerprint": plan.plan_fingerprint,
         "source_size_bytes": plan.source_size_bytes,
@@ -169,6 +172,7 @@ def run_annotation_import_job(context: JobContext, parameters: dict[str, object]
                 strategy=snapshot.strategy,
                 dry_run=True,
                 sync_sample_tags=snapshot.sync_sample_tags,
+                completion=snapshot.completion,
                 expected_source_sha256=snapshot.expected_source_sha256,
             ),
         )
@@ -190,6 +194,8 @@ def run_annotation_import_job(context: JobContext, parameters: dict[str, object]
     imported_samples = 0
     batches_committed = 0
     revision_tracker = DatasetRevisionTracker(dataset_id)
+    review_entries: list[dict] = []
+    review_available = False
 
     def result() -> dict[str, object]:
         return {
@@ -203,6 +209,8 @@ def run_annotation_import_job(context: JobContext, parameters: dict[str, object]
             "batches_committed": batches_committed,
             "preview_error_count": snapshot.preview_error_count,
             "rollback_available": journal.entry_count > 0,
+            "review_available": review_available,
+            "completion": snapshot.completion,
         }
 
     try:
@@ -233,7 +241,7 @@ def run_annotation_import_job(context: JobContext, parameters: dict[str, object]
                     annotation_service.replace_sample_annotations(
                         session,
                         operation.sample_id,
-                        AnnotationReplaceRequest(annotations=next_annotations, save_mode="draft"),
+                        annotation_import_service.import_save_payload(plan, operation, next_annotations, snapshot.completion),
                         commit=False,
                         bump_revision=False,
                     )
@@ -245,7 +253,9 @@ def run_annotation_import_job(context: JobContext, parameters: dict[str, object]
                             bump_revision=False,
                         )
                 revision_tracker.bump_once(session)
+                batch_review = annotation_import_review_service.capture_entries(session, sample_ids, plan.unconfirmable_sample_ids)
                 session.commit()
+                review_entries.extend(batch_review)
             imported_samples += len(batch)
             batches_committed += 1
             context.report_progress(
@@ -261,6 +271,8 @@ def run_annotation_import_job(context: JobContext, parameters: dict[str, object]
             error_count=snapshot.preview_error_count,
         )
         context.checkpoint()
+        annotation_import_review_service.persist_receipt(context.job_id, review_entries)
+        review_available = True
     except JobCancelled as exc:
         raise JobCancelled(str(exc), result=result()) from exc
     except JobInterrupted as exc:

@@ -300,6 +300,7 @@ def get_sample_navigation(
     dataset_id: int,
     sample_id: int | None = None,
     target_index: int | None = None,
+    sample_ids: list[int] | None = None,
     search: str | None = None,
     file_status: str | None = None,
     tag: str | None = None,
@@ -342,6 +343,7 @@ def get_sample_navigation(
         duplicate_only=queue_file_status == "duplicate",
     )
     filter_options = {
+        "sample_ids": sample_ids if sample_ids is None or sample_ids else [-1],
         "search": search if safe_queue_scope == "current_filter" else None,
         "file_type": "image",
         "file_status": queue_file_status,

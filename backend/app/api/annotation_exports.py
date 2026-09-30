@@ -8,6 +8,8 @@ from app.schemas.annotation_import import (
     AnnotationImportJobCreateResponse,
     AnnotationImportRequest,
     AnnotationImportResult,
+    AnnotationImportReview,
+    AnnotationImportConfirmRequest,
     LabelmeImportJobCreateRequest,
     LabelmeImportJobCreateResponse,
     LabelmeImportRequest,
@@ -26,10 +28,27 @@ from app.services import (
     annotation_export_service,
     annotation_import_service,
     annotation_import_job_service,
+    annotation_import_review_service,
     job_service,
 )
 
 router = APIRouter(prefix="/api", tags=["annotation-exports"])
+
+
+@router.get("/datasets/{dataset_id}/annotation-import-review", response_model=AnnotationImportReview | None)
+def latest_import_review(dataset_id: int, session: Session = Depends(get_session)) -> AnnotationImportReview | None:
+    return annotation_import_review_service.latest_review(session, dataset_id)
+
+
+@router.get("/datasets/{dataset_id}/annotation-import-jobs/{job_id}/review", response_model=AnnotationImportReview)
+def import_review(dataset_id: int, job_id: int, session: Session = Depends(get_session)) -> AnnotationImportReview:
+    return annotation_import_review_service.get_review(session, dataset_id, job_id)
+
+
+@router.post("/datasets/{dataset_id}/annotation-import-jobs/{job_id}/confirm", response_model=AnnotationImportReview)
+def confirm_import(dataset_id: int, job_id: int, payload: AnnotationImportConfirmRequest,
+                   session: Session = Depends(get_session)) -> AnnotationImportReview:
+    return annotation_import_review_service.confirm_remaining(session, dataset_id, job_id, payload)
 
 
 @router.post(

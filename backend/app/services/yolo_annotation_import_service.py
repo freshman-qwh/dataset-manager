@@ -85,6 +85,7 @@ def prepare_yolo_import(
     if not label_files:
         errors.append(_issue("error", "NO_LABEL_FILES", "No YOLO .txt label files were found under labels/ or the selected directory.", source))
     plan_fingerprint = _plan_fingerprint(payload.format, source, operations)
+    plan_fingerprint = annotation_import_service.completion_fingerprint(plan_fingerprint, payload.completion)
     _check_expected_fingerprints(payload, source_digest, plan_fingerprint)
     return annotation_import_service.LabelmeImportPlan(
         dataset_id=dataset_id,
@@ -99,6 +100,7 @@ def prepare_yolo_import(
         errors=errors[:100],
         operations=operations,
         format=payload.format,
+        unconfirmable_sample_ids=annotation_import_service.unconfirmable_samples(operations, warnings, errors),
     )
 
 

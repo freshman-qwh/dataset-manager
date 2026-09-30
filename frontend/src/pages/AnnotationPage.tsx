@@ -17,6 +17,8 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   createAnnotationClass,
   getDataset,
+  getAnnotationImportReview,
+  confirmAnnotationImport,
   getSample,
   getSampleFileUrl,
   getSampleNavigation,
@@ -32,9 +34,11 @@ import AnnotationCanvas, {
 } from "../components/annotation/AnnotationCanvas";
 import AnnotationObjectList from "../components/annotation/AnnotationObjectList";
 import AnnotationToolbar, { type AnnotationTool } from "../components/annotation/AnnotationToolbar";
+import Modal from "../components/Modal";
 import { useAnnotationHistory } from "../components/annotation/useAnnotationHistory";
 import type {
   AnnotationClass,
+  AnnotationImportReview,
   AnnotationObject,
   AnnotationQueueScope,
   AnnotationReplaceItem,
@@ -128,6 +132,9 @@ export default function AnnotationPage() {
   const history = useAnnotationHistory();
   const { objects, reset, replace, commit, undo, redo, canUndo, canRedo } = history;
   const [dataset, setDataset] = useState<Dataset | null>(null);
+  const [importReview, setImportReview] = useState<AnnotationImportReview | null>(null);
+  const [confirmReview, setConfirmReview] = useState<AnnotationImportReview | null>(null);
+  const [confirmingImport, setConfirmingImport] = useState(false);
   const [sample, setSample] = useState<Sample | null>(null);
   const [navigation, setNavigation] = useState<SampleNavigationResponse | null>(null);
   const [annotationClasses, setAnnotationClasses] = useState<AnnotationClass[]>([]);
@@ -200,6 +207,7 @@ export default function AnnotationPage() {
     const context = new URLSearchParams(searchParamsText);
     const contextFileStatus = context.get("fileStatus") || "";
     return {
+      importJobId: Number(context.get("importJobId")) > 0 ? Number(context.get("importJobId")) : undefined,
       search: context.get("search") || undefined,
       fileStatus: contextFileStatus === "duplicate" ? "duplicate" : "normal",
       tag: context.get("tag") || undefined,
@@ -222,6 +230,14 @@ export default function AnnotationPage() {
       ) ?? null,
     [activeLabel, annotationClasses]
   );
+  useEffect(() => {
+    if (!navigationQuery.importJobId) return;
+    let stopped = false;
+    void getAnnotationImportReview(datasetId, navigationQuery.importJobId).then((review) => {
+      if (!stopped) setImportReview(review);
+    }).catch(() => { if (!stopped) setImportReview(null); });
+    return () => { stopped = true; };
+  }, [datasetId, navigationQuery.importJobId, sample?.updated_at]);
   const previousSample = navigation?.previous_sample ?? null;
   const nextSample = navigation?.next_sample ?? null;
   const sampleCompleted =
@@ -229,6 +245,7 @@ export default function AnnotationPage() {
     || sample?.annotation_progress === "completed_with_objects";
   const queueSplit = new URLSearchParams(searchParamsText).get("queueSplit") || sample?.split || "unassigned";
   const queueDescription = useMemo(() => {
+    if (navigationQuery.importJobId) return `本次导入 #${navigationQuery.importJobId} · 全部导入图片`;
     const sortLabel = SAMPLE_SORT_COPY[navigationQuery.sortBy] ?? navigationQuery.sortBy;
     const sortDescription = `${sortLabel}${navigationQuery.sortOrder === "asc" ? "正序" : "倒序"}`;
     if (queueScope === "all_pending") {
@@ -330,11 +347,12 @@ export default function AnnotationPage() {
     setWorkspaceLoadFailed(false);
     try {
       const targetSampleId = Number.isFinite(requestedSampleId) && requestedSampleId > 0 ? requestedSampleId : null;
-      const [nextDataset, nextAnnotationClasses, nextNavigation] = await Promise.all([
+      const [nextDataset, nextAnnotationClasses, nextNavigation, nextImportReview] = await Promise.all([
         getDataset(datasetId),
         listAnnotationClasses(datasetId),
         getSampleNavigation({
           datasetId,
+          importJobId: navigationQuery.importJobId,
           sampleId: targetSampleId,
           search: navigationQuery.search,
           fileStatus: navigationQuery.fileStatus,
@@ -345,13 +363,15 @@ export default function AnnotationPage() {
           queueScope: navigationQuery.queueScope,
           sortBy: navigationQuery.sortBy,
           sortOrder: navigationQuery.sortOrder
-        })
+        }),
+        navigationQuery.importJobId ? getAnnotationImportReview(datasetId, navigationQuery.importJobId) : Promise.resolve(null)
       ]);
       if (requestId !== workspaceRequestIdRef.current) {
         return;
       }
       const nextNavigationSample = nextNavigation.current_sample;
       setDataset(nextDataset);
+      setImportReview(nextImportReview);
       setAnnotationClasses(nextAnnotationClasses);
       setNavigation(nextNavigation);
       if (nextDataset.task_capabilities.annotation_mode !== "geometry" || !nextDataset.task_capabilities.supported) {
@@ -526,7 +546,7 @@ export default function AnnotationPage() {
         setHelpOpen(false);
         return;
       }
-      if (pendingDraftAction || pendingDirtyAction) {
+      if (pendingDraftAction || pendingDirtyAction || confirmReview || confirmingImport) {
         return;
       }
       if (event.defaultPrevented || event.isComposing) {
@@ -588,7 +608,7 @@ export default function AnnotationPage() {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [helpOpen, pendingDirtyAction, pendingDraftAction]);
+  }, [helpOpen, pendingDirtyAction, pendingDraftAction, confirmReview, confirmingImport]);
 
   function commitObjects(nextObjects: AnnotationObject[], previousObjects = objects) {
     commit(normalizeObjects(nextObjects), normalizeObjects(previousObjects));
@@ -881,6 +901,7 @@ export default function AnnotationPage() {
       const nextScope: AnnotationQueueScope = nextMode === "browse"
         ? "current_filter" : targetSplit ? "current_split" : "all_pending";
       const nextParams = buildQueueChangeParams(searchParams, nextScope, targetSplit);
+      nextParams.delete("importJobId");
       nextParams.delete("split");
       nextParams.delete("queueSplit");
       if (targetSplit) {
@@ -938,6 +959,32 @@ export default function AnnotationPage() {
         setJumping(false);
       }
     });
+  }
+
+  function requestImportConfirmation() {
+    requestNavigationAction(async () => {
+      try {
+        const review = await getAnnotationImportReview(datasetId, navigationQuery.importJobId);
+        setImportReview(review);
+        if (review?.confirmable) setConfirmReview(review);
+        else setStatus("没有可批量确认的图片，需要逐张复查的图片请手动确认。");
+      } catch { setError("无法读取本批确认范围，请重新加载工作区。"); }
+    }, "确认本批标注前，请先保存当前修改或放弃修改。");
+  }
+
+  async function confirmImportedAnnotations() {
+    if (!confirmReview) return;
+    setConfirmingImport(true);
+    try {
+      const review = await confirmAnnotationImport(datasetId, confirmReview.job_id, confirmReview.fingerprint);
+      setImportReview(review);
+      setConfirmReview(null);
+      await loadWorkspace();
+      setStatus(`本批剩余标注已确认${review.needs_individual_review ? `，另有 ${review.needs_individual_review} 张需逐张复查` : ""}`);
+    } catch {
+      setConfirmReview(null);
+      setError("确认未完成，本批状态可能已变化；请重新加载工作区后检查。");
+    } finally { setConfirmingImport(false); }
   }
 
   function handleToolChange(nextTool: AnnotationTool) {
@@ -1227,11 +1274,13 @@ export default function AnnotationPage() {
               <span className="flex min-w-0 flex-col gap-0.5">
                 <span className="inline-flex w-fit rounded-md bg-gray-100 p-0.5" role="group" aria-label="标注浏览模式">
                   <button type="button" aria-pressed={queueMode === "pending"}
+                    disabled={Boolean(navigationQuery.importJobId)}
                     onClick={() => handleQueueChoice("pending", queueRange)}
                     className={`rounded px-2 py-0.5 text-xs font-medium ${queueMode === "pending" ? "bg-white text-ink shadow-sm" : "text-gray-500 hover:text-ink"}`}>
                     待标注
                   </button>
                   <button type="button" aria-pressed={queueMode === "browse"}
+                    disabled={Boolean(navigationQuery.importJobId)}
                     onClick={() => handleQueueChoice("browse", queueRange)}
                     className={`rounded px-2 py-0.5 text-xs font-medium ${queueMode === "browse" ? "bg-white text-ink shadow-sm" : "text-gray-500 hover:text-ink"}`}>
                     浏览图片
@@ -1250,7 +1299,7 @@ export default function AnnotationPage() {
               </span>
               <select aria-label="图片范围" value={queueRange}
                 onChange={(event) => handleQueueChoice(queueMode, event.target.value as "all" | "split")}
-                disabled={!sample && queueRange !== "split"}
+                disabled={Boolean(navigationQuery.importJobId) || (!sample && queueRange !== "split")}
                 className="w-[88px] min-w-0 border-l border-line bg-transparent pl-2 text-xs outline-none disabled:text-gray-400">
                 <option value="all">全部</option>
                 <option value="split">当前划分</option>
@@ -1377,6 +1426,19 @@ export default function AnnotationPage() {
         )}
       </header>
 
+      {importReview && <div aria-label="本次导入复查" className="flex shrink-0 flex-wrap items-center gap-3 border-b border-line bg-white px-4 py-2 text-xs text-gray-600">
+        <span>本次导入 {importReview.total} 张 · 已确认 {importReview.completed} 张{importReview.needs_individual_review > 0 ? ` · ${importReview.needs_individual_review} 张需逐张复查` : ""}</span>
+        <button type="button" disabled={!navigation || navigation.total < 2 || navigationLoading || confirmingImport} onClick={() => {
+          if (!navigation) return;
+          const current = (navigation.current_index ?? 0) + 1;
+          const position = 1 + Math.floor(Math.random() * (navigation.total - 1));
+          jumpToPosition(position >= current ? position + 1 : position);
+        }} className="rounded-lg border border-line px-3 py-2 hover:bg-gray-50 disabled:opacity-40">随机抽查</button>
+        {importReview.confirmable > 0 && <button type="button" disabled={saving || navigationLoading || confirmingImport} onClick={requestImportConfirmation}
+          className="rounded-lg bg-gray-900 px-3 py-2 font-medium text-white disabled:opacity-40">确认本批剩余 {importReview.confirmable} 张</button>}
+        <button type="button" disabled={confirmingImport} onClick={() => handleQueueChoice("browse", "all", true)} className="ml-auto underline">退出本批</button>
+      </div>}
+
       {error && (
         <div role="alert" className="flex shrink-0 items-center justify-between gap-3 border-b border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
           <span>{error}</span>
@@ -1393,6 +1455,16 @@ export default function AnnotationPage() {
           )}
         </div>
       )}
+      <Modal open={Boolean(confirmReview)} title="确认本批剩余标注" onClose={() => setConfirmReview(null)} dismissible={!confirmingImport}>
+        <div className="space-y-4 p-5 text-sm text-gray-600">
+          <p>将确认本批剩余 {confirmReview?.confirmable ?? 0} 张图片，包含无目标图片。已确认的图片保持原状态；有导入问题或后续修改的图片需逐张确认。</p>
+          <p className="text-xs">确认表示标注已完成，不代表审核通过，也不会改变快速分拣、样本标签或训练划分。</p>
+          <div className="flex justify-end gap-2">
+            <button type="button" disabled={confirmingImport} onClick={() => setConfirmReview(null)} className="rounded-lg border border-line px-4 py-2">继续复查</button>
+            <button type="button" disabled={confirmingImport} onClick={() => void confirmImportedAnnotations()} className="rounded-lg bg-gray-900 px-4 py-2 font-medium text-white">{confirmingImport ? "确认中…" : "全部确认"}</button>
+          </div>
+        </div>
+      </Modal>
       <section className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
         <AnnotationToolbar
           datasetId={dataset?.id ?? 0}

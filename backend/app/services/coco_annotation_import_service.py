@@ -127,6 +127,7 @@ def prepare_coco_import(
         errors.append(_issue("error", "COCO_IMAGE_NOT_FOUND", f"Annotations reference missing image_id {missing_id!r}.", source))
 
     plan_hash = _plan_fingerprint(operations)
+    plan_hash = annotation_import_service.completion_fingerprint(plan_hash, payload.completion)
     if payload.expected_source_sha256 and payload.expected_source_sha256.lower() != source_hash:
         raise HTTPException(status_code=409, detail="COCO source changed after preview. Run preview again before importing.")
     if payload.expected_plan_fingerprint and payload.expected_plan_fingerprint.lower() != plan_hash:
@@ -144,6 +145,7 @@ def prepare_coco_import(
         errors=errors[:100],
         operations=operations,
         format="coco",
+        unconfirmable_sample_ids=annotation_import_service.unconfirmable_samples(operations, warnings, errors),
     )
 
 
