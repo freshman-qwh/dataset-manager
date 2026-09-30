@@ -46,6 +46,11 @@ class LabelmeImportIssue(BaseModel):
     sample_path: str | None = None
 
 
+class AnnotationImportMatchedSample(BaseModel):
+    id: int
+    relative_path: str
+
+
 class LabelmeImportResult(BaseModel):
     format: AnnotationImportFormat = "labelme"
     dataset_id: int
@@ -63,6 +68,7 @@ class LabelmeImportResult(BaseModel):
     skipped_shapes: int
     warnings: list[LabelmeImportIssue] = Field(default_factory=list)
     errors: list[LabelmeImportIssue] = Field(default_factory=list)
+    matched_sample: AnnotationImportMatchedSample | None = None
 
 
 class LabelmeImportJobCreateRequest(BaseModel):

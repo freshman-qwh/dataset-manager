@@ -1757,6 +1757,8 @@ export default function DatasetDetailPage() {
       />
       <LabelmeImportModal
         datasetId={datasetId}
+        datasetRoot={dataset?.root_path ?? ""}
+        datasetCreatedAt={dataset?.created_at ?? ""}
         open={labelmeImportOpen}
         onClose={() => setLabelmeImportOpen(false)}
         onImported={async () => {

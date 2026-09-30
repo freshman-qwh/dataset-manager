@@ -3,10 +3,19 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from app.schemas.filesystem import DirectoryEntry, DirectoryListResponse
+from app.schemas.filesystem import DirectoryEntry, DirectoryListResponse, FilesystemListResponse
+from app.services.filesystem_service import browse_local_files
 from app.utils.paths import resolve_local_path
 
 router = APIRouter(prefix="/api/filesystem", tags=["filesystem"])
+
+
+@router.get("/entries", response_model=FilesystemListResponse)
+def list_entries(
+    path: str | None = Query(default=None),
+    extensions: str = Query(default=".json", max_length=200),
+) -> FilesystemListResponse:
+    return browse_local_files(path, extensions)
 
 
 @router.get("/directories", response_model=DirectoryListResponse)

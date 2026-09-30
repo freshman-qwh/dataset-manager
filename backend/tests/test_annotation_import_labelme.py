@@ -69,6 +69,39 @@ def write_labelme_json(path: Path, image_path: str, shapes: list[dict], image_si
     )
 
 
+def test_manual_image_match_preview_and_confirmation(tmp_path: Path):
+    with make_client() as client:
+        dataset_id, samples = create_image_dataset(client, tmp_path, ["a.png", "b.png"])
+        first_id, second_id = samples[0]["id"], samples[1]["id"]
+        source = tmp_path / "unmatched.json"
+        write_labelme_json(source, "old-name.png", [{"label": "defect", "shape_type": "rectangle", "points": [[0, 0], [1, 1]]}])
+        original = source.read_bytes()
+        endpoint = f"/api/datasets/{dataset_id}/annotations/import"
+        base = {"format": "labelme", "path": str(source), "mode": "file"}
+        automatic = client.post(endpoint, json={**base, "dry_run": True}).json()
+        assert automatic["imported_samples"] == 0
+        assert automatic["matched_sample"] is None
+
+        preview = client.post(endpoint, json={**base, "sample_id": first_id, "dry_run": True}).json()
+        assert preview["matched_sample"] == {"id": first_id, "relative_path": "a.png"}
+        assert client.get(f"/api/samples/{first_id}/annotations").json() == []
+        confirmation = {**base, "expected_source_sha256": preview["source_sha256"], "expected_plan_fingerprint": preview["plan_fingerprint"]}
+        changed_target = client.post(endpoint, json={**confirmation, "sample_id": second_id})
+        assert changed_target.status_code == 409
+        assert client.get(f"/api/samples/{second_id}/annotations").json() == []
+        assert client.post(endpoint, json={**confirmation, "sample_id": first_id}).status_code == 200
+        assert len(client.get(f"/api/samples/{first_id}/annotations").json()) == 1
+        assert source.read_bytes() == original
+
+        other_root = tmp_path / "other"
+        other_root.mkdir()
+        other_dataset, _ = create_image_dataset(client, other_root, ["a.png"])
+        rejected = client.post(f"/api/datasets/{other_dataset}/annotations/import", json={**base, "sample_id": first_id, "dry_run": True}).json()
+        assert rejected["matched_sample"] is None
+        assert rejected["errors"][0]["code"] == "SAMPLE_NOT_FOUND"
+    app.dependency_overrides.clear()
+
+
 def test_labelme_import_dry_run_then_replace_and_export_shapes(tmp_path: Path):
     with make_client() as client:
         dataset_id, samples = create_image_dataset(client, tmp_path, ["sample.png"])

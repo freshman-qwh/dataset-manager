@@ -392,6 +392,12 @@ export interface DirectoryListResponse {
   entries: DirectoryEntry[];
 }
 
+export interface FilesystemListResponse {
+  current_path: string | null;
+  parent_path: string | null;
+  entries: (DirectoryEntry & { kind: "directory" | "file" })[];
+}
+
 export interface DuplicateGroup {
   file_hash: string;
   count: number;
@@ -514,6 +520,7 @@ export interface LabelmeImportIssue {
 }
 
 export interface LabelmeImportResult {
+  matched_sample?: { id: number; relative_path: string } | null;
   format?: AnnotationImportFormat;
   dataset_id: number;
   source_path: string;

@@ -21,6 +21,7 @@ import type {
   DatasetStats,
   DatasetQualityReport,
   DirectoryListResponse,
+  FilesystemListResponse,
   DuplicateReport,
   ExportTemplateResponse,
   BatchSampleUpdate,
@@ -321,9 +322,16 @@ export function getDatasetSnapshotTrainingLabelsDownloadUrl(
   return `${API_BASE_URL}/datasets/${datasetId}/snapshots/${snapshotId}/training-labels/download`;
 }
 
-export async function listDirectories(path?: string): Promise<DirectoryListResponse> {
+export async function listDirectories(path?: string, signal?: AbortSignal): Promise<DirectoryListResponse> {
   const { data } = await client.get<DirectoryListResponse>("/filesystem/directories", {
-    params: { path: path || undefined }
+    params: { path: path || undefined }, signal
+  });
+  return data;
+}
+
+export async function listLocalFiles(path?: string, signal?: AbortSignal): Promise<FilesystemListResponse> {
+  const { data } = await client.get<FilesystemListResponse>("/filesystem/entries", {
+    params: { path: path || undefined, extensions: ".json" }, signal
   });
   return data;
 }

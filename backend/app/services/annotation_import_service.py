@@ -10,6 +10,7 @@ from sqlmodel import Session, select
 from app.models.sample import Sample
 from app.schemas.annotation import AnnotationCreate, AnnotationReplaceRequest
 from app.schemas.annotation_import import (
+    AnnotationImportMatchedSample,
     AnnotationImportRequest,
     AnnotationImportResult,
     LabelmeImportIssue,
@@ -251,6 +252,7 @@ def labelme_import_result(plan: LabelmeImportPlan, payload: LabelmeImportRequest
         skipped_shapes=plan.skipped_shapes,
         warnings=plan.warnings,
         errors=plan.errors,
+        matched_sample=_single_matched_sample(plan, payload),
     )
 
 
@@ -272,7 +274,15 @@ def annotation_import_result(plan: LabelmeImportPlan, payload: AnnotationImportR
         skipped_shapes=plan.skipped_shapes,
         warnings=plan.warnings,
         errors=plan.errors,
+        matched_sample=_single_matched_sample(plan, payload),
     )
+
+
+def _single_matched_sample(plan: LabelmeImportPlan, payload: LabelmeImportRequest) -> AnnotationImportMatchedSample | None:
+    if plan.format != "labelme" or payload.mode != "file" or len(plan.operations) != 1:
+        return None
+    operation = plan.operations[0]
+    return AnnotationImportMatchedSample(id=operation.sample_id, relative_path=operation.sample_path)
 
 
 def append_annotations(
