@@ -5,13 +5,14 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState,
-  type WheelEvent
+  useState
 } from "react";
 
 import type { AnnotationClass, AnnotationObject, AnnotationShapeType } from "../../types/dataset";
 import type { AnnotationTool } from "./AnnotationToolbar";
 import { brushToPolygon } from "./brushToPolygon";
+import SamControls, { type SamMode } from "./SamControls";
+import { useSamAssistance } from "./useSamAssistance";
 
 interface Point {
   x: number;
@@ -32,6 +33,7 @@ interface Transform {
 type FocusObjectResult = "focused" | "not-ready" | "missing";
 
 type DragState =
+  | { type: "sam-box"; start: Point }
   | {
       type: "pan";
       start: Point;
@@ -79,6 +81,8 @@ export interface AnnotationFocusCommand {
 }
 
 interface AnnotationCanvasProps {
+  sampleId: number;
+  onSamAccepted: () => void;
   imageUrl: string;
   objects: AnnotationObject[];
   activeObjectId: string | null;
@@ -221,6 +225,8 @@ function getObjectBounds(object: AnnotationObject): { minX: number; minY: number
 }
 
 export default function AnnotationCanvas({
+  sampleId,
+  onSamAccepted,
   imageUrl,
   objects,
   activeObjectId,
@@ -260,6 +266,37 @@ export default function AnnotationCanvas({
   const [fitKey, setFitKey] = useState(0);
   const [imageError, setImageError] = useState(false);
   const [imageReloadToken, setImageReloadToken] = useState(0);
+  const [samMode, setSamMode] = useState<SamMode>("positive");
+  const sam = useSamAssistance(sampleId, tool === "sam");
+
+  function acceptSam(refine = false) {
+    if (!sam.canCommit || !sam.prediction) return;
+    const prediction = sam.prediction;
+    const previous = objectsRef.current;
+    const additions: AnnotationObject[] = prediction.polygons.map((points, index) => ({
+      client_id: makeClientId(), label: activeLabel.trim() || "object", class_id: activeClassId,
+      shape_type: "polygon", points, flags: {},
+      attributes: { sam_model: "vit_b", sam_predicted_iou: prediction.score },
+      group_id: null, z_order: previous.length + index, locked: false, hidden: false,
+      source: "sam_vit_b", notes: null
+    }));
+    onObjectsCommit([...previous, ...additions], previous);
+    onActiveObjectChange(additions[0]?.client_id ?? null);
+    sam.reset();
+    setDraft(null);
+    onStatusChange("已加入可编辑轮廓；拖动顶点精修后，请保存标注。");
+    if (refine) onSamAccepted();
+  }
+
+  function retrySam() {
+    if (imageSize) void sam.generate(sam.prompts, imageSize);
+  }
+
+  function undoSamPoint() {
+    const next = { ...sam.prompts, points: sam.prompts.points.slice(0, -1) };
+    if (!next.box && !next.points.some((point) => point.label === 1)) sam.reset();
+    else if (imageSize) void sam.generate(next, imageSize);
+  }
 
   useEffect(() => {
     if (dragRef.current) {
@@ -393,11 +430,11 @@ export default function AnnotationCanvas({
 
   useEffect(() => {
     onDraftStateChange?.({
-      active: Boolean(draft),
-      shapeType: draft?.shape_type === "brush" ? "polygon" : draft?.shape_type ?? null,
-      canCommit: canCommitDraft(draft)
+      active: Boolean(draft) || sam.hasDraft,
+      shapeType: sam.hasDraft ? "polygon" : draft?.shape_type === "brush" ? "polygon" : draft?.shape_type ?? null,
+      canCommit: tool === "sam" ? sam.canCommit : canCommitDraft(draft)
     });
-  }, [draft, onDraftStateChange]);
+  }, [draft, tool, sam.hasDraft, sam.canCommit, onDraftStateChange]);
 
   useEffect(() => {
     if (!draftCommand || handledDraftCommandIdRef.current === draftCommand.id) {
@@ -405,15 +442,17 @@ export default function AnnotationCanvas({
     }
     handledDraftCommandIdRef.current = draftCommand.id;
     if (draftCommand.action === "cancel") {
+      sam.reset();
       setDraft(null);
       dragRef.current = null;
       onDraftCommandHandled?.(draftCommand.id);
       return;
     }
-    commitDraftShape(draft);
+    if (sam.hasDraft) acceptSam();
+    else commitDraftShape(draft);
     dragRef.current = null;
     onDraftCommandHandled?.(draftCommand.id);
-  }, [draftCommand, draft, onDraftCommandHandled]);
+  }, [draftCommand, draft, sam.hasDraft, sam.canCommit, onDraftCommandHandled]);
 
   useEffect(() => {
     if (!focusCommand || handledFocusCommandIdRef.current === focusCommand.id) {
@@ -430,7 +469,16 @@ export default function AnnotationCanvas({
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       const target = event.target;
+      if (event.defaultPrevented || (target instanceof Element && target.closest('[role="dialog"]'))) return;
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
+        return;
+      }
+      if (tool === "sam") {
+        if (event.key === "Escape") { event.preventDefault(); sam.reset(); setDraft(null); dragRef.current = null; }
+        else if (event.key === "Enter" && !event.ctrlKey && !event.metaKey && sam.canCommit
+          && !(target instanceof Element && target.closest('button, a'))) {
+          event.preventDefault(); acceptSam(true);
+        }
         return;
       }
       if (event.key === "Escape") {
@@ -458,7 +506,7 @@ export default function AnnotationCanvas({
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [draft, onDeleteActive]);
+  }, [draft, tool, sam.canCommit, sam.prediction, activeLabel, activeClassId, onDeleteActive]);
 
   function objectColor(object: AnnotationObject, index: number): string {
     return (
@@ -549,6 +597,25 @@ export default function AnnotationCanvas({
   }
 
   function handleBackgroundPointerDown(event: PointerEvent<SVGSVGElement>) {
+    if (tool === "sam") {
+      if (event.button !== 0 && event.button !== 2) return;
+      event.preventDefault();
+      if (!imageSize || !sam.status?.ready || sam.busy) return;
+      const screen = clientPoint(event);
+      const raw = { x: (screen.x - transform.translateX) / transform.scale,
+        y: (screen.y - transform.translateY) / transform.scale };
+      if (raw.x < 0 || raw.y < 0 || raw.x >= imageSize.width || raw.y >= imageSize.height) return;
+      if (samMode === "box" && event.button === 0) {
+        sam.reset();
+        dragRef.current = { type: "sam-box", start: raw };
+        setDraft({ shape_type: "rectangle", points: [raw.x, raw.y, raw.x, raw.y] });
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } else {
+        void sam.generate({ ...sam.prompts, points: [...sam.prompts.points,
+          { ...raw, label: event.button === 2 || samMode === "negative" ? 0 : 1 }] }, imageSize);
+      }
+      return;
+    }
     if (event.button === 2) {
       event.preventDefault();
       if (draft) {
@@ -669,7 +736,7 @@ export default function AnnotationCanvas({
       return;
     }
 
-    if (drag.type === "drawing-rectangle") {
+    if (drag.type === "drawing-rectangle" || drag.type === "sam-box") {
       setDraft({
         shape_type: "rectangle",
         points: [drag.start.x, drag.start.y, imagePoint.x, imagePoint.y]
@@ -707,7 +774,15 @@ export default function AnnotationCanvas({
     if (!drag) {
       return;
     }
-    if (drag.type === "drawing-rectangle" && draft?.shape_type === "rectangle") {
+    if (drag.type === "sam-box" && imageSize) {
+      const end = clientToImage(event);
+      const box = normalizeRectangle([drag.start.x, drag.start.y, end.x, end.y]);
+      setDraft(null);
+      if (box[2] - box[0] >= 3 && box[3] - box[1] >= 3) {
+        void sam.generate({ points: [], box }, imageSize);
+        setSamMode("positive");
+      } else onStatusChange("目标框过小，请重新拖框。");
+    } else if (drag.type === "drawing-rectangle" && draft?.shape_type === "rectangle") {
       commitDraftShape(draft);
       setDraft(null);
     } else if (drag.type === "drawing-brush" && draft?.shape_type === "brush" && imageSize) {
@@ -733,7 +808,7 @@ export default function AnnotationCanvas({
 
   function handlePointerCancel(event: PointerEvent<SVGSVGElement>) {
     const drag = dragRef.current;
-    if (drag?.type === "drawing-brush" || drag?.type === "drawing-rectangle") {
+    if (drag?.type === "drawing-brush" || drag?.type === "drawing-rectangle" || drag?.type === "sam-box") {
       setDraft(null);
       onStatusChange("已取消中断的绘制");
     } else if (drag?.type === "object" || drag?.type === "vertex") {
@@ -745,7 +820,7 @@ export default function AnnotationCanvas({
     try { event.currentTarget.releasePointerCapture(event.pointerId); } catch { /* Already released. */ }
   }
 
-  function handleWheel(event: WheelEvent<SVGSVGElement>) {
+  function handleWheel(event: globalThis.WheelEvent) {
     if (!imageSize) {
       return;
     }
@@ -763,6 +838,15 @@ export default function AnnotationCanvas({
     });
   }
 
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    // React delegates wheel listeners passively; a native listener lets zoom
+    // prevent scrolling the surrounding narrow-screen workspace.
+    svg.addEventListener("wheel", handleWheel, { passive: false });
+    return () => svg.removeEventListener("wheel", handleWheel);
+  }, [imageSize, transform]);
+
   const sortedObjects = useMemo(
     () => objects.map((object, index) => ({ object, index })).sort((a, b) => a.object.z_order - b.object.z_order),
     [objects]
@@ -773,6 +857,9 @@ export default function AnnotationCanvas({
     : imageUrl;
 
   return (
+    <div className="flex h-[32rem] min-w-0 shrink-0 flex-col lg:h-auto lg:min-h-0 lg:flex-1">
+      {tool === "sam" && <SamControls sam={sam} mode={samMode} onModeChange={setSamMode}
+        onAccept={() => acceptSam(true)} onRetry={retrySam} onUndoPrompt={undoSamPoint} />}
     <div ref={wrapperRef} className="relative min-h-0 flex-1 overflow-hidden bg-gray-100">
       {tool === "brush" && <label className="absolute left-4 top-4 z-10 flex items-center gap-3 rounded-lg border border-line bg-white px-3 py-2 text-xs text-gray-700 shadow-sm">
         <span className="whitespace-nowrap">画笔半径 {brushRadius}px</span>
@@ -813,8 +900,7 @@ export default function AnnotationCanvas({
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}
         onPointerLeave={() => setBrushCursor(null)}
-        onContextMenu={(event) => { if (tool === "polygon" || tool === "brush") event.preventDefault(); }}
-        onWheel={handleWheel}
+        onContextMenu={(event) => { if (tool === "polygon" || tool === "brush" || tool === "sam") event.preventDefault(); }}
         onDragStart={(event) => event.preventDefault()}
       >
         <defs>
@@ -891,6 +977,19 @@ export default function AnnotationCanvas({
               </g>
             );
           })}
+          {imageSize && tool === "sam" && <g pointerEvents="none" aria-label="SAM 轮廓预览">
+            {sam.prediction?.polygons.map((points, index) => <polygon key={index} points={polygonPoints(points)}
+              fill="#0d948833" stroke="#0f766e" strokeWidth={2} strokeDasharray="6 3" vectorEffect="non-scaling-stroke" />)}
+            {sam.prompts.box && <rect x={sam.prompts.box[0]} y={sam.prompts.box[1]}
+              width={sam.prompts.box[2] - sam.prompts.box[0]} height={sam.prompts.box[3] - sam.prompts.box[1]}
+              fill="none" stroke="#2563eb" strokeWidth={1.5} strokeDasharray="4 4" vectorEffect="non-scaling-stroke" />}
+            {sam.prompts.points.map((point, index) => <g key={index}>
+              <circle cx={point.x} cy={point.y} r={6 / transform.scale} fill={point.label ? "#059669" : "#dc2626"}
+                stroke="white" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+              <text x={point.x} y={point.y} textAnchor="middle" dominantBaseline="central" fill="white"
+                fontSize={10 / transform.scale} fontWeight="bold">{point.label ? "+" : "−"}</text>
+            </g>)}
+          </g>}
           {imageSize && draft?.shape_type === "rectangle" && (
             <rect
               x={normalizeRectangle(draft.points)[0]}
@@ -975,6 +1074,7 @@ export default function AnnotationCanvas({
           {tool === "brush" ? "确认画笔轮廓" : "完成多边形"}
         </button>
       )}
+    </div>
     </div>
   );
 }

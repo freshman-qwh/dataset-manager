@@ -1,4 +1,5 @@
 import axios from "axios";
+import type { SamPrediction, SamPrompts, SamStatus } from "../types/sam";
 
 import type {
   AnnotationExportDownload,
@@ -120,6 +121,17 @@ const client = axios.create({
   baseURL: API_BASE_URL,
   timeout: 120000
 });
+
+export async function getSamStatus(signal?: AbortSignal): Promise<SamStatus> {
+  return (await client.get<SamStatus>("/sam/status", { signal })).data;
+}
+
+export async function predictSam(sampleId: number, prompts: SamPrompts,
+  size: { width: number; height: number }, signal?: AbortSignal): Promise<SamPrediction> {
+  return (await client.post<SamPrediction>(`/samples/${sampleId}/sam/predict`, {
+    ...prompts, image_width: size.width, image_height: size.height
+  }, { signal, timeout: 180000 })).data;
+}
 
 export interface PortableRuntime {
   enabled: boolean;

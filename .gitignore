@@ -73,6 +73,7 @@ database/*.sqlite3
 storage/datasets/
 storage/thumbnails/
 storage/cache/
+storage/models/
 storage/tmp/
 storage/job-artifacts/
 

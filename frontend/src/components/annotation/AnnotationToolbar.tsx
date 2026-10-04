@@ -1,8 +1,8 @@
-import { Brush, CircleDot, Hand, Menu, MousePointer2, RotateCcw, RotateCw, Square, Waypoints, X } from "lucide-react";
+import { Brush, CircleDot, Hand, Menu, MousePointer2, RotateCcw, RotateCw, Sparkles, Square, Waypoints, X } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { AnnotationShapeType } from "../../types/dataset";
 
-export type AnnotationTool = "select" | "pan" | "brush" | AnnotationShapeType;
+export type AnnotationTool = "select" | "pan" | "brush" | "sam" | AnnotationShapeType;
 type Preset = "detection" | "segmentation" | "custom";
 type ToolInfo = { id: AnnotationTool; title: string; shortcut?: string; icon: ReactNode };
 
@@ -22,17 +22,18 @@ const tools: ToolInfo[] = [
   { id: "select", title: "选择", shortcut: "V", icon: <MousePointer2 size={18} /> },
   { id: "rectangle", title: "矩形", shortcut: "R", icon: <Square size={18} /> },
   { id: "polygon", title: "多边形", shortcut: "P", icon: <Waypoints size={18} /> },
+  { id: "sam", title: "SAM 辅助分割", icon: <Sparkles size={18} /> },
   { id: "brush", title: "画笔", shortcut: "B", icon: <Brush size={18} /> },
   { id: "point", title: "点", icon: <CircleDot size={18} /> },
   { id: "pan", title: "平移", shortcut: "H", icon: <Hand size={18} /> }
 ];
 const presets: Record<Exclude<Preset, "custom">, AnnotationTool[]> = {
   detection: ["select", "rectangle", "pan"],
-  segmentation: ["select", "polygon", "brush", "pan"]
+  segmentation: ["select", "polygon", "sam", "brush", "pan"]
 };
 
 function supported(id: AnnotationTool, allowed: AnnotationShapeType[]): boolean {
-  return id === "select" || id === "pan" || (id === "brush" ? allowed.includes("polygon") : allowed.includes(id as AnnotationShapeType));
+  return id === "select" || id === "pan" || ((id === "brush" || id === "sam") ? allowed.includes("polygon") : allowed.includes(id as AnnotationShapeType));
 }
 
 function readSettings(key: string, taskType: string): { preset: Preset; order: AnnotationTool[] } {
@@ -101,7 +102,7 @@ export default function AnnotationToolbar({
   }
 
   return (
-    <aside className="flex w-full shrink-0 flex-row items-center gap-2 border-b border-line bg-white p-2 lg:w-16 lg:flex-col lg:gap-3 lg:border-b-0 lg:border-r lg:p-3">
+    <aside className="flex w-full shrink-0 overflow-x-auto flex-row items-center gap-2 border-b border-line bg-white p-2 lg:w-16 lg:flex-col lg:gap-3 lg:border-b-0 lg:border-r lg:p-3">
       <div className="flex gap-2 lg:flex-col lg:items-center">
         {visible.map((item) => (
           <button key={item.id} type="button"
@@ -140,7 +141,7 @@ export default function AnnotationToolbar({
               {(["detection", "segmentation", "custom"] as const).map((preset) => {
                 const enabled = preset === "custom" || preset === taskType;
                 const title = preset === "detection" ? "目标检测" : preset === "segmentation" ? "实例分割" : "自定义";
-                const description = preset === "detection" ? "选择 · 矩形 · 平移" : preset === "segmentation" ? "选择 · 多边形 · 画笔 · 平移" : `独立保存 ${settings.order.length} 项工具及顺序`;
+                const description = preset === "detection" ? "选择 · 矩形 · 平移" : preset === "segmentation" ? "选择 · 多边形 · SAM · 画笔 · 平移" : `独立保存 ${settings.order.length} 项工具及顺序`;
                 return <button key={preset} type="button" disabled={!enabled} aria-pressed={settings.preset === preset}
                   onClick={() => setSettings((current) => ({ ...current, preset }))}
                   className={`rounded-xl border p-4 text-left ${settings.preset === preset ? "border-gray-900 bg-gray-50" : "border-line"} ${enabled ? "hover:border-gray-500" : "cursor-not-allowed opacity-50"}`}>
@@ -188,7 +189,7 @@ export default function AnnotationToolbar({
                 })}
               </div>
               <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                {["橡皮擦", "边缘吸附", "智能辅助"].map((name) =>
+                {["橡皮擦", "边缘吸附"].map((name) =>
                   <div key={name} className="flex items-center justify-between rounded-lg border border-dashed border-line bg-gray-50 px-3 py-2 text-xs text-gray-400">
                     {name}<span>规划中</span>
                   </div>

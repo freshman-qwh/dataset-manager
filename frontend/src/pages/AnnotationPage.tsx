@@ -991,7 +991,7 @@ export default function AnnotationPage() {
     if (
       nextTool !== "select"
       && nextTool !== "pan"
-      && !(nextTool === "brush" && allowedShapeTypes.includes("polygon"))
+      && !((nextTool === "brush" || nextTool === "sam") && allowedShapeTypes.includes("polygon"))
       && !allowedShapeTypes.includes(nextTool as AnnotationShapeType)
     ) {
       setStatus(`当前${dataset?.task_capabilities.label ?? "任务"}不提供此绘制工具`);
@@ -1465,7 +1465,7 @@ export default function AnnotationPage() {
           </div>
         </div>
       </Modal>
-      <section className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
+      <section className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto lg:flex-row lg:overflow-hidden">
         <AnnotationToolbar
           datasetId={dataset?.id ?? 0}
           taskType={dataset?.task_type ?? "detection"}
@@ -1485,6 +1485,9 @@ export default function AnnotationPage() {
         />
         {sample && isAnnotatableImage(sample) ? (
           <AnnotationCanvas
+            key={sample.id}
+            sampleId={sample.id}
+            onSamAccepted={() => setTool("select")}
             imageUrl={getSampleFileUrl(sample.id)}
             objects={objects}
             activeObjectId={activeObjectId}

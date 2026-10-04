@@ -12,6 +12,7 @@ from app.api import (
     filesystem,
     jobs,
     samples,
+    sam,
     system,
     triage,
     triage_directory_mapping,
@@ -51,6 +52,7 @@ app.include_router(directory_exports.router)
 app.include_router(filesystem.router)
 app.include_router(samples.router)
 app.include_router(annotations.router)
+app.include_router(sam.router)
 app.include_router(annotation_classes.router)
 app.include_router(annotation_exports.router)
 app.include_router(system.router)

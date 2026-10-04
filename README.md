@@ -16,6 +16,8 @@
 
 ## 已实现功能
 
+- [SAM 辅助分割](docs/sam-assisted-annotation.md)：经典 ViT-B 点选／框选、正负点修正，确认后拖动顶点精修并保存；可选本地 GPU/CPU 推理。
+
 - FastAPI 后端应用和 SQLite 初始化
 - Dataset / Sample / Tag 数据模型
 - 本地文件夹增量扫描，支持图片、视频、CSV；未变化文件按 size + mtime 跳过重复 hash，变化文件受限并行校验并分批写入元数据
