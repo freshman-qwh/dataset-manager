@@ -106,6 +106,8 @@ def to_sample_read(
                 )
             )
         ),
+        capture_group_id=sample.capture_group_id,
+        capture_batch_id=sample.capture_batch_id,
         notes=sample.notes,
         metadata=_metadata_from_json(sample.metadata_json),
         tags=tags,
@@ -132,6 +134,8 @@ def get_filtered_samples(
     defect_severity: str | None = None,
     defect_type_id: int | None = None,
     triage_outdated: bool | None = None,
+    capture_group_id: str | None = None,
+    capture_batch_id: str | None = None,
 ) -> list[Sample]:
     safe_sort_by = sort_by if sort_by in SORTABLE_SAMPLE_FIELDS else "created_at"
     safe_sort_order = "asc" if sort_order.lower() == "asc" else "desc"
@@ -152,6 +156,8 @@ def get_filtered_samples(
         defect_severity=defect_severity,
         defect_type_id=defect_type_id,
         triage_outdated=triage_outdated,
+        capture_group_id=capture_group_id,
+        capture_batch_id=capture_batch_id,
     )
     statement = statement.order_by(
         *_sample_order_clauses(
@@ -183,6 +189,8 @@ def list_samples(
     defect_severity: str | None = None,
     defect_type_id: int | None = None,
     triage_outdated: bool | None = None,
+    capture_group_id: str | None = None,
+    capture_batch_id: str | None = None,
 ) -> SampleListResponse:
     safe_page_size = min(max(page_size, 1), 200)
     safe_sort_by = sort_by if sort_by in SORTABLE_SAMPLE_FIELDS else "created_at"
@@ -203,6 +211,8 @@ def list_samples(
         defect_severity=defect_severity,
         defect_type_id=defect_type_id,
         triage_outdated=triage_outdated,
+        capture_group_id=capture_group_id,
+        capture_batch_id=capture_batch_id,
     )
     total = int(session.exec(select(func.count()).select_from(filtered_ids.subquery())).one())
     page_count = max((total + safe_page_size - 1) // safe_page_size, 1)
@@ -226,6 +236,8 @@ def list_samples(
         defect_severity=defect_severity,
         defect_type_id=defect_type_id,
         triage_outdated=triage_outdated,
+        capture_group_id=capture_group_id,
+        capture_batch_id=capture_batch_id,
     )
     statement = (
         statement.order_by(
@@ -263,6 +275,8 @@ def list_samples(
             defect_severity=defect_severity,
             defect_type_id=defect_type_id,
             triage_outdated=triage_outdated,
+        capture_group_id=capture_group_id,
+        capture_batch_id=capture_batch_id,
         )
         prefetch_statement = (
             prefetch_statement.order_by(
@@ -489,8 +503,14 @@ def _apply_sample_filters(
     defect_severity: str | None = None,
     defect_type_id: int | None = None,
     triage_outdated: bool | None = None,
+    capture_group_id: str | None = None,
+    capture_batch_id: str | None = None,
 ):
     statement = statement.where(Sample.dataset_id == dataset_id)
+    if capture_group_id:
+        statement = statement.where(Sample.capture_group_id == capture_group_id)
+    if capture_batch_id:
+        statement = statement.where(Sample.capture_batch_id == capture_batch_id)
     if file_type:
         statement = statement.where(Sample.file_type == file_type)
     if file_status == "duplicate":

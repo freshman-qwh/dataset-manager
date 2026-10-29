@@ -23,6 +23,8 @@ SavedViewSortField = Literal[
 
 
 class DatasetSavedViewQuery(BaseModel):
+    capture_group_id: str | None = Field(default=None, max_length=160)
+    capture_batch_id: str | None = Field(default=None, max_length=160)
     triage_status: Literal["untriaged", "pending", "ok", "ng"] | None = None
     ok_grade: Literal["clear", "borderline"] | None = None
     triage_outdated: bool | None = None

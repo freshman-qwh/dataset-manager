@@ -7,6 +7,13 @@ export type AnnotationExportFormat =
   | "voc";
 
 export interface AnnotationExportSampleQuery {
+  triage_status?: string;
+  ok_grade?: string;
+  triage_outdated?: boolean;
+  defect_severity?: string;
+  defect_type_id?: number;
+  capture_group_id?: string;
+  capture_batch_id?: string;
   expected_dataset_revision?: number;
   search?: string;
   file_type?: string;

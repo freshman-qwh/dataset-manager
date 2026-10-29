@@ -43,7 +43,7 @@ export interface DatasetSnapshotDocument {
   created_at: string;
   content_sha256: string;
   content: {
-    schema_version: 1;
+    schema_version: 1 | 2;
     dataset: Record<string, unknown>;
     sample_query: AnnotationExportSampleQuery;
     export_config: DatasetSnapshotExportConfig;
@@ -74,6 +74,8 @@ export interface DatasetSnapshotDiffItem {
 }
 
 export interface DatasetSnapshotDiffResponse {
+  comparison_notes: string[];
+  dataset_metadata_changed: boolean;
   dataset_id: number;
   base_snapshot_id: number;
   target_snapshot_id: number;

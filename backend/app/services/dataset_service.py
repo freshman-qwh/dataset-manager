@@ -81,6 +81,9 @@ def delete_dataset(session: Session, dataset_id: int) -> None:
 
     has_split_receipts = inspect(session.connection()).has_table("training_split_receipts")
     dataset = get_dataset_or_404(session, dataset_id)
+    from app.models.industrial_receipt import IndustrialReceipt
+    if inspect(session.connection()).has_table("industrial_receipts"):
+        session.exec(delete(IndustrialReceipt).where(IndustrialReceipt.dataset_id == dataset_id))
     # Read/delete saved-view rows before mutating the sample graph. The service
     # performs a schema inspection and SELECT, both of which may autoflush.
     dataset_saved_view_service.delete_dataset_saved_views(session, dataset_id)

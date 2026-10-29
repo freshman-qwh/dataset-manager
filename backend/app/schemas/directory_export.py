@@ -11,6 +11,8 @@ DirectoryExportDelivery = Literal["zip", "directory"]
 
 
 class DirectoryExportSampleQuery(BaseModel):
+    capture_group_id: str | None = Field(default=None, max_length=160)
+    capture_batch_id: str | None = Field(default=None, max_length=160)
     search: str | None = None
     file_type: Literal["image", "video", "csv"] | None = None
     file_status: str | None = None

@@ -19,6 +19,8 @@ export type DatasetSavedViewSortField =
   | "annotation_progress";
 
 export interface DatasetSavedViewQuery {
+  capture_group_id?: string;
+  capture_batch_id?: string;
   triage_status?: "untriaged" | "pending" | "ok" | "ng";
   ok_grade?: "clear" | "borderline";
   triage_outdated?: boolean;

@@ -43,6 +43,7 @@ def _projection(sample: dict[str, object] | None) -> dict[str, object] | None:
         return None
     annotations = sample.get("annotations")
     return {
+        **{key: sample[key] for key in ("triage_status", "ok_grade", "capture_group_id", "capture_batch_id", "triage_policy_version", "defect_type_ids") if key in sample},
         "relative_path": sample.get("relative_path"),
         "file_hash": sample.get("file_hash"),
         "file_status": sample.get("file_status"),
@@ -79,7 +80,10 @@ def _change_types(
     )
     if any(before.get(field) != after.get(field) for field in file_fields):
         result.append("file")
-    if any(before.get(field) != after.get(field) for field in metadata_fields):
+    industrial_fields = ("triage_status", "ok_grade", "defect_severity", "primary_defect_type_id", "triage_note",
+                         "triage_version", "triage_policy_version", "triaged_file_hash", "defect_type_ids", "capture_group_id", "capture_batch_id")
+    if (any(before.get(field) != after.get(field) for field in metadata_fields)
+        or any(before[field] != after[field] for field in industrial_fields if field in before and field in after)):
         result.append("metadata")
     if before.get("tags") != after.get("tags"):
         result.append("tags")
@@ -155,6 +159,8 @@ def compare_snapshots(
         base_revision=base.dataset_revision,
         target_revision=target.dataset_revision,
         summary=summary,
+        comparison_notes=["v1 快照未记录分拣、采集分组和标准；相关历史差异未知，未以当前值补齐。"] if 1 in (base.content.schema_version, target.content.schema_version) else [],
+        dataset_metadata_changed=any(base.content.dataset[k] != target.content.dataset[k] for k in ("workflow_profile", "triage_policy_version", "triage_policy") if k in base.content.dataset and k in target.content.dataset),
         total=len(filtered),
         page=safe_page,
         page_size=safe_page_size,

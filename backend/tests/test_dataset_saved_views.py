@@ -59,6 +59,7 @@ def test_saved_view_api_create_list_restore_and_delete_without_revision_change()
         assert created["sample_query"] == {
             "triage_status": None, "ok_grade": None, "triage_outdated": None,
             "defect_severity": None, "defect_type_id": None,
+            "capture_group_id": None, "capture_batch_id": None,
             "search": "cat",
             "file_type": "image",
             "file_status": "normal",

@@ -18,6 +18,13 @@ AnnotationExportIssueSeverity = Literal["error", "warning", "info"]
 
 
 class AnnotationExportSampleQuery(BaseModel):
+    triage_status: Literal["untriaged", "pending", "ok", "ng"] | None = None
+    ok_grade: Literal["clear", "borderline"] | None = None
+    triage_outdated: bool | None = None
+    defect_severity: Literal["mild", "moderate", "severe"] | None = None
+    defect_type_id: int | None = Field(default=None, gt=0)
+    capture_group_id: str | None = Field(default=None, max_length=160)
+    capture_batch_id: str | None = Field(default=None, max_length=160)
     expected_dataset_revision: int | None = None
     search: str | None = None
     file_type: str | None = None

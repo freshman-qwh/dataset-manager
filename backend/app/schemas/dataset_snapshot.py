@@ -47,7 +47,8 @@ class DatasetSnapshotRead(BaseModel):
 
 
 class DatasetSnapshotContent(BaseModel):
-    schema_version: Literal[1]
+    schema_version: Literal[1, 2]
+    defect_type_catalog: list[dict[str, object]] | None = None
     dataset: dict[str, object]
     sample_query: AnnotationExportSampleQuery
     export_config: DatasetSnapshotExportConfig
@@ -99,6 +100,8 @@ class DatasetSnapshotDiffItem(BaseModel):
 
 
 class DatasetSnapshotDiffResponse(BaseModel):
+    comparison_notes: list[str] = Field(default_factory=list)
+    dataset_metadata_changed: bool = False
     dataset_id: int
     base_snapshot_id: int
     target_snapshot_id: int

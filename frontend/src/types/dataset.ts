@@ -118,6 +118,8 @@ export interface Sample {
   triaged_at: string | null;
   triage_policy_version: number | null;
   triaged_file_hash: string | null;
+  capture_group_id: string | null;
+  capture_batch_id: string | null;
   triage_outdated: boolean;
   notes: string | null;
   metadata: Record<string, unknown>;
@@ -294,6 +296,8 @@ export interface SampleQuery {
   okGrade?: OkGrade;
   defectSeverity?: DefectSeverity;
   defectTypeId?: number;
+  captureGroupId?: string;
+  captureBatchId?: string;
   triageOutdated?: boolean;
   page?: number;
   pageSize?: number;

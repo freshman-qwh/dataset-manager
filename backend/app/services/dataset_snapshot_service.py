@@ -13,6 +13,7 @@ from app.core.config import get_settings
 from app.models.annotation_class import AnnotationClass
 from app.models.dataset import Dataset, utc_now
 from app.models.dataset_snapshot import DatasetSnapshot
+from app.models.defect_type import DefectType, SampleDefectLink
 from app.models.tag import Tag
 from app.schemas.annotation_export import AnnotationClassMapItem
 from app.schemas.dataset_snapshot import (
@@ -118,6 +119,10 @@ def _build_snapshot_content(
         review_status=query.review_status,
         annotation_progress=query.annotation_progress,
         sample_ids=query.sample_ids,
+        triage_status=query.triage_status, ok_grade=query.ok_grade,
+        triage_outdated=query.triage_outdated, defect_severity=query.defect_severity,
+        defect_type_id=query.defect_type_id,
+        capture_group_id=query.capture_group_id, capture_batch_id=query.capture_batch_id,
         sort_by=query.sort_by,
         sort_order=query.sort_order,
     )
@@ -171,6 +176,12 @@ def _build_snapshot_content(
                 "file_modified_at": (
                     sample.file_modified_at.isoformat() if sample.file_modified_at else None
                 ),
+                "capture_group_id": sample.capture_group_id,
+                "capture_batch_id": sample.capture_batch_id,
+                **{key: getattr(sample, key) for key in ("triage_status", "ok_grade", "defect_severity",
+                   "primary_defect_type_id", "triage_note", "triage_version", "triage_policy_version", "triaged_file_hash")},
+                "triaged_at": sample.triaged_at.isoformat() if sample.triaged_at else None,
+                "defect_type_ids": sorted(session.exec(select(SampleDefectLink.defect_type_id).where(SampleDefectLink.sample_id == sample.id)).all()),
                 "split": sample.split,
                 "annotation_progress": sample.annotation_progress,
                 "review_status": sample.review_status,
@@ -199,13 +210,17 @@ def _build_snapshot_content(
         )
 
     return DatasetSnapshotContent(
-        schema_version=1,
+        schema_version=2,
+        defect_type_catalog=[d.model_dump(mode="json") for d in session.exec(select(DefectType).where(DefectType.dataset_id == dataset.id)).all()],
         dataset={
             "id": dataset.id,
             "revision": dataset.revision,
             "name": dataset.name,
             "description": dataset.description,
             "task_type": dataset.task_type,
+            "workflow_profile": dataset.workflow_profile,
+            "triage_policy_version": dataset.triage_policy_version,
+            "triage_policy": _parse_json_dict(dataset.triage_policy_json),
             "root_path": dataset.root_path,
             "source": dataset.source,
             "modality": dataset.modality,
@@ -377,10 +392,11 @@ def read_snapshot_document(
     snapshot = get_snapshot(session, dataset_id, snapshot_id)
     path = snapshot_artifact_path(session, dataset_id, snapshot_id)
     try:
-        document = DatasetSnapshotDocument.model_validate_json(path.read_text(encoding="utf-8"))
+        raw_document = json.loads(path.read_text(encoding="utf-8"))
+        document = DatasetSnapshotDocument.model_validate(raw_document)
     except (OSError, ValueError) as exc:
         raise DatasetSnapshotArtifactError("Snapshot artifact cannot be read or is invalid.") from exc
-    canonical_content = _canonical_json(document.content.model_dump(mode="json"))
+    canonical_content = _canonical_json(raw_document["content"])
     actual_hash = hashlib.sha256(canonical_content.encode("utf-8")).hexdigest()
     if actual_hash != snapshot.content_sha256 or document.content_sha256 != snapshot.content_sha256:
         raise DatasetSnapshotArtifactError("Snapshot artifact integrity check failed.")

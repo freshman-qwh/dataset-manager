@@ -72,6 +72,8 @@ class SamplePreview(BaseModel):
 
 
 class SampleRead(BaseModel):
+    capture_group_id: str | None = None
+    capture_batch_id: str | None = None
     model_config = ConfigDict(from_attributes=True)
 
     id: int

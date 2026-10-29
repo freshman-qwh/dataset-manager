@@ -4,6 +4,8 @@ import type { TriagePolicy } from "./triage";
 export type DirectoryExportDelivery = "zip" | "directory";
 
 export interface DirectoryExportSampleQuery {
+  capture_group_id?: string;
+  capture_batch_id?: string;
   search?: string;
   file_type?: string;
   file_status?: string;

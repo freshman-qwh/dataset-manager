@@ -9,6 +9,7 @@ from app.api import (
     annotations,
     datasets,
     directory_exports,
+    industrial,
     filesystem,
     jobs,
     samples,
@@ -48,6 +49,7 @@ app.add_middleware(
 )
 
 app.include_router(datasets.router)
+app.include_router(industrial.router)
 app.include_router(directory_exports.router)
 app.include_router(filesystem.router)
 app.include_router(samples.router)

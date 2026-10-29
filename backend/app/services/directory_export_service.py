@@ -101,6 +101,7 @@ def create_directory_export_preview(
             defect_severity=query.defect_severity,
             defect_type_id=query.defect_type_id,
             triage_outdated=query.triage_outdated,
+            capture_group_id=query.capture_group_id, capture_batch_id=query.capture_batch_id,
         )
     sample_ids = [sample.id for sample in samples if sample.id is not None]
     defects = triage_service.defect_types_by_sample(session, sample_ids)

@@ -56,6 +56,7 @@ import {
   updateDataset,
   updateSample
 } from "../api/client";
+import CaptureGroupModal from "../components/CaptureGroupModal";
 import IndustrialOverview from "../components/IndustrialOverview";
 import AnnotationExportModal from "../components/AnnotationExportModal";
 import BatchActionBar from "../components/BatchActionBar";
@@ -225,6 +226,9 @@ export default function DatasetDetailPage() {
   const navigate = useNavigate();
   const datasetId = Number(params.datasetId);
   const [pageSearchParams, setPageSearchParams] = useSearchParams();
+  const captureGroupId = pageSearchParams.get("capture_group_id") || undefined;
+  const captureBatchId = pageSearchParams.get("capture_batch_id") || undefined;
+  const [captureGroupsOpen, setCaptureGroupsOpen] = useState(false);
   const triageStatus = (pageSearchParams.get("triage_status") || undefined) as SampleQuery["triageStatus"];
   const okGrade = (pageSearchParams.get("ok_grade") || undefined) as SampleQuery["okGrade"];
   const triageOutdated = pageSearchParams.has("triage_outdated") ? pageSearchParams.get("triage_outdated") === "true" : undefined;
@@ -353,7 +357,7 @@ export default function DatasetDetailPage() {
       pageSize,
       sortBy,
       sortOrder,
-      triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId,
+      captureGroupId, captureBatchId, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId,
       thumbnailPrefetch: 12
     }, signal);
     if (signal?.aborted || requestId !== samplesRequestIdRef.current) {
@@ -365,7 +369,7 @@ export default function DatasetDetailPage() {
     if (nextSamples.page !== page) {
       setPage(nextSamples.page);
     }
-  }, [datasetId, debouncedSearch, debouncedTag, fileType, fileStatus, split, reviewStatus, annotationProgress, page, pageSize, sortBy, sortOrder, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId]);
+  }, [datasetId, debouncedSearch, debouncedTag, fileType, fileStatus, split, reviewStatus, annotationProgress, page, pageSize, sortBy, sortOrder, captureGroupId, captureBatchId, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId]);
 
   const loadQualityReport = useCallback(async () => {
     setQualityLoading(true);
@@ -631,10 +635,13 @@ export default function DatasetDetailPage() {
       split: split || undefined,
       review_status: reviewStatus || undefined,
       annotation_progress: annotationProgress || undefined,
+      capture_group_id: captureGroupId, capture_batch_id: captureBatchId,
+      triage_status: triageStatus, ok_grade: okGrade, triage_outdated: triageOutdated,
+      defect_severity: defectSeverity, defect_type_id: defectTypeId,
       sort_by: sortBy,
       sort_order: sortOrder
     }),
-    [annotationProgress, debouncedSearch, debouncedTag, fileStatus, fileType, reviewStatus, sortBy, sortOrder, split, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId]
+    [annotationProgress, debouncedSearch, debouncedTag, fileStatus, fileType, reviewStatus, sortBy, sortOrder, split, captureGroupId, captureBatchId, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId]
   );
   const savedViewQuery = useMemo<DatasetSavedViewQuery>(
     () => ({
@@ -647,10 +654,11 @@ export default function DatasetDetailPage() {
       annotation_progress: savedViewAnnotationProgress(annotationProgress),
       triage_status: triageStatus, ok_grade: okGrade, triage_outdated: triageOutdated,
       defect_severity: defectSeverity, defect_type_id: defectTypeId,
+      capture_group_id: captureGroupId, capture_batch_id: captureBatchId,
       sort_by: savedViewSortField(sortBy),
       sort_order: sortOrder
     }),
-    [annotationProgress, debouncedSearch, debouncedTag, fileStatus, fileType, reviewStatus, sortBy, sortOrder, split, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId]
+    [annotationProgress, debouncedSearch, debouncedTag, fileStatus, fileType, reviewStatus, sortBy, sortOrder, split, captureGroupId, captureBatchId, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId]
   );
   const annotationExportSelectedSampleIds = useMemo(
     () => Array.from(selectedSampleIds),
@@ -1108,6 +1116,7 @@ export default function DatasetDetailPage() {
           tag: debouncedTag,
           split,
           reviewStatus,
+          captureGroupId, captureBatchId, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId, annotationProgress: savedViewAnnotationProgress(annotationProgress),
           sortBy,
           sortOrder
         })
@@ -1177,7 +1186,7 @@ export default function DatasetDetailPage() {
     const query = savedView.sample_query;
     setPageSearchParams(current => {
       const next = new URLSearchParams(current);
-      for (const key of ["triage_status", "ok_grade", "triage_outdated", "defect_severity", "defect_type_id"] as const) {
+      for (const key of ["triage_status", "ok_grade", "triage_outdated", "defect_severity", "defect_type_id", "capture_group_id", "capture_batch_id"] as const) {
         const value = query[key];
         if (value !== undefined && value !== null) next.set(key, String(value)); else next.delete(key);
       }
@@ -1329,7 +1338,9 @@ export default function DatasetDetailPage() {
 
         {dataset?.workflow_profile === "industrial_anomaly" && <IndustrialOverview dataset={dataset}
           onScan={() => setScanOpen(true)} onQuality={() => setQualityOpen(true)}
+          onGroups={() => setCaptureGroupsOpen(true)}
           onFilter={() => { setPage(1); setSelectedSampleIds(new Set()); }} />}
+        {captureGroupsOpen && <CaptureGroupModal datasetId={datasetId} selectedIds={Array.from(selectedSampleIds)} onClose={() => setCaptureGroupsOpen(false)} onUpdated={async () => { await Promise.all([loadOverview(), loadSamples()]); }} />}
         {dataset && dataset.workflow_profile !== "industrial_anomaly" && (
           <section className="overflow-hidden rounded-2xl border border-line bg-white shadow-sm" aria-labelledby="dataset-workspace-status">
             <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] lg:grid-cols-[minmax(0,1.5fr)_minmax(300px,0.85fr)]">

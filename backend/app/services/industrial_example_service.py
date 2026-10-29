@@ -36,6 +36,8 @@ def create_example(session: Session):
     scan_service.scan_dataset(session, dataset.id, ScanRequest(folder_path=str(root)))
     samples = session.exec(select(Sample).where(Sample.dataset_id == dataset.id).order_by(Sample.filename)).all()
     for i, sample in enumerate(samples):
+        sample.capture_group_id = sample.filename.rsplit("_view_", 1)[0]
+        sample.capture_batch_id = "synthetic-batch-1"
         sample.triage_status = "ok" if i < 10 else "ng"
         sample.ok_grade = "clear" if i < 10 else None
         sample.triage_version = 1

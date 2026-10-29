@@ -584,7 +584,7 @@ export async function listSamples(params: SampleQuery, signal?: AbortSignal): Pr
   const {
     datasetId, search, fileType, fileStatus, tag, split, reviewStatus,
     annotationProgress, triageStatus, okGrade, defectSeverity, defectTypeId,
-    triageOutdated, page, pageSize, sortBy, sortOrder, thumbnailPrefetch
+    triageOutdated, captureGroupId, captureBatchId, page, pageSize, sortBy, sortOrder, thumbnailPrefetch
   } = params;
   const { data } = await client.get<SampleListResponse>(`/datasets/${datasetId}/samples`, {
     signal,
@@ -600,7 +600,9 @@ export async function listSamples(params: SampleQuery, signal?: AbortSignal): Pr
       ok_grade: okGrade || undefined,
       defect_severity: defectSeverity || undefined,
       defect_type_id: defectTypeId || undefined,
-      triage_outdated: triageOutdated || undefined,
+      capture_group_id: captureGroupId || undefined,
+      capture_batch_id: captureBatchId || undefined,
+      triage_outdated: triageOutdated,
       page,
       page_size: pageSize,
       sort_by: sortBy,
@@ -891,6 +893,10 @@ export function getManifestUrl(datasetId: number, params?: Omit<SampleQuery, "da
   if (params?.sortOrder) {
     searchParams.set("sort_order", params.sortOrder);
   }
+  const extra = { capture_group_id: params?.captureGroupId, capture_batch_id: params?.captureBatchId,
+    triage_status: params?.triageStatus, ok_grade: params?.okGrade, triage_outdated: params?.triageOutdated,
+    defect_severity: params?.defectSeverity, defect_type_id: params?.defectTypeId, annotation_progress: params?.annotationProgress };
+  for (const [key, value] of Object.entries(extra)) if (value !== undefined && value !== "") searchParams.set(key, String(value));
   const query = searchParams.toString();
   return `${API_BASE_URL}/datasets/${datasetId}/export-manifest${query ? `?${query}` : ""}`;
 }
@@ -1066,4 +1072,14 @@ export async function downloadAnnotationExport(
     blob: response.data,
     filename: filenameMatch?.[1] ?? `dataset-${datasetId}-${format}`
   };
+}
+
+export async function previewCaptureGroups(datasetId: number, payload: import("../types/industrial").GroupPreviewRequest) {
+  return (await client.post<import("../types/industrial").FrozenPlan>(`/datasets/${datasetId}/industrial/group-previews`, payload)).data;
+}
+export async function getIndustrialPlan(datasetId: number, planId: string, page = 1) {
+  return (await client.get<import("../types/industrial").FrozenPlan>(`/datasets/${datasetId}/industrial/plans/${planId}`, { params: { page } })).data;
+}
+export async function confirmCaptureGroups(datasetId: number, plan: import("../types/industrial").FrozenPlan, confirmation: string) {
+  return (await client.post(`/datasets/${datasetId}/industrial/group-previews/${plan.plan_id}/confirm`, { plan_hash: plan.plan_hash, confirmation })).data;
 }

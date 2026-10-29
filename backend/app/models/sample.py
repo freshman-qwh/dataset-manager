@@ -85,6 +85,8 @@ class Sample(SQLModel, table=True):
     triaged_at: datetime | None = Field(default=None)
     triage_policy_version: int | None = Field(default=None)
     triaged_file_hash: str | None = Field(default=None, max_length=128)
+    capture_group_id: str | None = Field(default=None, max_length=160, index=True)
+    capture_batch_id: str | None = Field(default=None, max_length=160, index=True)
     notes: str | None = Field(default=None, max_length=4000)
     metadata_json: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=utc_now)

@@ -28,6 +28,8 @@ BACKUP_TABLES = (
     "annotations",
     "training_readiness_states",
     "jobs",
+    "defect_types", "sample_defect_links", "dataset_saved_views",
+    "dataset_snapshots", "training_split_receipts", "industrial_receipts",
 )
 
 

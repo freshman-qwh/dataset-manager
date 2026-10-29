@@ -340,6 +340,10 @@ def _prepare_export(
         review_status=query.review_status,
         annotation_progress=query.annotation_progress,
         sample_ids=query.sample_ids,
+        triage_status=query.triage_status, ok_grade=query.ok_grade,
+        triage_outdated=query.triage_outdated, defect_severity=query.defect_severity,
+        defect_type_id=query.defect_type_id,
+        capture_group_id=query.capture_group_id, capture_batch_id=query.capture_batch_id,
         sort_by=query.sort_by,
         sort_order=query.sort_order,
     )

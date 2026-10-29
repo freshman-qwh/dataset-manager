@@ -264,6 +264,8 @@ export default function DatasetSnapshotModal({
             <h3 className="text-sm font-semibold text-ink">快照差异摘要</h3>
             <p className="mt-1 text-xs text-gray-500">Revision {diff.base_revision} → {diff.target_revision}</p>
             <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-gray-600 sm:grid-cols-4">
+              {diff.comparison_notes.map(note => <p key={note} className="w-full text-amber-800">{note}</p>)}
+              {diff.dataset_metadata_changed && <p className="w-full text-amber-800">项目用途或分拣标准已变化</p>}
               <span>新增 {diff.summary.added}</span>
               <span>删除 {diff.summary.removed}</span>
               <span>文件 {diff.summary.file_changed}</span>
