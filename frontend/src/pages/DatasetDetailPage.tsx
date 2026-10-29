@@ -56,6 +56,7 @@ import {
   updateDataset,
   updateSample
 } from "../api/client";
+import IndustrialOverview from "../components/IndustrialOverview";
 import AnnotationExportModal from "../components/AnnotationExportModal";
 import BatchActionBar from "../components/BatchActionBar";
 import BatchTriageModal from "../components/BatchTriageModal";
@@ -224,6 +225,11 @@ export default function DatasetDetailPage() {
   const navigate = useNavigate();
   const datasetId = Number(params.datasetId);
   const [pageSearchParams, setPageSearchParams] = useSearchParams();
+  const triageStatus = (pageSearchParams.get("triage_status") || undefined) as SampleQuery["triageStatus"];
+  const okGrade = (pageSearchParams.get("ok_grade") || undefined) as SampleQuery["okGrade"];
+  const triageOutdated = pageSearchParams.has("triage_outdated") ? pageSearchParams.get("triage_outdated") === "true" : undefined;
+  const defectSeverity = (pageSearchParams.get("defect_severity") || undefined) as SampleQuery["defectSeverity"];
+  const defectTypeId = pageSearchParams.get("defect_type_id") ? Number(pageSearchParams.get("defect_type_id")) : undefined;
   const [initialCache] = useState(() => readDatasetDetailCache(datasetId));
   const [dataset, setDataset] = useState<Dataset | null>(initialCache?.dataset ?? null);
   const [importReview, setImportReview] = useState<AnnotationImportReview | null>(null);
@@ -347,6 +353,7 @@ export default function DatasetDetailPage() {
       pageSize,
       sortBy,
       sortOrder,
+      triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId,
       thumbnailPrefetch: 12
     }, signal);
     if (signal?.aborted || requestId !== samplesRequestIdRef.current) {
@@ -358,7 +365,7 @@ export default function DatasetDetailPage() {
     if (nextSamples.page !== page) {
       setPage(nextSamples.page);
     }
-  }, [datasetId, debouncedSearch, debouncedTag, fileType, fileStatus, split, reviewStatus, annotationProgress, page, pageSize, sortBy, sortOrder]);
+  }, [datasetId, debouncedSearch, debouncedTag, fileType, fileStatus, split, reviewStatus, annotationProgress, page, pageSize, sortBy, sortOrder, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId]);
 
   const loadQualityReport = useCallback(async () => {
     setQualityLoading(true);
@@ -627,7 +634,7 @@ export default function DatasetDetailPage() {
       sort_by: sortBy,
       sort_order: sortOrder
     }),
-    [annotationProgress, debouncedSearch, debouncedTag, fileStatus, fileType, reviewStatus, sortBy, sortOrder, split]
+    [annotationProgress, debouncedSearch, debouncedTag, fileStatus, fileType, reviewStatus, sortBy, sortOrder, split, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId]
   );
   const savedViewQuery = useMemo<DatasetSavedViewQuery>(
     () => ({
@@ -638,10 +645,12 @@ export default function DatasetDetailPage() {
       split: split || undefined,
       review_status: savedViewReviewStatus(reviewStatus),
       annotation_progress: savedViewAnnotationProgress(annotationProgress),
+      triage_status: triageStatus, ok_grade: okGrade, triage_outdated: triageOutdated,
+      defect_severity: defectSeverity, defect_type_id: defectTypeId,
       sort_by: savedViewSortField(sortBy),
       sort_order: sortOrder
     }),
-    [annotationProgress, debouncedSearch, debouncedTag, fileStatus, fileType, reviewStatus, sortBy, sortOrder, split]
+    [annotationProgress, debouncedSearch, debouncedTag, fileStatus, fileType, reviewStatus, sortBy, sortOrder, split, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId]
   );
   const annotationExportSelectedSampleIds = useMemo(
     () => Array.from(selectedSampleIds),
@@ -1166,6 +1175,14 @@ export default function DatasetDetailPage() {
 
   function applySavedView(savedView: DatasetSavedView) {
     const query = savedView.sample_query;
+    setPageSearchParams(current => {
+      const next = new URLSearchParams(current);
+      for (const key of ["triage_status", "ok_grade", "triage_outdated", "defect_severity", "defect_type_id"] as const) {
+        const value = query[key];
+        if (value !== undefined && value !== null) next.set(key, String(value)); else next.delete(key);
+      }
+      return next;
+    });
     setSearch(query.search ?? "");
     setFileType(query.file_type ?? "");
     setFileStatus(query.file_status ?? "");
@@ -1310,7 +1327,10 @@ export default function DatasetDetailPage() {
       <section className="mx-auto max-w-7xl space-y-5 px-5 py-6">
         {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
-        {dataset && (
+        {dataset?.workflow_profile === "industrial_anomaly" && <IndustrialOverview dataset={dataset}
+          onScan={() => setScanOpen(true)} onQuality={() => setQualityOpen(true)}
+          onFilter={() => { setPage(1); setSelectedSampleIds(new Set()); }} />}
+        {dataset && dataset.workflow_profile !== "industrial_anomaly" && (
           <section className="overflow-hidden rounded-2xl border border-line bg-white shadow-sm" aria-labelledby="dataset-workspace-status">
             <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] lg:grid-cols-[minmax(0,1.5fr)_minmax(300px,0.85fr)]">
               <div className="min-w-0 space-y-5 p-5 sm:p-6">
@@ -1517,7 +1537,7 @@ export default function DatasetDetailPage() {
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 text-sm font-semibold text-white transition hover:bg-gray-800"
               >
                 <ShieldCheck size={17} />
-                准备训练
+                {dataset?.workflow_profile === "industrial_anomaly" ? "检查异常检测数据" : "准备训练"}
               </button>
               <button
                 type="button"
@@ -1800,6 +1820,7 @@ export default function DatasetDetailPage() {
       />
       <DatasetQualityModal
         open={qualityOpen}
+        industrial={dataset?.workflow_profile === "industrial_anomaly"}
         taskType={dataset?.task_type}
         report={qualityReport}
         loading={qualityLoading}
@@ -1899,7 +1920,8 @@ export default function DatasetDetailPage() {
       <DirectoryExportModal
         datasetId={datasetId}
         open={directoryExportOpen}
-        currentQuery={annotationExportQuery}
+        currentQuery={{ ...annotationExportQuery, triage_status: triageStatus, ok_grade: okGrade,
+          triage_outdated: triageOutdated, defect_severity: defectSeverity, defect_type_id: defectTypeId }}
         selectedSampleIds={annotationExportSelectedSampleIds}
         onClose={() => setDirectoryExportOpen(false)}
       />

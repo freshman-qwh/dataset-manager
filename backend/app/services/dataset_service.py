@@ -36,6 +36,12 @@ def list_datasets(session: Session) -> list[DatasetRead]:
 
 def create_dataset(session: Session, payload: DatasetCreate) -> DatasetRead:
     dataset = Dataset(**payload.model_dump())
+    if payload.workflow_profile == "industrial_anomaly":
+        from app.schemas.triage import TriagePolicyValues
+
+        dataset.triage_policy_json = TriagePolicyValues(split_ok=True, ng_grouping="none").model_dump_json()
+        if "task_type" not in payload.model_fields_set:
+            dataset.task_type = "classification"
     session.add(dataset)
     session.commit()
     session.refresh(dataset)

@@ -23,6 +23,11 @@ SavedViewSortField = Literal[
 
 
 class DatasetSavedViewQuery(BaseModel):
+    triage_status: Literal["untriaged", "pending", "ok", "ng"] | None = None
+    ok_grade: Literal["clear", "borderline"] | None = None
+    triage_outdated: bool | None = None
+    defect_severity: Literal["mild", "moderate", "severe"] | None = None
+    defect_type_id: int | None = Field(default=None, gt=0)
     search: str | None = Field(default=None, max_length=300)
     file_type: str | None = Field(default=None, max_length=40)
     file_status: str | None = Field(default=None, max_length=40)

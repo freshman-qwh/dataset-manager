@@ -14,7 +14,8 @@ interface CreateDatasetModalProps {
 export default function CreateDatasetModal({ open, onClose, onCreate }: CreateDatasetModalProps) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [taskType, setTaskType] = useState<DatasetCreate["task_type"]>("detection");
+  const [taskType, setTaskType] = useState<DatasetCreate["task_type"]>("classification");
+  const [profile, setProfile] = useState<"general" | "industrial_anomaly">("industrial_anomaly");
   const [rootPath, setRootPath] = useState("");
   const [source, setSource] = useState("");
   const [modality, setModality] = useState("");
@@ -35,6 +36,7 @@ export default function CreateDatasetModal({ open, onClose, onCreate }: CreateDa
         name: name.trim(),
         description: description.trim() || null,
         task_type: taskType,
+        workflow_profile: profile,
         root_path: rootPath.trim() || null,
         source: source.trim() || null,
         modality: modality.trim() || null,
@@ -50,7 +52,7 @@ export default function CreateDatasetModal({ open, onClose, onCreate }: CreateDa
       setLicense("");
       setOwner("");
       setProject("");
-      setTaskType("detection");
+      setTaskType(profile === "industrial_anomaly" ? "classification" : "detection");
       onClose();
     } finally {
       setSaving(false);
@@ -60,6 +62,15 @@ export default function CreateDatasetModal({ open, onClose, onCreate }: CreateDa
   return (
     <Modal open={open} title="创建数据集" onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4 px-5 py-5">
+        <label className="block text-sm font-medium text-gray-700">准备目标
+          <select aria-label="准备目标" value={profile} onChange={(event) => {
+            const next = event.target.value as typeof profile;
+            setProfile(next); setTaskType(next === "industrial_anomaly" ? "classification" : "detection");
+          }} className="mt-2 w-full rounded-lg border border-line bg-white px-3 py-2.5">
+            <option value="industrial_anomaly">工业异常检测</option><option value="general">通用检测 / 分割 / 分类</option>
+          </select>
+          {profile === "industrial_anomaly" && <span className="mt-2 block text-xs font-normal text-gray-500">先判定完全正常、临界或异常，再准备纯正常训练与独立评估数据。无需先画框。</span>}
+        </label>
         <label className="block">
           <span className="text-sm font-medium text-gray-700">名称 *</span>
           <input
@@ -71,13 +82,13 @@ export default function CreateDatasetModal({ open, onClose, onCreate }: CreateDa
           />
         </label>
         <label className="block">
-          <span className="text-sm font-medium text-gray-700">任务类型</span>
+          <span className="text-sm font-medium text-gray-700">{profile === "industrial_anomaly" ? "可选标注方式" : "任务类型"}</span>
           <select
             value={taskType}
             onChange={(event) => setTaskType(event.target.value as DatasetCreate["task_type"])}
             className="mt-2 w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm outline-none transition focus:border-gray-900"
           >
-            {datasetTaskOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            {datasetTaskOptions.map((option) => <option key={option.value} value={option.value}>{profile === "industrial_anomaly" && option.value === "classification" ? "只做图像级判定（无需画框）" : option.label}</option>)}
           </select>
           <span className="mt-1 block text-xs text-gray-500">{datasetTaskOptions.find((option) => option.value === taskType)?.description}</span>
         </label>

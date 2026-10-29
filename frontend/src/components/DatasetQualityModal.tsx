@@ -8,6 +8,7 @@ import Modal from "./Modal";
 interface DatasetQualityModalProps {
   open: boolean;
   taskType?: string;
+  industrial?: boolean;
   report: DatasetQualityReport | null;
   loading: boolean;
   error: string | null;
@@ -39,6 +40,7 @@ function severityIcon(severity: QualityIssueSeverity) {
 export default function DatasetQualityModal({
   open,
   taskType,
+  industrial = false,
   report,
   loading,
   error,
@@ -84,7 +86,7 @@ export default function DatasetQualityModal({
           <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
             <div>
               <p className="text-sm text-gray-600">
-                {classificationMode
+                {industrial ? "检查图像可读取性、分拣依据与精确重复泄漏；分组和训练资格以协议预检为准。" : classificationMode
                   ? "检查样本标签、split 泄漏、类别分布和审核状态。"
                   : "检查任务形状、标注几何、重复对象、split 泄漏、类别分布和审核状态。"}
               </p>
@@ -114,9 +116,9 @@ export default function DatasetQualityModal({
             <div className="space-y-5">
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                 <div className="rounded-lg border border-line bg-gray-50 p-3">
-                  <div className="text-xs text-gray-500">{classificationMode ? "已分类 / 无标签" : "有对象 / 确认无目标"}</div>
+                  <div className="text-xs text-gray-500">{industrial ? "登记图片" : classificationMode ? "已分类 / 无标签" : "有对象 / 确认无目标"}</div>
                   <div className="mt-1 text-xl font-semibold text-ink">
-                    {classificationMode
+                    {industrial ? report.image_sample_count : classificationMode
                       ? `${report.samples_with_objects_count} / ${pendingCount}`
                       : `${report.samples_with_objects_count} / ${report.confirmed_empty_sample_count}`}
                   </div>
@@ -130,8 +132,8 @@ export default function DatasetQualityModal({
                 <button type="button" onClick={() => setSeverity("info")} className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-left text-blue-800">
                   <div className="text-xs">提示</div><div className="mt-1 text-xl font-semibold">{report.info_count}</div>
                 </button>
-                <button type="button" onClick={onFilterEmpty} disabled={pendingCount === 0} className="rounded-lg border border-line bg-white p-3 text-left disabled:cursor-not-allowed disabled:opacity-50">
-                  <div className="text-xs text-gray-500">{classificationMode ? "待分类样本" : "待处理图片"}</div><div className="mt-1 text-xl font-semibold text-ink">{pendingCount}</div>
+                <button type="button" onClick={onFilterEmpty} disabled={industrial || pendingCount === 0} className="rounded-lg border border-line bg-white p-3 text-left disabled:cursor-not-allowed disabled:opacity-50">
+                  <div className="text-xs text-gray-500">{industrial ? "需要复核的问题" : classificationMode ? "待分类样本" : "待处理图片"}</div><div className="mt-1 text-xl font-semibold text-ink">{industrial ? report.warning_count : pendingCount}</div>
                 </button>
               </div>
 

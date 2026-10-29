@@ -42,6 +42,11 @@ const SORT_LABELS: Record<string, string> = {
 
 function querySummary(query: DatasetSavedViewQuery): string {
   const parts: string[] = [];
+  if (query.triage_status) parts.push(`分拣 ${query.triage_status}`);
+  if (query.ok_grade) parts.push(query.ok_grade === "clear" ? "完全 OK" : "临界可接受");
+  if (typeof query.triage_outdated === "boolean") parts.push(query.triage_outdated ? "判定待复核" : "当前判定");
+  if (query.defect_severity) parts.push(`程度 ${query.defect_severity}`);
+  if (query.defect_type_id) parts.push(`缺陷类型 ${query.defect_type_id}`);
   if (query.search) parts.push(`搜索“${query.search}”`);
   if (query.file_type) parts.push(`类型 ${query.file_type}`);
   if (query.file_status) parts.push(`文件 ${query.file_status}`);

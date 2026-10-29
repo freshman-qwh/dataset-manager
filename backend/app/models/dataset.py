@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Column, Integer, text
+from sqlalchemy import Boolean, Column, Integer, String, text
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
@@ -20,6 +20,7 @@ class Dataset(SQLModel, table=True):
     name: str = Field(index=True, min_length=1, max_length=160)
     description: str | None = Field(default=None, max_length=2000)
     task_type: str = Field(default="detection", max_length=80)
+    workflow_profile: str = Field(default="general", sa_column=Column(String(40), nullable=False, server_default="general"))
     root_path: str | None = Field(default=None, max_length=2000)
     source: str | None = Field(default=None, max_length=500)
     modality: str | None = Field(default=None, max_length=120)

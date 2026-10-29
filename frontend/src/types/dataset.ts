@@ -26,6 +26,7 @@ export interface Dataset {
   name: string;
   description: string | null;
   task_type: DatasetTaskType | string;
+  workflow_profile: "general" | "industrial_anomaly";
   task_capabilities: DatasetTaskCapabilities;
   root_path: string | null;
   source: string | null;
@@ -46,6 +47,7 @@ export interface DatasetCreate {
   name: string;
   description?: string | null;
   task_type?: DatasetTaskType;
+  workflow_profile?: "general" | "industrial_anomaly";
   root_path?: string | null;
   source?: string | null;
   modality?: string | null;

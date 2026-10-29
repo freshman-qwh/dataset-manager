@@ -1,4 +1,9 @@
 import axios from "axios";
+
+export async function createIndustrialExample(): Promise<Dataset> {
+  const { data } = await client.post<Dataset>("/datasets/industrial-example");
+  return data;
+}
 import type { SamPrediction, SamPrompts, SamStatus } from "../types/sam";
 
 import type {

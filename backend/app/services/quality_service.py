@@ -26,6 +26,8 @@ TRAINING_SPLITS = {"train", "val", "test"}
 STANDARD_REVIEW_STATUSES = ("not_reviewed", "in_review", "approved", "rejected")
 
 ISSUE_COPY: dict[str, tuple[str, str]] = {
+    "TRIAGE_REVIEW_REQUIRED": ("分拣需要复核", "尚未明确判定或判定依据已变化，请先复核图片。"),
+    "NORMAL_GRADE_REQUIRED": ("正常等级尚未确认", "统一 OK 不能自动视为纯正常训练样本，请明确正常等级。"),
     "IMAGE_UNREADABLE": ("图片无法解码", "文件存在，但无法读取完整像素。请复核源文件或从本次训练范围排除。"),
     "FILE_UNAVAILABLE": ("文件不可用", "样本文件缺失或当前进程没有读取权限。"),
     "ANNOTATION_NOT_STARTED": ("标注尚未开始", "该图片尚未进入标注流程。"),
@@ -134,7 +136,17 @@ def build_quality_report(
     split_class_counts: dict[str, Counter[str]] = defaultdict(Counter)
     annotated_sample_count = 0
 
-    if task_capabilities is None:
+    if dataset.workflow_profile == "industrial_anomaly":
+        for sample in image_samples:
+            if sample.file_status != "normal":
+                issues.add("error", "FILE_UNAVAILABLE", sample=sample)
+            if (sample.triage_status in {"untriaged", "pending"}
+                    or sample.triaged_file_hash != sample.file_hash
+                    or sample.triage_policy_version != dataset.triage_policy_version):
+                issues.add("warning", "TRIAGE_REVIEW_REQUIRED", sample=sample)
+            elif sample.triage_status == "ok" and sample.ok_grade is None:
+                issues.add("warning", "NORMAL_GRADE_REQUIRED", sample=sample)
+    elif task_capabilities is None:
         issues.add(
             "error",
             "TASK_TYPE_UNSUPPORTED",

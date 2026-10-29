@@ -25,6 +25,8 @@ export default function DatasetSettingsModal({
   onDelete
 }: DatasetSettingsModalProps) {
   const [name, setName] = useState("");
+  const [profile, setProfile] = useState<"general" | "industrial_anomaly">("general");
+  const [confirmProfile, setConfirmProfile] = useState(false);
   const [taskType, setTaskType] = useState<DatasetCreate["task_type"]>("detection");
   const [rootPath, setRootPath] = useState("");
   const [project, setProject] = useState("");
@@ -43,6 +45,8 @@ export default function DatasetSettingsModal({
       return;
     }
     setName(dataset.name);
+    setProfile(dataset.workflow_profile ?? "general");
+    setConfirmProfile(false);
     setTaskType(datasetTaskOptions.some((option) => option.value === dataset.task_type) ? dataset.task_type as DatasetCreate["task_type"] : "detection");
     setRootPath(dataset.root_path || "");
     setProject(dataset.project || "");
@@ -61,8 +65,10 @@ export default function DatasetSettingsModal({
     if (!name.trim()) {
       return;
     }
+    if (profile !== dataset?.workflow_profile && !confirmProfile) return;
     await onSave({
       name: name.trim(),
+      workflow_profile: profile,
       task_type: taskType,
       root_path: rootPath.trim() || null,
       project: project.trim() || null,
@@ -107,6 +113,15 @@ export default function DatasetSettingsModal({
         </label>
 
         <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block text-sm font-medium text-gray-700">准备用途
+            <select aria-label="准备用途" value={profile} onChange={e => { setProfile(e.target.value as typeof profile); setConfirmProfile(false); }} className="mt-2 w-full rounded-lg border border-line bg-white px-3 py-2.5">
+              <option value="general">通用数据整理</option><option value="industrial_anomaly">工业异常检测</option>
+            </select>
+          </label>
+          {profile !== dataset?.workflow_profile && <label className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">
+            <input type="checkbox" checked={confirmProfile} onChange={e => setConfirmProfile(e.target.checked)} required />
+            我确认切换用途。已有判定、标签、几何标注和划分均保留；统一 OK 仍需复核等级，不会自动变为完全正常。
+          </label>}
           <label className="block">
             <span className="text-sm font-medium text-gray-700">任务类型</span>
             <select

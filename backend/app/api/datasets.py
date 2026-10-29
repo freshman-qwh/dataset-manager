@@ -73,6 +73,13 @@ from app.services import (
 router = APIRouter(prefix="/api", tags=["datasets"])
 
 
+@router.post("/datasets/industrial-example", response_model=DatasetRead)
+def create_industrial_example(session: Session = Depends(get_session)) -> DatasetRead:
+    from app.services.industrial_example_service import create_example
+
+    return create_example(session)
+
+
 def _raise_snapshot_http_error(exc: dataset_snapshot_service.DatasetSnapshotError) -> NoReturn:
     if isinstance(exc, dataset_snapshot_service.DatasetSnapshotSchemaUnavailableError):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc

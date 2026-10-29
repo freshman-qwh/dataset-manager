@@ -2,7 +2,8 @@ import { Calendar, Database, MoreHorizontal, Plus, RefreshCw, Settings, Trash2 }
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { createDataset, deleteDataset, listDatasets, updateDataset } from "../api/client";
+import { createDataset, createIndustrialExample, deleteDataset, listDatasets, updateDataset } from "../api/client";
+import { useNavigate } from "react-router-dom";
 import CreateDatasetModal from "../components/CreateDatasetModal";
 import DatabaseMaintenanceModal from "../components/DatabaseMaintenanceModal";
 import DatasetSettingsModal from "../components/DatasetSettingsModal";
@@ -17,6 +18,8 @@ function formatDate(value: string): string {
 }
 
 export default function DatasetListPage() {
+  const navigate = useNavigate();
+  const [creatingExample, setCreatingExample] = useState(false);
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -83,7 +86,7 @@ export default function DatasetListPage() {
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-5">
           <div>
             <h1 className="text-xl font-semibold tracking-normal text-ink">Dataset Manager</h1>
-            <p className="mt-1 text-sm text-gray-500">本地科研数据集工作台</p>
+            <p className="mt-1 text-sm text-gray-500">本地工业异常检测数据准备工作台</p>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -109,6 +112,15 @@ export default function DatasetListPage() {
       </header>
 
       <section className="mx-auto max-w-7xl px-5 py-8">
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-white p-4 text-sm">
+          <div><strong>从图片到可信的异常检测数据</strong><p className="mt-1 text-gray-500">分拣正常与异常、隔离工件、导出训练包。原始图片始终保留在本地。</p></div>
+          <button disabled={creatingExample} className="rounded-lg border border-line px-4 py-2 disabled:opacity-50" onClick={async () => {
+            setCreatingExample(true);
+            try { const example = await createIndustrialExample(); navigate(`/datasets/${example.id}`); }
+            catch { setError("示例创建失败，请检查应用存储和数据库维护状态。"); }
+            finally { setCreatingExample(false); }
+          }}>{creatingExample ? "正在准备示例…" : "体验合成示例"}</button>
+        </div>
         {error && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
         {loading ? (
@@ -178,7 +190,7 @@ export default function DatasetListPage() {
                       </p>
                     </div>
                     <span className="rounded-md border border-line bg-gray-50 px-2 py-1 text-xs text-gray-600">
-                      {dataset.task_capabilities.label}
+                      {dataset.workflow_profile === "industrial_anomaly" ? "工业异常检测" : dataset.task_capabilities.label}
                     </span>
                   </div>
                   <div className="mt-5 flex flex-wrap items-center justify-between gap-2 text-sm text-gray-500">
