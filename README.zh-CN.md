@@ -18,6 +18,8 @@ Windows x64 用户可使用免安装便携版：完整解压 ZIP 后双击 `Data
 
 开发环境启动方式如下。
 
+全新数据库首次启动会通过正式迁移初始化全部结构。已有数据库仍需按维护说明离线升级；请先停止后端，再在 backend 目录运行 `python -m app.cli.database upgrade --database ../database/app.db --backup-dir ../database/backups`，升级前会校验备份。便携版由启动器处理此步骤。
+
 后端：
 
 ```bash

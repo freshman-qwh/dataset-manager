@@ -19,12 +19,14 @@ from app.services.annotation_geometry import (
     rectangle_to_bbox,
 )
 from app.utils.image_size import read_image_size
+from app.utils.image_validation import image_is_decodable
 
 DEFAULT_ISSUE_LIMIT = 500
 TRAINING_SPLITS = {"train", "val", "test"}
 STANDARD_REVIEW_STATUSES = ("not_reviewed", "in_review", "approved", "rejected")
 
 ISSUE_COPY: dict[str, tuple[str, str]] = {
+    "IMAGE_UNREADABLE": ("图片无法解码", "文件存在，但无法读取完整像素。请复核源文件或从本次训练范围排除。"),
     "FILE_UNAVAILABLE": ("文件不可用", "样本文件缺失或当前进程没有读取权限。"),
     "ANNOTATION_NOT_STARTED": ("标注尚未开始", "该图片尚未进入标注流程。"),
     "ANNOTATION_INCOMPLETE": ("标注仍在处理中", "该图片已开始处理，但还没有标注对象或完成确认。"),
@@ -117,6 +119,9 @@ def build_quality_report(
             annotations_by_sample[annotation.sample_id].append(annotation_service.to_annotation_read(annotation))
 
     issues = _IssueCollector(max(1, min(issue_limit, 1000)))
+    for sample in image_samples:
+        if sample.file_status == "normal" and not image_is_decodable(Path(sample.absolute_path)):
+            issues.add("error", "IMAGE_UNREADABLE", sample=sample)
     task_capabilities = TASK_CAPABILITIES.get(dataset.task_type)
     quality_samples = samples if dataset.task_type == "classification" else image_samples
     review_status_counts = Counter((sample.review_status or "not_reviewed") for sample in quality_samples)

@@ -100,8 +100,8 @@ function triageBadge(sample: Sample): { label: string; className: string } {
   }
   if (sample.triage_status === "ok") {
     return {
-      label: sample.ok_grade === "clear" ? "完全 OK" : "勉强 OK",
-      className: sample.ok_grade === "clear"
+      label: sample.ok_grade === "clear" ? "完全 OK" : sample.ok_grade === "borderline" ? "勉强 OK" : "OK",
+      className: sample.ok_grade !== "borderline"
         ? "border-emerald-200 bg-emerald-50 text-emerald-800"
         : "border-amber-200 bg-amber-50 text-amber-800"
     };

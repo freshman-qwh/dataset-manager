@@ -168,6 +168,13 @@ def init_db() -> None:
     """Create local directories and SQLite tables for the MVP."""
     settings.database_path.parent.mkdir(parents=True, exist_ok=True)
     settings.storage_root.mkdir(parents=True, exist_ok=True)
+    # A missing/zero-byte database contains no user records. Initialize it via
+    # the same migrations as the portable launcher, before opening WAL handles.
+    # Existing databases keep the explicit offline, backed-up upgrade boundary.
+    if not settings.database_path.exists() or settings.database_path.stat().st_size == 0:
+        from app.core.migrations import upgrade_database
+
+        upgrade_database(settings.database_path)
     initialize_sqlite_runtime(engine)
 
     # Import models before create_all so SQLModel metadata is complete.
