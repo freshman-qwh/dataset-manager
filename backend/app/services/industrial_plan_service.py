@@ -31,7 +31,8 @@ def freeze(kind: str, dataset_id: int, revision: int, rows: list[dict], summary:
     plan = dict(plan_id=uuid4().hex, kind=kind, dataset_id=dataset_id,
                 dataset_revision=revision, expires_at=time.time() + 86400,
                 rows=rows, summary=summary, **extra)
-    plan["confirmation"] = f"确认{'更新采集分组' if kind == 'groups' else '写回训练划分'} {len(rows)} 张图片"
+    count = len(rows) if kind == "groups" else sum(bool(r.get("split")) for r in rows)
+    plan["confirmation"] = f"确认{'更新采集分组' if kind == 'groups' else '写回训练划分'} {count} 张图片"
     plan["plan_hash"] = digest(plan)
     path = plan_path(plan["plan_id"])
     path.parent.mkdir(parents=True, exist_ok=True)

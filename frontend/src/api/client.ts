@@ -1083,3 +1083,10 @@ export async function getIndustrialPlan(datasetId: number, planId: string, page 
 export async function confirmCaptureGroups(datasetId: number, plan: import("../types/industrial").FrozenPlan, confirmation: string) {
   return (await client.post(`/datasets/${datasetId}/industrial/group-previews/${plan.plan_id}/confirm`, { plan_hash: plan.plan_hash, confirmation })).data;
 }
+
+export async function previewAnomalyProtocol(datasetId: number, payload: Record<string, unknown>) {
+  return (await client.post<import("../types/industrial").FrozenPlan>(`/datasets/${datasetId}/industrial/anomaly-previews`, payload, { timeout: 180000 })).data;
+}
+export async function confirmAnomalySplits(datasetId: number, plan: import("../types/industrial").FrozenPlan, confirmation: string): Promise<{plan_id: string; plan_hash: string; dataset_revision: number}> {
+  return (await client.post(`/datasets/${datasetId}/industrial/anomaly-previews/${plan.plan_id}/confirm-splits`, {plan_hash: plan.plan_hash, confirmation})).data;
+}

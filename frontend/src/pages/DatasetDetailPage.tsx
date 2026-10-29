@@ -56,6 +56,7 @@ import {
   updateDataset,
   updateSample
 } from "../api/client";
+import AnomalyProtocolModal from "../components/AnomalyProtocolModal";
 import CaptureGroupModal from "../components/CaptureGroupModal";
 import IndustrialOverview from "../components/IndustrialOverview";
 import AnnotationExportModal from "../components/AnnotationExportModal";
@@ -228,6 +229,7 @@ export default function DatasetDetailPage() {
   const [pageSearchParams, setPageSearchParams] = useSearchParams();
   const captureGroupId = pageSearchParams.get("capture_group_id") || undefined;
   const captureBatchId = pageSearchParams.get("capture_batch_id") || undefined;
+  const [anomalyProtocolOpen, setAnomalyProtocolOpen] = useState(false);
   const [captureGroupsOpen, setCaptureGroupsOpen] = useState(false);
   const triageStatus = (pageSearchParams.get("triage_status") || undefined) as SampleQuery["triageStatus"];
   const okGrade = (pageSearchParams.get("ok_grade") || undefined) as SampleQuery["okGrade"];
@@ -1338,8 +1340,10 @@ export default function DatasetDetailPage() {
 
         {dataset?.workflow_profile === "industrial_anomaly" && <IndustrialOverview dataset={dataset}
           onScan={() => setScanOpen(true)} onQuality={() => setQualityOpen(true)}
+          onPrepare={() => setAnomalyProtocolOpen(true)}
           onGroups={() => setCaptureGroupsOpen(true)}
           onFilter={() => { setPage(1); setSelectedSampleIds(new Set()); }} />}
+        {anomalyProtocolOpen && <AnomalyProtocolModal datasetId={datasetId} currentQuery={annotationExportQuery} selectedIds={Array.from(selectedSampleIds)} onClose={() => setAnomalyProtocolOpen(false)} onUpdated={async () => { await Promise.all([loadOverview(), loadSamples()]); }} />}
         {captureGroupsOpen && <CaptureGroupModal datasetId={datasetId} selectedIds={Array.from(selectedSampleIds)} onClose={() => setCaptureGroupsOpen(false)} onUpdated={async () => { await Promise.all([loadOverview(), loadSamples()]); }} />}
         {dataset && dataset.workflow_profile !== "industrial_anomaly" && (
           <section className="overflow-hidden rounded-2xl border border-line bg-white shadow-sm" aria-labelledby="dataset-workspace-status">
@@ -1542,8 +1546,8 @@ export default function DatasetDetailPage() {
               <button
                 type="button"
                 onClick={() => {
-                  setTrainingReadiness(null);
-                  setTrainingReadinessOpen(true);
+                  if (dataset?.workflow_profile === "industrial_anomaly") setAnomalyProtocolOpen(true);
+                  else { setTrainingReadiness(null); setTrainingReadinessOpen(true); }
                 }}
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 text-sm font-semibold text-white transition hover:bg-gray-800"
               >
