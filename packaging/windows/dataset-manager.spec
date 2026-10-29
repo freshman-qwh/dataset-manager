@@ -16,6 +16,7 @@ analysis = Analysis(
         (str(frontend_root), "frontend"),
         (str(backend_root / "alembic.ini"), "."),
         (str(backend_root / "migrations"), "migrations"),
+        (str(backend_root / "app" / "templates"), "app/templates"),
     ],
     hiddenimports=collect_submodules("uvicorn"),
     hookspath=[],

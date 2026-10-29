@@ -193,7 +193,8 @@ def preview(session: Session, dataset_id: int, request: AnomalyPreviewRequest) -
              exclusion_counts=dict(Counter(r["exclusion_reason"] for r in rows if r["exclusion_reason"])),
              group_count=len(groups), full_dataset_checked=len(all_samples),
              notice="图像级协议，无像素掩码。比例为建议；组隔离与正常/异常覆盖优先。默认仅冻结导出计划，现有 split 不变。"),
-        config=request.model_dump(mode="json"))
+        config=request.model_dump(mode="json"),
+        triage_policy={"version": dataset.triage_policy_version, "values_json": dataset.triage_policy_json})
 
 
 def validate_plan(session: Session, dataset_id: int, plan_id: str, expected_hash: str) -> dict:
@@ -228,7 +229,7 @@ def confirm_splits(session: Session, dataset_id: int, plan_id: str, request: Pla
             session.add(sample)
         revision = bump_dataset_revision(session, dataset_id)
         new_rows = [{**r, "before_split": r["split"] or r["before_split"]} for r in plan["rows"]]
-        renewed = plans.freeze("anomaly", dataset_id, revision, new_rows, plan["summary"], config=plan["config"])
+        renewed = plans.freeze("anomaly", dataset_id, revision, new_rows, plan["summary"], config=plan["config"], triage_policy=plan["triage_policy"])
         result = ConfirmationRead(dataset_revision=revision, updated_count=len(included),
                                   plan_id=renewed["plan_id"], plan_hash=renewed["plan_hash"])
         session.add(IndustrialReceipt(plan_id=plan_id, dataset_id=dataset_id, kind="anomaly",

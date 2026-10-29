@@ -1,0 +1,4 @@
+# Separate reader validation environment; not an application dependency.
+anomalib==2.7.0
+torch==2.10.0
+torchvision==0.25.0

@@ -1090,3 +1090,7 @@ export async function previewAnomalyProtocol(datasetId: number, payload: Record<
 export async function confirmAnomalySplits(datasetId: number, plan: import("../types/industrial").FrozenPlan, confirmation: string): Promise<{plan_id: string; plan_hash: string; dataset_revision: number}> {
   return (await client.post(`/datasets/${datasetId}/industrial/anomaly-previews/${plan.plan_id}/confirm-splits`, {plan_hash: plan.plan_hash, confirmation})).data;
 }
+
+export async function createAnomalyExportJob(datasetId: number, plan: import("../types/industrial").FrozenPlan, delivery: "zip" | "directory") {
+  return (await client.post<{job: Job; created: boolean}>(`/datasets/${datasetId}/industrial/export-jobs`, {plan_id: plan.plan_id, plan_hash: plan.plan_hash, delivery})).data;
+}

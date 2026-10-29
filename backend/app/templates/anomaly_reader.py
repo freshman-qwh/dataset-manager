@@ -59,7 +59,7 @@ def create_datamodule(root: Path, batch_size: int = 16, image_size: int = 256):
     # Anomalib's automatic label inference does not cover normal VAL rows.
     # Supply both columns explicitly and keep package-only metadata separate.
     samples = [{
-        "image_path": row["image_path"], "split": row["split"],
+        "image_path": str((root / row["image_path"]).resolve()), "split": row["split"],
         "label_index": int(row["label_index"]),
         "label": "abnormal" if int(row["label_index"]) else "normal",
         "mask_path": "",
@@ -76,7 +76,9 @@ def create_datamodule(root: Path, batch_size: int = 16, image_size: int = 256):
         def _setup(self, _stage=None):
             for split in ("train", "val", "test"):
                 setattr(self, f"{split}_data", TabularDataset(
-                    name="dataset_manager", samples=samples, root=root, split=split,
+                    # package_rows already checked confinement and all hashes.
+                    # Avoid upstream ASCII-only path validation for Unicode roots.
+                    name="dataset_manager", samples=samples, root=None, split=split,
                 ))
 
         def _create_test_split(self):
@@ -101,11 +103,23 @@ def check_reader(root: Path) -> dict:
             found = {Path(p).resolve().as_posix() for p in actual.image_path}
             if expected != found:
                 raise AssertionError(f"Loader changed the {split} sample set")
-            if sorted(actual.label_index.tolist()) != sorted(int(r["label_index"]) for r in rows if r["split"] == split):
+            actual_labels = {Path(p).resolve().as_posix(): int(label) for p, label in zip(actual.image_path, actual.label_index, strict=True)}
+            expected_labels = {(root / r["image_path"]).resolve().as_posix(): int(r["label_index"]) for r in rows if r["split"] == split}
+            if actual_labels != expected_labels:
                 raise AssertionError("Loader changed labels")
     counts = {}
     for split in ("train", "val", "test"):
-        counts[split] = sum(len(batch.image) for batch in getattr(module, f"{split}_dataloader")())
+        observed = {}
+        for batch in getattr(module, f"{split}_dataloader")():
+            for path, label in zip(batch.image_path, batch.gt_label.tolist(), strict=True):
+                key = Path(path).resolve().as_posix()
+                if key in observed:
+                    raise AssertionError("Loader repeated an image")
+                observed[key] = int(label)
+        expected = {(root / r["image_path"]).resolve().as_posix(): int(r["label_index"]) for r in rows if r["split"] == split}
+        if observed != expected:
+            raise AssertionError(f"Batches changed the {split} sample set or labels")
+        counts[split] = len(observed)
     return {"anomalib": version("anomalib"), "samples": counts, "split_preserved": True}
 
 

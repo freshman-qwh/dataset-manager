@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session
 
 from app.core.database import get_session
-from app.schemas.industrial import AnomalyPreviewRequest, ConfirmationRead, FrozenPlanRead, GroupPreviewRequest, PlanConfirmation
-from app.services import anomaly_protocol_service, capture_group_service, industrial_plan_service
+from app.schemas.industrial import AnomalyExportRequest, AnomalyExportResponse, AnomalyPreviewRequest, ConfirmationRead, FrozenPlanRead, GroupPreviewRequest, PlanConfirmation
+from app.services import anomaly_export_service, anomaly_protocol_service, capture_group_service, industrial_plan_service
 
 router = APIRouter(prefix="/api/datasets/{dataset_id}/industrial", tags=["industrial"])
 
@@ -32,3 +32,11 @@ def preview_anomaly(dataset_id: int, payload: AnomalyPreviewRequest, session: Se
 @router.post("/anomaly-previews/{plan_id}/confirm-splits", response_model=ConfirmationRead)
 def confirm_anomaly_splits(dataset_id: int, plan_id: str, payload: PlanConfirmation, session: Session = Depends(get_session)):
     return anomaly_protocol_service.confirm_splits(session, dataset_id, plan_id, payload)
+
+
+@router.post("/export-jobs", response_model=AnomalyExportResponse)
+def export_anomaly(dataset_id: int, payload: AnomalyExportRequest, session: Session = Depends(get_session)):
+    from app.core.job_runtime import job_runner
+    result = anomaly_export_service.create_job(session, dataset_id, payload)
+    job_runner.notify()
+    return result

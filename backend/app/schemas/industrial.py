@@ -3,6 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.annotation_export import AnnotationExportSampleQuery
+from app.schemas.job import JobRead
 
 
 class GroupPreviewRequest(BaseModel):
@@ -68,3 +69,15 @@ class AnomalyPreviewRequest(BaseModel):
         if self.sample_query.sample_ids is not None and (not self.sample_query.sample_ids or len(self.sample_query.sample_ids) > 10000):
             raise ValueError("所选范围需为 1–10000 张图片。")
         return self
+
+
+class AnomalyExportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    plan_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    plan_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    delivery: Literal["zip", "directory"] = "zip"
+
+
+class AnomalyExportResponse(BaseModel):
+    job: JobRead
+    created: bool
