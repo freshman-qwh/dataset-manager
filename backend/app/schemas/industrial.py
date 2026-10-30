@@ -81,3 +81,7 @@ class AnomalyExportRequest(BaseModel):
 class AnomalyExportResponse(BaseModel):
     job: JobRead
     created: bool
+
+
+class WorkspaceRestoreRequest(BaseModel):
+    archive_path: str = Field(min_length=1, max_length=2000)

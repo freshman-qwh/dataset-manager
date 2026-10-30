@@ -347,9 +347,9 @@ export async function listDirectories(path?: string, signal?: AbortSignal): Prom
   return data;
 }
 
-export async function listLocalFiles(path?: string, signal?: AbortSignal): Promise<FilesystemListResponse> {
+export async function listLocalFiles(path?: string, signal?: AbortSignal, extensions = ".json"): Promise<FilesystemListResponse> {
   const { data } = await client.get<FilesystemListResponse>("/filesystem/entries", {
-    params: { path: path || undefined, extensions: ".json" }, signal
+    params: { path: path || undefined, extensions }, signal
   });
   return data;
 }
@@ -1093,4 +1093,15 @@ export async function confirmAnomalySplits(datasetId: number, plan: import("../t
 
 export async function createAnomalyExportJob(datasetId: number, plan: import("../types/industrial").FrozenPlan, delivery: "zip" | "directory") {
   return (await client.post<{job: Job; created: boolean}>(`/datasets/${datasetId}/industrial/export-jobs`, {plan_id: plan.plan_id, plan_hash: plan.plan_hash, delivery})).data;
+}
+
+export async function getStartupStatus() {
+  return (await client.get<{needs_upgrade: boolean; database_path: string}>("/system/startup-status")).data;
+}
+export async function createWorkspaceBackupJob() {
+  return (await client.post<{job: Job; created: boolean}>("/system/workspace-backup-jobs")).data;
+}
+
+export async function restoreWorkspace(archive_path: string) {
+  return (await client.post<{target_directory: string}>("/system/restore-workspace", {archive_path}, {timeout: 180000})).data;
 }

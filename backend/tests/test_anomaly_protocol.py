@@ -118,3 +118,17 @@ def test_source_change_rejects_entire_writeback(tmp_path: Path, monkeypatch):
     assert bad.status_code == 409
     assert all(s["split"] is None for s in client.get(f"/api/datasets/{did}/samples").json()["items"])
     assert client.get(f"/api/datasets/{did}").json()["revision"] == dataset["revision"]
+
+
+def test_preserve_existing_checks_deduplicated_group_members(tmp_path: Path, monkeypatch):
+    client, engine, dataset = example(tmp_path, monkeypatch)
+    with Session(engine, expire_on_commit=False) as session:
+        samples = list(session.exec(select(Sample).order_by(Sample.id)).all())
+        samples[1].file_hash = samples[0].file_hash
+        samples[1].triaged_file_hash = samples[0].file_hash
+        Path(samples[1].absolute_path).write_bytes(Path(samples[0].absolute_path).read_bytes())
+        samples[0].split, samples[1].split = "train", "val"
+        session.add_all(samples[:2]); session.commit()
+    plan = protocol(client, dataset["id"], preserve_existing=True)
+    assert plan["summary"]["blocked"]
+    assert any("已有划分跨集合" in reason for reason in plan["summary"]["blockers"])

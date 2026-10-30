@@ -1,5 +1,7 @@
 # Dataset Manager / 本地视觉数据集准备工作台
 
+主推用途为本地工业异常检测数据准备：分拣 → 工件/批次分组 → 独立 train/val/test → 可校验训练包。详见 [工业试用指南](docs/industrial-trial-guide.md)，其中包含备份恢复和当前试用边界。
+
 当前已发布版本：`v0.4.1`；当前开发候选：`v0.5.0`
 
 这是一个面向研究人员、小型实验室和隐私敏感场景的本地优先视觉数据集准备工作台，聚焦“扫描数据 → 整理样本 → 连续标注 → 质量检查 → 导出训练数据”的单机闭环。后端使用 FastAPI + SQLModel + SQLite，前端使用 React + TypeScript + Vite + Tailwind CSS；原始文件留在本地磁盘，数据库只保存元数据。

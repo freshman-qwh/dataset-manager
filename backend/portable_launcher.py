@@ -120,7 +120,15 @@ def run() -> int:
         write_runtime_file,
     )
 
-    paths = prepare_data_paths()
+    import argparse
+    parser = argparse.ArgumentParser(description="Dataset Manager portable")
+    parser.add_argument("--workspace", type=Path, help="Open a verified restored workspace")
+    args = parser.parse_args()
+    if args.workspace is not None:
+        restored_root = args.workspace.resolve()
+        if not (restored_root / "restore-report.json").is_file() or not (restored_root / "database/app.db").is_file():
+            raise ValueError("请选择恢复校验通过的新工作区目录。")
+    paths = prepare_data_paths(args.workspace)
     _configure_environment(paths.root)
     _configure_logging(paths.logs / "dataset-manager.log")
     instance = SingleInstance()

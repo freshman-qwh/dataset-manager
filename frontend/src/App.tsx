@@ -4,12 +4,13 @@ import AnnotationPage from "./pages/AnnotationPage";
 import DatasetDetailPage from "./pages/DatasetDetailPage";
 import DatasetListPage from "./pages/DatasetListPage";
 import TriagePage from "./pages/TriagePage";
+import StartupGuard from "./components/StartupGuard";
 import JobCenter from "./components/JobCenter";
 import PortableControls from "./components/PortableControls";
 
 export default function App() {
   return (
-    <>
+    <StartupGuard>
       <Routes>
         <Route path="/" element={<DatasetListPage />} />
         <Route path="/datasets/:datasetId" element={<DatasetDetailPage />} />
@@ -19,6 +20,6 @@ export default function App() {
       </Routes>
       <JobCenter />
       <PortableControls />
-    </>
+    </StartupGuard>
   );
 }

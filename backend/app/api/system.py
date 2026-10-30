@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
+from zipfile import BadZipFile
 from sqlmodel import Session
 
 from app.core.config import get_settings
@@ -14,6 +15,7 @@ from app.schemas.database_integrity import (
 )
 from app.schemas.database_backup import DatabaseBackupJobCreateResponse
 from app.schemas.thumbnail import ThumbnailMaintenanceJobCreateResponse
+from app.schemas.industrial import WorkspaceRestoreRequest
 from app.services import (
     database_backup_service,
     database_integrity_service,
@@ -23,6 +25,36 @@ from app.services import (
 
 
 router = APIRouter(prefix="/api/system", tags=["system"])
+
+
+@router.get("/startup-status")
+def startup_status() -> dict:
+    from app.core.migrations import migration_status
+    return migration_status(get_settings().database_path).to_dict()
+
+
+@router.post("/workspace-backup-jobs")
+def create_workspace_backup(session: Session = Depends(get_session)):
+    from app.services import workspace_backup_service
+    result = workspace_backup_service.create_job(session)
+    job_runner.notify()
+    return result
+
+
+@router.post("/restore-workspace")
+def restore_new_workspace(payload: WorkspaceRestoreRequest) -> dict:
+    from pathlib import Path
+    from uuid import uuid4
+    from app.services.workspace_backup_service import restore_bundle
+    archive = Path(payload.archive_path).expanduser()
+    if not archive.is_absolute() or not archive.is_file():
+        raise HTTPException(422, "请选择本机有效元数据 ZIP 的绝对路径。")
+    root = get_settings().storage_root / "restored-workspaces"
+    root.mkdir(parents=True, exist_ok=True)
+    try:
+        return restore_bundle(archive, root / f"workspace-{uuid4().hex}")
+    except (OSError, ValueError, KeyError, RuntimeError, BadZipFile) as exc:
+        raise HTTPException(422, f"恢复校验未通过：{exc}") from exc
 
 
 @router.get("/portable-runtime")

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   createDatabaseBackupJob,
+  createWorkspaceBackupJob,
   downloadJobArtifact,
   getDatabaseIntegrityReport,
   getJob,
@@ -16,6 +17,7 @@ import type {
   DatabaseRepairPreview,
   DatabaseRepairResult
 } from "../types/system";
+import WorkspaceRestore from "./WorkspaceRestore";
 import Modal from "./Modal";
 
 interface DatabaseMaintenanceModalProps {
@@ -100,7 +102,7 @@ export default function DatabaseMaintenanceModal({
   useEffect(() => {
     if (open) {
       void loadReport();
-      void listJobs(1, { jobType: "database.backup" })
+      void listJobs(1, { jobType: "workspace.metadata_backup" })
         .then((response) => setBackupJob(response.items[0] ?? null))
         .catch(() => setBackupJob(null));
     }
@@ -116,11 +118,11 @@ export default function DatabaseMaintenanceModal({
     return () => window.clearInterval(timer);
   }, [backupJob, open]);
 
-  async function handleCreateBackup() {
+  async function handleCreateBackup(workspace = false) {
     setCreatingBackup(true);
     setBackupError(null);
     try {
-      const response = await createDatabaseBackupJob();
+      const response = await (workspace ? createWorkspaceBackupJob() : createDatabaseBackupJob());
       setBackupJob(response.job);
       window.dispatchEvent(new Event("dataset-manager:jobs-changed"));
     } catch {
@@ -229,9 +231,10 @@ export default function DatabaseMaintenanceModal({
             <div>
               <h3 id="database-backup-title" className="text-sm font-medium text-ink">轻量元数据备份</h3>
               <p className="mt-1 text-sm leading-6 text-gray-500">
-                备份 SQLite 中的数据集、样本、标签、标注、任务配置和校验信息，不复制原始文件。
+                ZIP 包同时包含数据库、快照、冻结计划和任务恢复元数据；原始图片、缩略图及历史下载产物需另行保存。原有轻量 .db 仅备份数据库。
               </p>
             </div>
+            <button type="button" disabled={creatingBackup || backupActive} onClick={() => void handleCreateBackup(true)} className="rounded-lg bg-gray-900 px-3 py-2 text-sm text-white disabled:opacity-40">备份元数据与快照 ZIP</button>
             <button
               type="button"
               onClick={() => void handleCreateBackup()}
@@ -279,7 +282,7 @@ export default function DatabaseMaintenanceModal({
                     className="inline-flex items-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
                   >
                     <Download size={15} />
-                    {downloadingBackup ? "准备下载…" : "下载 .db"}
+                    {downloadingBackup ? "准备下载…" : (backupJob.job_type === "workspace.metadata_backup" ? "下载元数据 ZIP" : "下载 .db")}
                   </button>
                 ) : null}
               </div>
@@ -287,6 +290,8 @@ export default function DatabaseMaintenanceModal({
           ) : null}
         </section>
 
+        <WorkspaceRestore />
+        <p className="mt-4 text-xs leading-6 text-gray-500">恢复时先校验元数据 ZIP 并恢复到新目录，不直接覆盖当前工作区。源码维护可用 app.cli.workspace；便携版恢复入口见使用说明。移动原图后，在项目设置的目录修复流程预览并重新挂载。恢复不包括原图或历史下载包。</p>
         <div className="my-5 border-t border-line" />
 
         <div className="flex flex-wrap items-start justify-between gap-3">

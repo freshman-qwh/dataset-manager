@@ -23,3 +23,10 @@ Dataset Manager Windows x64 便携版
 启动日志：%LOCALAPPDATA%\DatasetManager\logs\dataset-manager.log
 若浏览器没有自动打开，可查看：%LOCALAPPDATA%\DatasetManager\config\runtime.json
 并访问其中的 url。
+
+
+工业异常检测试用：
+首页可体验合成示例。自建项目按扫描、分拣、工件/批次分组、准备异常检测数据、导出训练包完成流程，无需先画框。详细边界见《工业试用指南.md》。
+数据库维护可下载包含快照的元数据 ZIP，再校验恢复到新工作区；不包含原图与历史下载包。
+安全退出后，可运行 DatasetManager.exe --workspace "恢复完成的工作区目录" 打开恢复位置。直接双击仍打开默认工作区。
+build-manifest.json 记录对应源码与验收边界。本机工程检查不代替干净 Windows 和真实用户试用。

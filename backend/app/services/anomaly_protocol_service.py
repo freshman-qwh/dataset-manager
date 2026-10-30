@@ -133,12 +133,13 @@ def preview(session: Session, dataset_id: int, request: AnomalyPreviewRequest) -
             continue
         groups[gid] = dict(rows=group_rows,
             pure_normal=all(s.triage_status == "ok" and s.ok_grade == "clear" for s in members),
+            existing_splits={s.split for s in members if s.split},
             normal=sum(r["label_index"] == 0 for r in group_rows),
             abnormal=sum(r["label_index"] == 1 for r in group_rows))
     assigned = {}
     for gid, group in groups.items():
         override = request.overrides.get(gid)
-        existing = {r["before_split"] for r in group["rows"] if r["before_split"]}
+        existing = group["existing_splits"]
         if request.preserve_existing and len(existing) > 1 and override is None:
             blocks.append(f"{gid} 的已有划分跨集合，请调整整组。")
         target = override or (next(iter(existing)) if request.preserve_existing and len(existing) == 1 else None)

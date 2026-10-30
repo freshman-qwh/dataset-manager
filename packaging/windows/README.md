@@ -19,3 +19,11 @@ powershell -ExecutionPolicy Bypass -File .\packaging\windows\test-portable.ps1
 ```
 
 脚本解压 ZIP 到含中文和空格的隔离目录，以受限 PATH 运行 EXE，并验证端口冲突、重复启动、异常恢复、覆盖升级、数据保留及原始文件哈希。验收目录会保留并输出路径，便于人工复核。
+
+## 工业试用候选
+
+可通过 `-OutputName DatasetManager-industrial-trial-20261030-windows-x64.zip` 输出独立文件，避免混淆旧候选。包内 `build-manifest.json` 记录对应源码提交、是否有未提交改动、是否运行构建测试和待完成的外部验收；ZIP 的 `.sha256.txt` 用于核对最终文件。
+
+训练读取脚本和依赖文件会随程序打包，但训练框架不进入应用依赖。新版图像级训练包可在独立 Anomalib 2.7.0 环境读取三个固定集合。
+
+安全退出程序后，用 `DatasetManager.exe --workspace "恢复目录"` 可打开已通过恢复校验的新工作区；直接双击仍打开默认位置。原图与下载产物不包含在元数据 ZIP，请按包内《工业试用指南》另行保留。

@@ -575,11 +575,27 @@ export default function TriagePage() {
     setSaving(true);
     setError(null);
     try {
-      const saved = await replaceSampleTriage(currentSample.id, {
-        ...payload,
-        expected_version: triage.triage_version,
-        expected_file_hash: triage.file_hash
-      });
+      let saved: SampleTriage;
+      try {
+        saved = await replaceSampleTriage(currentSample.id, {
+          ...payload, expected_version: triage.triage_version, expected_file_hash: triage.file_hash
+        });
+      } catch (writeError) {
+        if (!axios.isAxiosError(writeError) || writeError.response && writeError.response.status < 500) throw writeError;
+        const actual = await getSampleTriage(currentSample.id);
+        const expectedDefects = [...(payload.defect_type_ids ?? [])].sort((a, b) => a - b);
+        const actualDefects = actual.defect_types.map(d => d.id).sort((a, b) => a - b);
+        const matches = actual.triage_version === before.triage_version + 1 &&
+          actual.file_hash === before.file_hash && !actual.outdated &&
+          actual.current_policy_version === before.current_policy_version &&
+          actual.triage_status === payload.triage_status && actual.ok_grade === (payload.ok_grade ?? null) &&
+          actual.defect_severity === (payload.defect_severity ?? null) &&
+          actual.primary_defect_type_id === (payload.primary_defect_type_id ?? null) &&
+          actual.triage_note === (payload.triage_note?.trim() || null) &&
+          JSON.stringify(actualDefects) === JSON.stringify(expectedDefects);
+        if (!matches) throw writeError;
+        saved = actual;
+      }
       if (saved.triage_version > before.triage_version) {
         setUndoStack((current) => [
           ...current,

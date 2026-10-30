@@ -419,6 +419,7 @@ export default function JobCenter() {
                     const canDownload = (
                       job.job_type === "annotation.export"
                       || job.job_type === "database.backup"
+                      || job.job_type === "workspace.metadata_backup"
                       || (job.job_type === "dataset.anomaly_export" && job.result?.delivery === "zip")
                       || (job.job_type === "dataset.directory_export" && job.result?.delivery === "zip")
                     ) && job.status === "succeeded";
