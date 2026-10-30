@@ -21,7 +21,7 @@ from app.services import database_backup_service, industrial_plan_service, job_a
 from app.services.job_runner import JobContext
 
 JOB_TYPE = "workspace.metadata_backup"
-METADATA_FOLDERS = ("industrial-plans", "job-recovery", "triage-directory-mapping-plans", "directory-export-plans")
+METADATA_FOLDERS = ("industrial-plans", "job-recovery", "triage-directory-mapping-plans", "directory-export-plans", "validation-runs")
 MAX_BUNDLE_BYTES = 2 * 1024**3
 
 

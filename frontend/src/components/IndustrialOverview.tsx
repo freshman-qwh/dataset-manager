@@ -12,9 +12,10 @@ interface Props {
   onFilter: () => void;
   onPrepare?: () => void;
   onGroups?: () => void;
+  onValidate?: () => void;
 }
 
-export default function IndustrialOverview({ dataset, onScan, onQuality, onFilter, onPrepare, onGroups }: Props) {
+export default function IndustrialOverview({ dataset, onScan, onQuality, onFilter, onPrepare, onGroups, onValidate }: Props) {
   const [params, setParams] = useSearchParams();
   const [readiness, setReadiness] = useState<IndustrialReadiness | null>(null);
   const [stats, setStats] = useState<TriageStats | null>(null);
@@ -62,7 +63,8 @@ export default function IndustrialOverview({ dataset, onScan, onQuality, onFilte
       <div><p className="text-xs text-gray-500">工业异常检测 · 本地数据准备</p><h2 className="mt-2 text-xl font-semibold">{!stats?.total_images ? "导入第一批工业图片" : (stats.by_status.untriaged ?? 0) > 0 ? "继续分拣，建立可信的正常与异常样本" : "复核分组与判定，准备独立评估数据"}</h2>
         <p className="mt-2 text-sm text-gray-500">扫描 → 分拣 → 工件分组 → 独立划分 → 数据包。图像级准备无需先画框。</p></div>
       <div className="flex flex-wrap gap-2">
-        {readiness?.next_step === "triage" ? <Link className="rounded-lg bg-gray-900 px-4 py-2 text-sm text-white" to={`/datasets/${dataset.id}/triage?queue=untriaged`}>继续分拣</Link> : <button disabled={!readiness} className="rounded-lg bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-40" onClick={() => { if (readiness?.next_step === "scan") onScan(); else if (readiness?.next_step === "review") onQuality(); else if (readiness?.next_step === "groups") onGroups?.(); else (onPrepare ?? onQuality)(); }}>{readiness?.next_label ?? "读取准备状态…"}</button>}
+        {readiness?.next_step === "triage" ? <Link className="rounded-lg bg-gray-900 px-4 py-2 text-sm text-white" to={`/datasets/${dataset.id}/triage?queue=untriaged`}>继续分拣</Link> : <button disabled={!readiness} className="rounded-lg bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-40" onClick={() => { if (readiness?.next_step === "scan") onScan(); else if (readiness?.next_step === "review") onQuality(); else if (readiness?.next_step === "groups") onGroups?.(); else (onValidate ?? onPrepare ?? onQuality)(); }}>{readiness?.next_step === "prepare" && onValidate ? "快速验证" : readiness?.next_label ?? "读取准备状态…"}</button>}
+        {onValidate && readiness?.next_step !== "prepare" && <button className="rounded-lg border border-line px-4 py-2 text-sm" onClick={onValidate}>快速验证</button>}
         {onGroups && <button className="rounded-lg border border-line px-4 py-2 text-sm" onClick={onGroups}>采集分组</button>}
         <button className="rounded-lg border border-line px-4 py-2 text-sm" onClick={onPrepare ?? onQuality}>{onPrepare ? "划分与导出" : "检查数据质量"}</button>
       </div>

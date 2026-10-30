@@ -30,6 +30,7 @@ BACKUP_TABLES = (
     "jobs",
     "defect_types", "sample_defect_links", "dataset_saved_views",
     "dataset_snapshots", "training_split_receipts", "industrial_receipts",
+    "validation_runs", "validation_decisions", "validation_test_exposures", "validation_reviews",
 )
 
 

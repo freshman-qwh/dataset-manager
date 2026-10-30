@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import AnnotationPage from "./pages/AnnotationPage";
 import DatasetDetailPage from "./pages/DatasetDetailPage";
 import DatasetListPage from "./pages/DatasetListPage";
+import ValidationPage from "./pages/ValidationPage";
 import TriagePage from "./pages/TriagePage";
 import StartupGuard from "./components/StartupGuard";
 import JobCenter from "./components/JobCenter";
@@ -15,6 +16,8 @@ export default function App() {
         <Route path="/" element={<DatasetListPage />} />
         <Route path="/datasets/:datasetId" element={<DatasetDetailPage />} />
         <Route path="/datasets/:datasetId/annotate" element={<AnnotationPage />} />
+        <Route path="/datasets/:datasetId/validate" element={<ValidationPage />} />
+        <Route path="/datasets/:datasetId/validate/:runId" element={<ValidationPage />} />
         <Route path="/datasets/:datasetId/triage" element={<TriagePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

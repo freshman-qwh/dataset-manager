@@ -1,4 +1,6 @@
 from app.core.database import engine
+from app.services.validation_run_service import JOB_TYPE as VALIDATION_JOB_TYPE, execute as run_validation
+from app.services.validation_runtime_service import JOB_TYPE as RUNTIME_INSTALL_JOB_TYPE, install as install_runtime
 from app.services.anomaly_export_service import JOB_TYPE as ANOMALY_EXPORT_JOB_TYPE, run_export
 from app.services.workspace_backup_service import JOB_TYPE as WORKSPACE_BACKUP_JOB_TYPE, run_backup
 from app.services.annotation_export_job_service import (
@@ -43,6 +45,8 @@ from app.services.job_runner import JobRunner
 
 
 job_runner = JobRunner(engine)
+job_runner.register_handler(VALIDATION_JOB_TYPE, run_validation)
+job_runner.register_handler(RUNTIME_INSTALL_JOB_TYPE, install_runtime)
 job_runner.register_handler(ANOMALY_EXPORT_JOB_TYPE, run_export)
 job_runner.register_handler(WORKSPACE_BACKUP_JOB_TYPE, run_backup)
 job_runner.register_handler(SCAN_JOB_TYPE, run_scan_job)

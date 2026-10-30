@@ -1340,6 +1340,7 @@ export default function DatasetDetailPage() {
 
         {dataset?.workflow_profile === "industrial_anomaly" && <IndustrialOverview dataset={dataset}
           onScan={() => setScanOpen(true)} onQuality={() => setQualityOpen(true)}
+          onValidate={() => navigate(`/datasets/${datasetId}/validate`, {state:{currentQuery:annotationExportQuery,selectedIds:Array.from(selectedSampleIds)}})}
           onPrepare={() => setAnomalyProtocolOpen(true)}
           onGroups={() => setCaptureGroupsOpen(true)}
           onFilter={() => { setPage(1); setSelectedSampleIds(new Set()); }} />}

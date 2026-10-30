@@ -81,6 +81,9 @@ def delete_dataset(session: Session, dataset_id: int) -> None:
 
     has_split_receipts = inspect(session.connection()).has_table("training_split_receipts")
     dataset = get_dataset_or_404(session, dataset_id)
+    from app.models.validation import ValidationRun
+    if inspect(session.connection()).has_table("validation_runs") and session.exec(select(ValidationRun.id).where(ValidationRun.dataset_id == dataset_id)).first():
+        raise HTTPException(409, "此项目有验证历史，请先在快速验证页处理需要保留的实验记录。")
     from app.models.industrial_receipt import IndustrialReceipt
     if inspect(session.connection()).has_table("industrial_receipts"):
         session.exec(delete(IndustrialReceipt).where(IndustrialReceipt.dataset_id == dataset_id))
