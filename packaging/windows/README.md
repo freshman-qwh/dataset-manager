@@ -27,3 +27,11 @@ powershell -ExecutionPolicy Bypass -File .\packaging\windows\test-portable.ps1
 训练读取脚本和依赖文件会随程序打包，但训练框架不进入应用依赖。新版图像级训练包可在独立 Anomalib 2.7.0 环境读取三个固定集合。
 
 安全退出程序后，用 `DatasetManager.exe --workspace "恢复目录"` 可打开已通过恢复校验的新工作区；直接双击仍打开默认位置。原图与下载产物不包含在元数据 ZIP，请按包内《工业试用指南》另行保留。
+
+工业候选从真实 ZIP 开始的自动化验收：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ./packaging/windows/test-industrial-trial.ps1 -ZipPath ./dist/DatasetManager-industrial-trial-20261030-windows-x64.zip -ReaderPython '独立读取环境的 python.exe'
+```
+
+脚本记录源码、ZIP hash、独立读取结果和恢复位置启动结果。本机隔离验收结果与外部定版条件见 `docs/industrial-trial-delivery-2026-10-30.md`。
