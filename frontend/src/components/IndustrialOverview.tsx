@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { getTriagePolicy, getTriageStats, listDefectTypes } from "../api/client";
+import { getIndustrialReadiness, getTriagePolicy, getTriageStats, listDefectTypes } from "../api/client";
+import type { IndustrialReadiness } from "../types/industrial";
 import type { Dataset } from "../types/dataset";
 import type { DefectType, TriagePolicy, TriageStats } from "../types/triage";
 
@@ -15,6 +16,7 @@ interface Props {
 
 export default function IndustrialOverview({ dataset, onScan, onQuality, onFilter, onPrepare, onGroups }: Props) {
   const [params, setParams] = useSearchParams();
+  const [readiness, setReadiness] = useState<IndustrialReadiness | null>(null);
   const [stats, setStats] = useState<TriageStats | null>(null);
   const [policy, setPolicy] = useState<TriagePolicy | null>(null);
   const [defects, setDefects] = useState<DefectType[]>([]);
@@ -22,8 +24,8 @@ export default function IndustrialOverview({ dataset, onScan, onQuality, onFilte
   useEffect(() => {
     let alive = true;
     setError("");
-    Promise.all([getTriageStats(dataset.id), getTriagePolicy(dataset.id), listDefectTypes(dataset.id)])
-      .then(([s, p, d]) => { if (alive) { setStats(s); setPolicy(p); setDefects(d); } })
+    Promise.all([getTriageStats(dataset.id), getTriagePolicy(dataset.id), listDefectTypes(dataset.id), getIndustrialReadiness(dataset.id)])
+      .then(([s, p, d, r]) => { if (alive) { setStats(s); setPolicy(p); setDefects(d); setReadiness(r); } })
       .catch(() => { if (alive) setError("分拣状态读取失败，请检查数据库维护状态后重试。"); });
     return () => { alive = false; };
   }, [dataset.id, dataset.revision]);
@@ -60,11 +62,12 @@ export default function IndustrialOverview({ dataset, onScan, onQuality, onFilte
       <div><p className="text-xs text-gray-500">工业异常检测 · 本地数据准备</p><h2 className="mt-2 text-xl font-semibold">{!stats?.total_images ? "导入第一批工业图片" : (stats.by_status.untriaged ?? 0) > 0 ? "继续分拣，建立可信的正常与异常样本" : "复核分组与判定，准备独立评估数据"}</h2>
         <p className="mt-2 text-sm text-gray-500">扫描 → 分拣 → 工件分组 → 独立划分 → 数据包。图像级准备无需先画框。</p></div>
       <div className="flex flex-wrap gap-2">
-        {!stats?.total_images ? <button className="rounded-lg bg-gray-900 px-4 py-2 text-sm text-white" onClick={onScan}>扫描图片</button> : <Link className="rounded-lg bg-gray-900 px-4 py-2 text-sm text-white" to={`/datasets/${dataset.id}/triage?queue=untriaged`}>继续分拣</Link>}
+        {readiness?.next_step === "triage" ? <Link className="rounded-lg bg-gray-900 px-4 py-2 text-sm text-white" to={`/datasets/${dataset.id}/triage?queue=untriaged`}>继续分拣</Link> : <button disabled={!readiness} className="rounded-lg bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-40" onClick={() => { if (readiness?.next_step === "scan") onScan(); else if (readiness?.next_step === "review") onQuality(); else if (readiness?.next_step === "groups") onGroups?.(); else (onPrepare ?? onQuality)(); }}>{readiness?.next_label ?? "读取准备状态…"}</button>}
         {onGroups && <button className="rounded-lg border border-line px-4 py-2 text-sm" onClick={onGroups}>采集分组</button>}
-        <button className="rounded-lg border border-line px-4 py-2 text-sm" onClick={onPrepare ?? onQuality}>{onPrepare ? "准备异常检测数据" : "检查数据质量"}</button>
+        <button className="rounded-lg border border-line px-4 py-2 text-sm" onClick={onPrepare ?? onQuality}>{onPrepare ? "划分与导出" : "检查数据质量"}</button>
       </div>
     </div>
+    {readiness && <div className="space-y-2 rounded-lg bg-gray-50 p-3 text-sm"><p>{readiness.explanation}</p><div className="flex flex-wrap gap-4"><button className="underline underline-offset-2" onClick={() => filter({triage_status:"ok",ok_grade:"clear"})}>纯正常候选 {readiness.normal_candidates} 张 / {readiness.normal_groups} 组</button><button className="underline underline-offset-2" onClick={onGroups}>未填写工件组 {readiness.missing_groups} 张</button><button className="underline underline-offset-2" onClick={onQuality}>需复核 {readiness.needs_review} 张</button></div><p className="text-xs text-gray-500">候选按登记信息和整组成员统计，运行前仍会校验原图；未分组图片需确认独立采集。</p></div>}
     {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">{cards.map(([label, count, values]) => <button key={label} disabled={"ok_grade" in values && !policy?.split_ok} onClick={() => filter({ ...values })} className="rounded-lg border border-line bg-gray-50 p-3 text-left hover:bg-gray-100 disabled:opacity-60"><span className="text-xs text-gray-500">{label}</span><strong className="mt-1 block text-xl">{stats ? count : "…"}</strong></button>)}</div>
     {stats && (stats.by_status.ok ?? 0) > (stats.by_ok_grade.clear ?? 0) + (stats.by_ok_grade.borderline ?? 0) && <button className="text-sm text-amber-800 underline" onClick={() => filter({ triage_status: "ok" })}>有统一 OK 图片尚未确认正常等级，查看并复核</button>}

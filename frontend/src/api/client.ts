@@ -1105,3 +1105,10 @@ export async function createWorkspaceBackupJob() {
 export async function restoreWorkspace(archive_path: string) {
   return (await client.post<{target_directory: string}>("/system/restore-workspace", {archive_path}, {timeout: 180000})).data;
 }
+
+export async function getIndustrialReadiness(datasetId: number) {
+  return (await client.get<import("../types/industrial").IndustrialReadiness>(`/datasets/${datasetId}/industrial/readiness`)).data;
+}
+export async function getFilenameGroupRule(datasetId: number) {
+  return (await client.get<import("../types/industrial").GroupPreviewRequest["filename_rule"] | null>(`/datasets/${datasetId}/industrial/group-rule`)).data;
+}

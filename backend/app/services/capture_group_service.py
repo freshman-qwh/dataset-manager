@@ -33,6 +33,19 @@ def preview(session: Session, dataset_id: int, request: GroupPreviewRequest) -> 
             if len(parent) > 160:
                 raise HTTPException(422, "目录名称超过 160 字符，请使用映射表。")
             mapping[s.id] = (parent, request.capture_batch_id)
+    elif request.mode == "filename":
+        rule = request.filename_rule
+        for sample in samples:
+            path = PurePosixPath(sample.relative_path.replace("\\", "/"))
+            parts = path.stem.split(rule.delimiter)
+            if len(parts) <= rule.keep_segments or any(not value for value in parts):
+                raise HTTPException(422, f"文件名 {path.name} 无法按当前规则去除视角后缀，请调整保留段数或使用映射表。")
+            group = rule.delimiter.join(parts[:rule.keep_segments])
+            if rule.include_parent and str(path.parent) != ".":
+                group = f"{path.parent}/{group}"
+            if len(group) > 160:
+                raise HTTPException(422, "提取后的工件编号超过 160 字符，请使用映射表。")
+            mapping[sample.id] = (group, request.capture_batch_id)
     else:
         try:
             source = (request.mapping_text or "").lstrip("\ufeff \r\n")
@@ -60,7 +73,8 @@ def preview(session: Session, dataset_id: int, request: GroupPreviewRequest) -> 
     return plans.freeze("groups", dataset_id, dataset.revision, rows,
                         dict(sample_count=len(rows), existing_split_count=sum(bool(r["split"]) for r in rows),
                              group_count=len(set(mapping.values())),
-                             notice="仅更新分组元数据；已有 split 不变，训练准备时会重新检查整组隔离。目录草稿需确认同目录确属同一工件。"))
+                             notice="仅更新分组元数据；已有 split 不变，训练准备时会重新检查整组隔离。目录草稿需确认同目录确属同一工件。"),
+                        filename_rule=request.filename_rule.model_dump() if request.mode == "filename" and request.remember_rule else None)
 
 
 def confirm(session: Session, dataset_id: int, plan_id: str, request: PlanConfirmation) -> ConfirmationRead:
@@ -82,6 +96,12 @@ def confirm(session: Session, dataset_id: int, plan_id: str, request: PlanConfir
             sample.capture_group_id = row["capture_group_id"]
             sample.capture_batch_id = row["capture_batch_id"]
             session.add(sample)
+        if plan.get("filename_rule"):
+            dataset = get_dataset_or_404(session, dataset_id)
+            settings = json.loads(dataset.industrial_settings_json or "{}")
+            settings["filename_group_rule"] = plan["filename_rule"]
+            dataset.industrial_settings_json = json.dumps(settings)
+            session.add(dataset)
         bump_dataset_revision(session, dataset_id)
         session.flush()
         session.expire_all()

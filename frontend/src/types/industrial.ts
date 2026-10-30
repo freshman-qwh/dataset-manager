@@ -14,7 +14,7 @@ export interface FrozenPlan {
 }
 
 export interface GroupPreviewRequest {
-  mode: "selected" | "directories" | "mapping";
+  mode: "selected" | "directories" | "mapping" | "filename";
   sample_ids?: number[];
   capture_group_id?: string | null;
   capture_batch_id?: string | null;
@@ -22,4 +22,13 @@ export interface GroupPreviewRequest {
   path_column?: string;
   group_column?: string;
   batch_column?: string;
+  filename_rule?: {delimiter: "_" | "-" | " "; keep_segments: number; include_parent: boolean};
+  remember_rule?: boolean;
+}
+
+export interface IndustrialReadiness {
+  total_images: number; normal_candidates: number; normal_groups: number;
+  missing_groups: number; needs_review: number;
+  next_step: "scan" | "triage" | "review" | "groups" | "prepare";
+  next_label: string; explanation: string;
 }

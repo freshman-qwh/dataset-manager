@@ -2,10 +2,24 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session
 
 from app.core.database import get_session
-from app.schemas.industrial import AnomalyExportRequest, AnomalyExportResponse, AnomalyPreviewRequest, ConfirmationRead, FrozenPlanRead, GroupPreviewRequest, PlanConfirmation
+from app.schemas.industrial import AnomalyExportRequest, AnomalyExportResponse, AnomalyPreviewRequest, ConfirmationRead, FrozenPlanRead, GroupPreviewRequest, IndustrialReadiness, PlanConfirmation
 from app.services import anomaly_export_service, anomaly_protocol_service, capture_group_service, industrial_plan_service
 
 router = APIRouter(prefix="/api/datasets/{dataset_id}/industrial", tags=["industrial"])
+
+
+@router.get("/readiness", response_model=IndustrialReadiness)
+def read_readiness(dataset_id: int, session: Session = Depends(get_session)):
+    from app.services.industrial_readiness_service import readiness
+    return readiness(session, dataset_id)
+
+
+@router.get("/group-rule")
+def read_group_rule(dataset_id: int, session: Session = Depends(get_session)):
+    import json
+    from app.services.dataset_service import get_dataset_or_404
+    dataset = get_dataset_or_404(session, dataset_id)
+    return json.loads(dataset.industrial_settings_json or "{}").get("filename_group_rule")
 
 
 @router.post("/group-previews", response_model=FrozenPlanRead)

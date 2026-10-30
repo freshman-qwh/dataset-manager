@@ -21,6 +21,7 @@ class Dataset(SQLModel, table=True):
     description: str | None = Field(default=None, max_length=2000)
     task_type: str = Field(default="detection", max_length=80)
     workflow_profile: str = Field(default="general", sa_column=Column(String(40), nullable=False, server_default="general"))
+    industrial_settings_json: str | None = Field(default=None)
     root_path: str | None = Field(default=None, max_length=2000)
     source: str | None = Field(default=None, max_length=500)
     modality: str | None = Field(default=None, max_length=120)

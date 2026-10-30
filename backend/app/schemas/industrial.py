@@ -6,9 +6,15 @@ from app.schemas.annotation_export import AnnotationExportSampleQuery
 from app.schemas.job import JobRead
 
 
+class FilenameGroupRule(BaseModel):
+    delimiter: Literal["_", "-", " "] = "_"
+    keep_segments: int = Field(default=2, ge=1, le=8)
+    include_parent: bool = False
+
+
 class GroupPreviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    mode: Literal["selected", "directories", "mapping"] = "selected"
+    mode: Literal["selected", "directories", "mapping", "filename"] = "selected"
     sample_ids: list[int] = Field(default_factory=list, max_length=200)
     capture_group_id: str | None = Field(default=None, max_length=160)
     capture_batch_id: str | None = Field(default=None, max_length=160)
@@ -16,12 +22,24 @@ class GroupPreviewRequest(BaseModel):
     path_column: str = Field(default="relative_path", min_length=1, max_length=160)
     group_column: str = Field(default="capture_group_id", min_length=1, max_length=160)
     batch_column: str = Field(default="capture_batch_id", min_length=1, max_length=160)
+    filename_rule: FilenameGroupRule = Field(default_factory=FilenameGroupRule)
+    remember_rule: bool = True
 
     @field_validator("capture_group_id", "capture_batch_id")
     @classmethod
     def clean_identity(cls, value: str | None) -> str | None:
         return value.strip() or None if value is not None else None
 
+
+class IndustrialReadiness(BaseModel):
+    total_images: int
+    normal_candidates: int
+    normal_groups: int
+    missing_groups: int
+    needs_review: int
+    next_step: Literal["scan", "triage", "review", "groups", "prepare"]
+    next_label: str
+    explanation: str
 
 class PlanConfirmation(BaseModel):
     model_config = ConfigDict(extra="forbid")

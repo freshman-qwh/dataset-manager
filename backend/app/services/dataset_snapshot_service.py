@@ -219,6 +219,7 @@ def _build_snapshot_content(
             "description": dataset.description,
             "task_type": dataset.task_type,
             "workflow_profile": dataset.workflow_profile,
+            "industrial_settings": _parse_json_dict(dataset.industrial_settings_json),
             "triage_policy_version": dataset.triage_policy_version,
             "triage_policy": _parse_json_dict(dataset.triage_policy_json),
             "root_path": dataset.root_path,

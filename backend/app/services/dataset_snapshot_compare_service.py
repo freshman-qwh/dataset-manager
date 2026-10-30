@@ -160,7 +160,7 @@ def compare_snapshots(
         target_revision=target.dataset_revision,
         summary=summary,
         comparison_notes=["v1 快照未记录分拣、采集分组和标准；相关历史差异未知，未以当前值补齐。"] if 1 in (base.content.schema_version, target.content.schema_version) else [],
-        dataset_metadata_changed=any(base.content.dataset[k] != target.content.dataset[k] for k in ("workflow_profile", "triage_policy_version", "triage_policy") if k in base.content.dataset and k in target.content.dataset),
+        dataset_metadata_changed=any(base.content.dataset[k] != target.content.dataset[k] for k in ("workflow_profile", "triage_policy_version", "triage_policy", "industrial_settings") if k in base.content.dataset and k in target.content.dataset),
         total=len(filtered),
         page=safe_page,
         page_size=safe_page_size,
