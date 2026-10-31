@@ -96,7 +96,7 @@ def install(context: JobContext, parameters: dict[str, object]) -> dict[str, obj
         run_process([str(parameters["base_python"]), "-I", "-m", "venv", str(target)], log, context.checkpoint, env=environment(), timeout=180)
         python = target / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         context.report_progress(current=1, total=3, stage="installing_runtime")
-        run_process([str(python), "-I", "-m", "pip", "install", "-r", str(REQUIREMENTS), "--extra-index-url", "https://download.pytorch.org/whl/cpu", "--only-binary=:all:", "--disable-pip-version-check"], log, context.checkpoint, env=environment())
+        run_process([str(python), "-I", "-m", "pip", "install", "-r", str(REQUIREMENTS), "--extra-index-url", "https://download.pytorch.org/whl/cpu", "--prefer-binary", "--disable-pip-version-check"], log, context.checkpoint, env=environment())
         context.report_progress(current=2, total=3, stage="checking_runtime")
         checked = configure(str(python))
         return {"python_path": checked.python_path, "ready": True}

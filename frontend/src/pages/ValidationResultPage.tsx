@@ -1,0 +1,70 @@
+import { useEffect, useState } from "react";
+import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
+import { freezeValidationThreshold, getValidationPredictions, getValidationResults, validationError, validationImageUrl } from "../api/validation";
+import type { ValidationMetrics, ValidationPredictions, ValidationResults } from "../types/validation";
+
+const outcomeCopy: Record<string,string> = {all:"全部图片",truth_normal:"人工真值：正常",truth_abnormal:"人工真值：异常",false_positive:"误报：正常被判为异常",false_negative:"漏检：异常被判为正常",correct_normal:"正确正常",correct_abnormal:"正确异常",unknown:"未知人工真值",near_threshold:"接近阈值"};
+const number = (value:number) => value.toLocaleString("zh-CN",{maximumFractionDigits:5});
+const percent = (value:number|null) => value===null?"无法评估":`${(value*100).toFixed(1)}%`;
+
+function MetricCards({value,onCategory,label}: {value:ValidationMetrics;onCategory:(category:string)=>void;label:string}) {
+  return <section aria-label={label} className="space-y-3"><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{[
+    ["已知正常",value.normal,"truth_normal"],["正常误报",value.false_positive,"false_positive"],
+    ["已知异常",value.abnormal,"truth_abnormal"],["异常漏检",value.false_negative,"false_negative"]
+  ].map(([name,count,key])=><button key={String(key)} className="rounded-lg border border-line bg-white p-3 text-left hover:bg-gray-50" onClick={()=>onCategory(String(key))}><span className="text-xs text-gray-500">{name}</span><strong className="mt-1 block text-xl">{count}</strong></button>)}</div><p className="text-xs leading-6 text-gray-500">正常误报率 {percent(value.false_positive_rate)} · 异常召回率 {percent(value.recall)} · 图像 AUROC {value.auroc===null?"无法评估":value.auroc.toFixed(3)} · 未知真值 {value.unknown} 张。指标只针对冻结的已知人工真值，分数不代表置信概率。</p></section>;
+}
+
+export default function ValidationResultPage() {
+  const {datasetId,runId=""}=useParams();
+  const location=useLocation();
+  const [params,setParams]=useSearchParams();
+  const [summary,setSummary]=useState<ValidationResults|null>(null);
+  const [rows,setRows]=useState<ValidationPredictions|null>(null);
+  const [threshold,setThreshold]=useState<number|null>(null);
+  const [debounced,setDebounced]=useState<number|null>(null);
+  const [recommended,setRecommended]=useState("");
+  const [error,setError]=useState("");
+  const [loading,setLoading]=useState(true);
+  const [freezing,setFreezing]=useState(false);
+  const [opacity,setOpacity]=useState(0.5);
+  const [showHeatmap,setShowHeatmap]=useState(true);
+  const split=params.get("split")??"val";
+  const category=params.get("category")??"all";
+  const page=Math.max(1,Number(params.get("page"))||1);
+  const selectedId=Number(params.get("sample"))||null;
+  function change(values:Record<string,string|null>) {setParams(current=>{const next=new URLSearchParams(current);for(const [key,value]of Object.entries(values)){if(value===null)next.delete(key);else next.set(key,value);}return next;},{replace:true});}
+  useEffect(()=>{let alive=true;setLoading(true);setError("");void getValidationResults(runId).then(value=>{if(alive){setSummary(value);setThreshold(value.threshold);setRecommended(value.threshold_source);if(value.run.mode==="batch")setParams({split:"batch"},{replace:true});}}).catch(e=>{if(alive){setError(validationError(e));setLoading(false);}});return()=>{alive=false;};},[runId]);
+  useEffect(()=>{if(threshold===null||!Number.isFinite(threshold))return;const timer=window.setTimeout(()=>setDebounced(threshold),250);return()=>window.clearTimeout(timer);},[threshold]);
+  useEffect(()=>{
+    if(debounced===null)return;
+    const controller=new AbortController();setLoading(true);setError("");
+    const value=split==="test"?undefined:debounced;
+    void Promise.all([getValidationResults(runId,debounced,controller.signal),getValidationPredictions(runId,{split,category,page,threshold:value},controller.signal)])
+      .then(([next,data])=>{if(controller.signal.aborted)return;setSummary(next);setRows(data);if(!data.items.some(item=>item.sample_id===selectedId))setParams(current=>{const nextParams=new URLSearchParams(current);if(data.items[0])nextParams.set("sample",String(data.items[0].sample_id));else nextParams.delete("sample");return nextParams;},{replace:true});})
+      .catch(e=>{if(!controller.signal.aborted)setError(validationError(e));}).finally(()=>{if(!controller.signal.aborted)setLoading(false);});
+    return()=>controller.abort();
+  },[runId,debounced,split,category,page]);
+  const selected=rows?.items.find(item=>item.sample_id===selectedId)??rows?.items[0]??null;
+  const selectedIndex=rows?.items.findIndex(item=>item.sample_id===selected?.sample_id)??-1;
+  function move(direction:number){if(!rows||loading)return;const item=rows.items[selectedIndex+direction];if(item)change({sample:String(item.sample_id)});}
+  useEffect(()=>{function key(event:KeyboardEvent){if((event.target as HTMLElement).closest("input,select,textarea,button"))return;if(event.key==="ArrowLeft"){event.preventDefault();move(-1);}if(event.key==="ArrowRight"){event.preventDefault();move(1);}}window.addEventListener("keydown",key);return()=>window.removeEventListener("keydown",key);},[selectedIndex,rows,loading]);
+  async function freeze(){if(threshold===null)return;setFreezing(true);setError("");try{await freezeValidationThreshold(runId,threshold);setSummary(await getValidationResults(runId,threshold));}catch(e){setError(validationError(e));}finally{setFreezing(false);}}
+  function filterCategory(value:string,section=split){change({category:value,split:section,page:null,sample:null});}
+  if(!summary)return <main className="mx-auto max-w-6xl space-y-4 p-6"><Link to={`/datasets/${datasetId}/validate`} state={location.state}>← 返回验证记录</Link><p role={error?"alert":"status"}>{error||"正在读取本次冻结结果…"}</p></main>;
+  const frozen=summary.frozen_decision;
+  const activeMetrics=split==="test"&&frozen?.test?frozen.test:summary.validation_metrics;
+  const bins=summary.histogram;const maxBin=Math.max(1,...bins.flatMap(bin=>[bin.normal,bin.abnormal,bin.unknown]));
+  const chartMin=bins[0]?.left??0;const chartMax=bins[bins.length-1]?.right??1;
+  const lineX=threshold===null?0:Math.max(0,Math.min(600,(threshold-chartMin)/(chartMax-chartMin)*600));
+  return <main className="mx-auto max-w-6xl space-y-5 px-5 py-6">
+    <header className="space-y-3"><Link to={`/datasets/${datasetId}/validate`} state={location.state} className="text-sm text-gray-500">← 返回验证记录</Link><div className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-2xl font-semibold">{summary.run.name}</h1><a className="rounded-lg border border-line bg-white px-3 py-2 text-sm" href={`/api/validation/runs/${runId}/report`}>下载本次结果报告</a></div><p className="text-sm text-gray-500">{summary.run.recipe.model=== "padim"?"PaDiM":"PatchCore"} · ResNet18 / ImageNet V1 · CPU · {summary.run.recipe.image_size} × {summary.run.recipe.image_size} · 数据版本 {summary.run.dataset_revision} · 用时 {summary.total_seconds.toFixed(1)} 秒</p>{summary.notes.map(note=><p key={note} className="text-xs text-gray-500">{note}</p>)}</header>
+    {error&&<p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+    <section className="space-y-4 rounded-xl border border-line bg-white p-5"><div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">{summary.run.mode==="batch"?"固定阈值的批次结果":"验证集阈值与误报漏检"}</h2><span className="text-xs text-gray-500">{recommended}</span></div><div className="grid items-center gap-5 lg:grid-cols-[1.2fr_1fr]"><div><svg role="img" aria-label="验证集正常与异常分数分布" viewBox="0 0 600 150" className="w-full rounded-lg bg-gray-50">{bins.map((bin,index)=><g key={index}>{[[bin.normal,"#64748b"],[bin.abnormal,"#e09a82"],[bin.unknown,"#cbd5e1"]].map(([count,color],k)=><rect key={k} x={index*50+k*13+4} y={135-Number(count)/maxBin*115} width={11} height={Number(count)/maxBin*115} fill={String(color)} rx={2}/>)}</g>)}<line x1={lineX} x2={lineX} y1={5} y2={140} stroke="#111827" strokeWidth={2}/></svg><div className="mt-1 flex justify-between text-xs text-gray-500"><span>{number(chartMin)} · 正常为灰蓝，异常为浅红</span><span>{number(chartMax)}</span></div></div><div className="space-y-3"><label className="block text-sm">当前验证阈值<input aria-label="异常分数阈值" className="ml-2 w-36 rounded-lg border p-2 font-mono" type="number" step="any" value={threshold??""} disabled={summary.run.mode==="batch"} onChange={e=>setThreshold(Number(e.target.value))}/></label><input aria-label="验证阈值滑块" type="range" min={summary.threshold_range.min} max={summary.threshold_range.max} step={(summary.threshold_range.max-summary.threshold_range.min)/500||0.000001} value={threshold??0} disabled={summary.run.mode==="batch"} onChange={e=>setThreshold(Number(e.target.value))} className="w-full accent-gray-900"/><p className="text-xs leading-6 text-gray-500">分数达到阈值即判为异常。这里调整验证预览，不改变人工判定或已有冻结结果。</p>{summary.run.mode!=="batch"&&!frozen&&<button disabled={freezing||loading||threshold===null||debounced!==threshold} className="rounded-lg bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-40" onClick={()=>void freeze()}>{freezing?"正在冻结…":summary.test_locked?"冻结此阈值，开启测试评估":"保存本次探索阈值"}</button>}{frozen&&<p className="rounded-lg bg-gray-50 p-3 text-xs leading-6">已冻结阈值 {number(frozen.threshold)}。{frozen.note} 当前滑块仍只预览验证集。</p>}</div></div><MetricCards value={summary.validation_metrics} label="验证集指标" onCategory={value=>filterCategory(value,summary.run.mode==="batch"?"batch":"val")}/></section>
+    {frozen?.test&&<section className="space-y-3 rounded-xl border border-line bg-white p-5"><h2 className="font-semibold">冻结的测试评估 · 阈值 {number(frozen.threshold)}</h2><p className="text-sm text-gray-500">{frozen.note}</p><MetricCards value={frozen.test} label="冻结测试指标" onCategory={value=>filterCategory(value,"test")}/></section>}
+    <section className="space-y-4 rounded-xl border border-line bg-white p-5"><div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">查看具体图片</h2><div className="flex flex-wrap gap-2"><select aria-label="结果集合" className="rounded-lg border p-2 text-sm" value={split} onChange={e=>change({split:e.target.value,category:null,page:null,sample:null})}>{summary.run.mode==="batch"?<option value="batch">当前批次</option>:<><option value="val">验证集</option><option value="train">拟合参考图片</option><option value="test" disabled={summary.test_locked}>测试集{summary.test_locked?"（冻结后开启）":""}</option></>}</select><select aria-label="结果类型" className="rounded-lg border p-2 text-sm" value={category} onChange={e=>filterCategory(e.target.value)}>{Object.entries(outcomeCopy).map(([key,text])=><option key={key} value={key}>{text}</option>)}</select></div></div>
+      <p role="status" className="text-xs text-gray-500">{loading?"正在更新预览…":`${rows?.total??0} 张 · 正常 ${activeMetrics.normal} / 异常 ${activeMetrics.abnormal} / 未知 ${activeMetrics.unknown}`}</p>
+      {selected?<div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]"><div className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-2 text-sm"><span className="break-all">{selected.relative_path}</span><span className="text-xs text-gray-500">{selected.capture_batch_id??"未填写批次"} / {selected.capture_group_id??"已声明独立采集"}</span></div><div className="overflow-hidden rounded-lg border bg-gray-50 p-2"><div className="relative mx-auto w-fit max-w-full"><img src={validationImageUrl(runId,selected.sample_id)} alt={`冻结原图 ${selected.relative_path}`} className="block max-h-[55vh] max-w-full"/><img aria-hidden="true" src={validationImageUrl(runId,selected.sample_id,"heatmap")} className="pointer-events-none absolute inset-0 h-full w-full" style={{opacity:showHeatmap?opacity:0}}/></div></div><div className="flex flex-wrap items-center gap-3 text-sm"><label><input type="checkbox" checked={showHeatmap} onChange={e=>setShowHeatmap(e.target.checked)}/> 叠加预测热图</label><label className="flex items-center gap-2">透明度<input aria-label="热图透明度" type="range" min={0} max={0.85} step={0.05} value={opacity} onChange={e=>setOpacity(Number(e.target.value))}/></label><button disabled={selectedIndex<=0||loading} className="rounded border px-3 py-1 disabled:opacity-40" onClick={()=>move(-1)}>上一张</button><button disabled={!rows||selectedIndex>=rows.items.length-1||loading} className="rounded border px-3 py-1 disabled:opacity-40" onClick={()=>move(1)}>下一张</button></div></div><aside className="space-y-4"><div className="space-y-2 rounded-lg bg-gray-50 p-4 text-sm"><p>人工判定：{selected.label_index===null?"未知":selected.label_index===1?"异常 NG":"正常 OK"}</p><p>模型判定：{selected.predicted_label?"异常":"正常"}</p><p>异常分数：<span className="font-mono">{number(selected.score)}</span></p><p className="font-medium">{outcomeCopy[selected.category]}</p>{selected.judgment_changed&&<p className="text-xs text-amber-800">当前项目的图片或判定已变化；这里保留实验当时真值。</p>}</div>{summary.reference_sample_id&&<div><p className="mb-2 text-xs text-gray-500">本次拟合使用的正常参考</p><img className="w-full rounded-lg border" src={validationImageUrl(runId,summary.reference_sample_id)} alt="本次正常参考图片"/></div>}<p className="text-xs leading-6 text-gray-500">热图为模型关注区域，不等于人工缺陷掩码。相同实验共用验证集强度标尺，跨模型不要仅凭颜色比较。</p></aside></div>:<p className="rounded-lg bg-gray-50 p-8 text-center text-sm text-gray-500">当前筛选没有图片。可切换集合或结果类型。</p>}
+      <div className="flex flex-wrap gap-2 border-t pt-3">{rows?.items.map(item=><button key={item.sample_id} className={`rounded-lg border px-3 py-2 text-xs ${selected?.sample_id===item.sample_id?"border-gray-900 bg-gray-900 text-white":"border-line"}`} onClick={()=>change({sample:String(item.sample_id)})}>{item.relative_path}</button>)}</div><div className="flex justify-between text-sm"><button disabled={page<=1||loading} onClick={()=>change({page:String(page-1),sample:null})}>上一页</button><span>{page} / {Math.max(1,Math.ceil((rows?.total??0)/(rows?.page_size??30)))}</span><button disabled={!rows||page*rows.page_size>=rows.total||loading} onClick={()=>change({page:String(page+1),sample:null})}>下一页</button></div>
+    </section>
+  </main>;
+}

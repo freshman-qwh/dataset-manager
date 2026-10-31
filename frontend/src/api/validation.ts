@@ -2,6 +2,7 @@ import axios from "axios";
 import type { FrozenPlan } from "../types/industrial";
 import type { Job } from "../types/job";
 import type { ValidationRuntime, ValidationRun } from "../types/validation";
+import type { ValidationResults, ValidationPredictions, ValidationDecision } from "../types/validation";
 
 const api = axios.create({baseURL: "/api", timeout: 180000});
 
@@ -12,6 +13,10 @@ export const previewValidation = async (datasetId: number, payload: Record<strin
 export const createValidationRun = async (datasetId: number, plan: FrozenPlan, name: string) => (await api.post<ValidationRun>(`/datasets/${datasetId}/validation/runs`, {plan_id:plan.plan_id, plan_hash:plan.plan_hash, name})).data;
 export const listValidationRuns = async (datasetId: number) => (await api.get<ValidationRun[]>(`/datasets/${datasetId}/validation/runs`)).data;
 export const getValidationRun = async (runId: string) => (await api.get<ValidationRun>(`/validation/runs/${runId}`)).data;
+export const getValidationResults = async (runId:string, threshold?:number, signal?:AbortSignal) => (await api.get<ValidationResults>(`/validation/runs/${runId}/results`,{params:{threshold},signal})).data;
+export const getValidationPredictions = async (runId:string, params:Record<string,string|number|undefined>, signal?:AbortSignal) => (await api.get<ValidationPredictions>(`/validation/runs/${runId}/predictions`,{params,signal})).data;
+export const freezeValidationThreshold = async (runId:string,threshold:number) => (await api.post<ValidationDecision>(`/validation/runs/${runId}/freeze-threshold`,{threshold})).data;
+export const validationImageUrl = (runId:string,sampleId:number,kind="preview") => `/api/validation/runs/${runId}/images/${sampleId}?kind=${kind}`;
 
 export function validationError(error: unknown): string {
   const detail = axios.isAxiosError(error) ? error.response?.data?.detail : null;
