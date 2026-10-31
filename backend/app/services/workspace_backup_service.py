@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 from contextlib import closing
@@ -77,7 +78,19 @@ def _source_signature(database: Path, backup_job_id: int) -> tuple:
         if any(row[1] in {"queued", "running"} for row in jobs):
             raise ValueError("请等待其他后台任务结束后再备份元数据与快照。")
         revisions = tuple(connection.execute("SELECT id, revision FROM datasets ORDER BY id"))
-    return revisions, jobs
+        tables = {r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        validation = []
+        # Review and threshold actions intentionally do not change dataset truth
+        # revision, but they must still invalidate an in-progress backup.
+        for table,columns in (
+            ("validation_runs","id,contract_sha256,job_id,parent_run_id"),
+            ("validation_decisions","run_id,threshold,report_json"),
+            ("validation_test_exposures","sha256,first_run_id"),
+            ("validation_reviews","run_id,sample_id,state,updated_at"),
+        ):
+            if table in tables:
+                validation.append((table,tuple(connection.execute(f"SELECT {columns} FROM {table} ORDER BY 1,2"))))
+    return revisions, jobs, tuple(validation)
 
 
 def run_backup(context: JobContext, parameters: dict[str, object]) -> dict[str, object]:
@@ -92,6 +105,7 @@ def run_backup(context: JobContext, parameters: dict[str, object]) -> dict[str, 
         verification = database_backup_service._inspect_backup(database)
         if verification["foreign_key_violation_count"]:
             raise ValueError("数据库存在失效关联，请先完成完整性维护。")
+        _verify_validation_documents(database, storage)
         files = [("database/app.db", database), *_verify_snapshot_documents(database, storage)]
         for folder in METADATA_FOLDERS:
             source_root = storage / folder
@@ -123,7 +137,8 @@ def run_backup(context: JobContext, parameters: dict[str, object]) -> dict[str, 
                     context.report_progress(current=index, total=len(files), stage="copying_files")
                 manifest = dict(bundle_version=1, verification=verification, raw_files_included=False,
                     downloadable_job_artifacts_included=False, files=manifest_files,
-                    scope="SQLite + referenced snapshots + frozen plans + task recovery metadata")
+                    validation_results_included=True, algorithm_runtime_included=False,
+                    scope="SQLite + snapshots + frozen plans + recovery metadata + validation models and derived results")
                 archive.writestr("bundle-manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
             with ZipFile(workspace.path) as archive:
                 for item in manifest_files:
@@ -183,6 +198,7 @@ def restore_bundle(archive_path: Path, target_directory: Path) -> dict:
         if verification["foreign_key_violation_count"] or verification != manifest["verification"] or verification["current_revision"] != migrations.head_revision():
             raise ValueError("数据库结构或计数与备份不一致；请用匹配版本恢复。")
         _verify_snapshot_documents(database, temporary / "storage")
+        _verify_validation_documents(database, temporary / "storage")
         (temporary / "restore-report.json").write_text(json.dumps(dict(verification=verification,
             raw_files_included=False, restored_files=len(items), current_workspace_replaced=False), ensure_ascii=False, indent=2), encoding="utf-8")
         os.rename(temporary, target)
@@ -193,3 +209,50 @@ def restore_bundle(archive_path: Path, target_directory: Path) -> dict:
         # Only the uniquely created sibling staging folder is ever removed.
         if temporary.parent == target.parent and temporary.name.startswith(f".{target.name}.restore-") and temporary.exists():
             shutil.rmtree(temporary)
+
+
+def _verify_validation_documents(database: Path, storage: Path) -> None:
+    """Verify model/result references as well as the archive's file inventory."""
+    from app.services.industrial_plan_service import digest
+    with closing(database_backup_service._open_read_only(database)) as connection:
+        tables = {r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "validation_runs" not in tables:
+            return
+        records = connection.execute("SELECT id, contract_sha256, job_id, parent_run_id FROM validation_runs").fetchall()
+        completed = {}
+        for rid, expected, jid, parent_id in records:
+            if not re.fullmatch(r"[a-f0-9]{32}", rid):
+                raise ValueError("验证实验标识不合法。")
+            root = _safe_path(storage, f"validation-runs/{rid}")
+            try:
+                contract_path = root / "contract.json"
+                if contract_path.stat().st_size > 40_000_000:
+                    raise ValueError("oversized contract")
+                contract = json.loads(contract_path.read_text(encoding="utf-8"))
+                if digest(contract) != expected:
+                    raise ValueError("contract checksum")
+                job = connection.execute("SELECT status,result_json FROM jobs WHERE id=?",(jid,)).fetchone()
+                if not job or job[0] != "succeeded":
+                    continue
+                reference = json.loads(job[1])
+                attempt = int(reference["artifact_job_id"])
+                if attempt <= 0:
+                    raise ValueError("invalid attempt")
+                output = root / f"attempt-{attempt}"
+                result_path = output / "result.json"
+                if _sha(result_path) != reference["result_sha256"]:
+                    raise ValueError("result checksum")
+                result = json.loads(result_path.read_text(encoding="utf-8"))
+                if not parent_id and _sha(output/"model.pt") != result["model_sha256"]:
+                    raise ValueError("model checksum")
+                for row in contract["rows"]:
+                    if not row["split"]: continue
+                    sid = int(row["sample_id"])
+                    if sid <= 0 or not (output/"previews"/f"{sid}.jpg").is_file() or not (output/"heatmaps"/f"{sid}.png").is_file():
+                        raise ValueError("missing result images")
+                completed[rid] = (parent_id,result["model_sha256"])
+            except (OSError,ValueError,TypeError,KeyError) as exc:
+                raise ValueError(f"验证实验 {rid} 的输入、模型或结果缺失/校验失败；请恢复完整文件。") from exc
+        for rid,(parent_id,model_hash) in completed.items():
+            if parent_id and (parent_id not in completed or completed[parent_id][1] != model_hash):
+                raise ValueError(f"验证批次 {rid} 的原模型引用缺失或不一致。")

@@ -33,6 +33,13 @@ def fixture_bundle(tmp_path, monkeypatch):
     dataset = client.post("/api/datasets/industrial-example").json()
     snapshot = client.post(f"/api/datasets/{dataset['id']}/snapshots", json={"name": "frozen"})
     assert snapshot.status_code == 201, snapshot.text
+    from app.services import validation_run_service, validation_runtime_service, industrial_plan_service
+    from app.schemas.validation import RuntimeRead
+    from test_validation_results import completed_run
+    monkeypatch.setattr(validation_run_service,"get_settings",lambda:settings)
+    monkeypatch.setattr(industrial_plan_service,"get_settings",lambda:settings)
+    monkeypatch.setattr(validation_runtime_service,"status",lambda *args:RuntimeRead(ready=True,message="test"))
+    completed_run(client,engine,dataset)
     (storage / "job-recovery").mkdir()
     (storage / "job-recovery" / "recovery.json").write_text('{"test": true}', encoding="utf-8")
     with Session(engine) as session:
@@ -49,6 +56,8 @@ def test_restore_to_new_location_verifies_database_and_external_snapshots(tmp_pa
     restored = backups.restore_bundle(archive, target)
     assert restored["verification"]["table_counts"]["samples"] == 16
     assert restored["verification"]["table_counts"]["dataset_snapshots"] == 1
+    assert restored["verification"]["table_counts"]["validation_runs"] == 1
+    assert next((target/"storage/validation-runs").rglob("model.pt")).read_bytes()==b"frozen model"
     assert restored["current_workspace_replaced"] is False
     assert not (target / "storage/datasets").exists()
     assert len(list((target / "storage/snapshots").rglob("*.json"))) == 1
@@ -95,3 +104,36 @@ def test_startup_status_identifies_legacy_schema_without_writing_it(tmp_path: Pa
     invalid_archive = tmp_path / "bad.zip"
     invalid_archive.write_bytes(b"not a zip")
     assert client.post("/api/system/restore-workspace", json={"archive_path": str(invalid_archive)}).status_code == 422
+
+
+def test_restore_rejects_model_inconsistent_with_frozen_result(tmp_path,monkeypatch):
+    import hashlib
+    archive,_,_,_=fixture_bundle(tmp_path,monkeypatch)
+    bad=tmp_path/"model-inconsistent.zip"
+    with ZipFile(archive) as source,ZipFile(bad,"w") as destination:
+        manifest=json.loads(source.read("bundle-manifest.json"))
+        for item in manifest["files"]:
+            value=source.read(item["path"])
+            if item["path"].endswith("/model.pt"):
+                value=b"different model"
+                item.update(sha256=hashlib.sha256(value).hexdigest(),size_bytes=len(value))
+            destination.writestr(item["path"],value)
+        destination.writestr("bundle-manifest.json",json.dumps(manifest))
+    target=tmp_path/"rejected-workspace"
+    with pytest.raises(ValueError,match="模型"):
+        backups.restore_bundle(bad,target)
+    assert not target.exists()
+
+
+def test_review_action_invalidates_backup_without_changing_dataset_truth(tmp_path,monkeypatch):
+    _,database,_,_=fixture_bundle(tmp_path,monkeypatch)
+    with sqlite3.connect(database) as connection:
+        job_id=connection.execute("SELECT id FROM jobs WHERE job_type=?",(backups.JOB_TYPE,)).fetchone()[0]
+        run_id=connection.execute("SELECT id FROM validation_runs").fetchone()[0]
+        sid,digest=connection.execute("SELECT id,file_hash FROM samples LIMIT 1").fetchone()
+        revision=connection.execute("SELECT revision FROM datasets LIMIT 1").fetchone()[0]
+    before=backups._source_signature(database,job_id)
+    with sqlite3.connect(database) as connection:
+        connection.execute("INSERT INTO validation_reviews(run_id,sample_id,sha256,state,updated_at) VALUES(?,?,?,'pending',CURRENT_TIMESTAMP)",(run_id,sid,digest))
+        assert connection.execute("SELECT revision FROM datasets LIMIT 1").fetchone()[0]==revision
+    assert backups._source_signature(database,job_id)!=before

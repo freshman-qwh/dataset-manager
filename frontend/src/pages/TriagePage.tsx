@@ -17,7 +17,7 @@ import {
   ZoomOut
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
 
 import {
   createDefectType,
@@ -229,6 +229,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
 export default function TriagePage() {
   const routeParams = useParams();
   const datasetId = Number(routeParams.datasetId);
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedSampleId = Number(searchParams.get("sample")) || null;
   const reviewRun = searchParams.get("review_run") || undefined;
@@ -1030,6 +1031,7 @@ export default function TriagePage() {
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-5 py-3">
           <div className="flex min-w-0 items-center gap-4">
             <Link
+              state={location.state}
               to={reviewRun ? `/datasets/${datasetId}/validate/${reviewRun}${reviewReturn.startsWith("?")?reviewReturn:""}` : `/datasets/${datasetId}`}
               className="inline-flex min-h-11 shrink-0 items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-950"
             >

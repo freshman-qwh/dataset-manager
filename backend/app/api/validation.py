@@ -7,12 +7,30 @@ from app.models.validation import ValidationRun
 from app.schemas.industrial import FrozenPlanRead
 from app.schemas.job import JobRead
 from app.schemas.validation import RuntimeConfigure, RuntimeInstall, RuntimeRead, ValidationPreviewRequest, ValidationRunCreate, ValidationRunRead
-from app.schemas.validation import ThresholdRequest, ReviewRequest, ReviewUpdate, BatchPreviewRequest
+from app.schemas.validation import ThresholdRequest, ReviewRequest, ReviewUpdate, BatchPreviewRequest, RoiSettingsWrite, QualityInspectRequest
 from app.services import industrial_plan_service as plans
 from app.services import validation_plan_service, validation_run_service as runs, validation_runtime_service as runtime
 from app.services.dataset_service import get_dataset_or_404
 
 router = APIRouter(prefix="/api", tags=["validation"])
+
+
+@router.get("/datasets/{dataset_id}/validation/settings")
+def preparation_settings(dataset_id: int, session: Session = Depends(get_session)):
+    from app.services.validation_preparation_service import settings
+    return settings(session,dataset_id)
+
+
+@router.put("/datasets/{dataset_id}/validation/settings")
+def save_preparation_settings(dataset_id: int, payload: RoiSettingsWrite, session: Session = Depends(get_session)):
+    from app.services.validation_preparation_service import save_roi
+    return save_roi(session,dataset_id,payload)
+
+
+@router.post("/datasets/{dataset_id}/validation/quality-inspections")
+def quality_inspection(dataset_id: int, payload: QualityInspectRequest, session: Session = Depends(get_session)):
+    from app.services.validation_preparation_service import inspect_quality
+    return inspect_quality(session,dataset_id,payload)
 
 
 @router.get("/validation/runtime", response_model=RuntimeRead)

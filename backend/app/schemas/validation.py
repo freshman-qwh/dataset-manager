@@ -3,6 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.schemas.industrial import AnomalyPreviewRequest
+from app.schemas.annotation_export import AnnotationExportSampleQuery
 from app.schemas.job import JobRead
 
 
@@ -85,3 +86,19 @@ class BatchPreviewRequest(BaseModel):
     target_dataset_id: int = Field(gt=0)
     sample_ids: list[int] | None = Field(default=None, min_length=1, max_length=2000)
     independent_capture_declared: bool = False
+
+
+class RoiSettingsWrite(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    roi: NormalizedRoi | None = None
+    expected_dataset_revision: int = Field(ge=1)
+
+
+class QualityInspectRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    sample_query: AnnotationExportSampleQuery = Field(default_factory=AnnotationExportSampleQuery)
+    roi: NormalizedRoi | None = None
+    dark_below: float = Field(default=35, ge=0, le=120)
+    bright_above: float = Field(default=220, ge=135, le=255)
+    sharpness_below: float = Field(default=30, ge=0, le=10000)
+    similar_distance: int = Field(default=4, ge=0, le=12)

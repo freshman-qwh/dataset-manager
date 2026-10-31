@@ -41,6 +41,13 @@ export interface ValidationPrediction {
 }
 
 export interface ValidationReviewSummary {dataset_id:number;pending:number;reviewed:number;ignored:number}
+export interface ValidationPreparation {roi:NormalizedRoi|null;dataset_revision:number;references:Array<{sample_id:number;relative_path:string}>}
+export interface QualityImage {sample_id:number;relative_path:string;sha256:string;brightness:number|null;sharpness:number|null;issues:string[];error:string|null}
+export interface QualityInspection {
+  dataset_revision:number;parameters:Record<string,unknown>;images:QualityImage[];processed:number;failed:number;
+  pairs:Array<{left_id:number;right_id:number;distance:number;exact_duplicate:boolean}>;
+  pair_count:number;pairs_truncated:boolean;notice:string;
+}
 export interface ValidationPredictions {
   items: ValidationPrediction[]; total:number;page:number;page_size:number;threshold:number;
 }

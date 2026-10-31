@@ -93,3 +93,23 @@ def test_batch_freezes_original_model_and_excludes_transitive_overlap(tmp_path, 
     # Deleting results does not reset test-content exposure history.
     another,_ = completed_run(client,engine,dataset)
     assert not client.post(f"/api/validation/runs/{another.id}/freeze-threshold",json={"threshold":2}).json()["independent_test"]
+
+
+def test_batch_excludes_conflicting_truth_for_identical_content(tmp_path, monkeypatch):
+    client,engine,dataset=workspace(tmp_path,monkeypatch)
+    parent,old=completed_run(client,engine,dataset)
+    base=f"/api/validation/runs/{parent.id}"
+    client.post(base+"/freeze-threshold",json={"threshold":2})
+    target=new_batch(client,engine,tmp_path,old)
+    with Session(engine) as session:
+        samples=session.exec(select(Sample).where(Sample.dataset_id==target["id"]).order_by(Sample.filename)).all()
+        left,right=samples[2:4]
+        Path(right.absolute_path).write_bytes(Path(left.absolute_path).read_bytes())
+        right.file_hash=left.file_hash
+        for sample,status in [(left,"ok"),(right,"ng")]:
+            sample.triage_status=status;sample.ok_grade="clear" if status=="ok" else None
+            sample.triaged_file_hash=sample.file_hash;sample.triage_policy_version=1;session.add(sample)
+        session.commit()
+    plan=client.post(base+"/batch-previews",json={"target_dataset_id":target["id"]}).json()
+    assert plan["summary"]["included_count"]==2
+    assert sum("判定矛盾" in (r["exclusion_reason"] or "") for r in plan["rows"])==2

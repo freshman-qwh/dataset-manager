@@ -1,6 +1,7 @@
 """Freeze exploratory or strict validation inputs before starting the worker."""
 import random
 from pathlib import Path
+from PIL import Image, ImageOps
 
 from fastapi import HTTPException
 from sqlmodel import Session, select
@@ -72,6 +73,16 @@ def preview(session: Session, dataset_id: int, request: ValidationPreviewRequest
             full_dataset_checked=len(samples), group_count=len(groups),
             notice="正常一致性探索：只评价已知正常的误报与分数分布，没有异常检出率或独立测试结论。")
     blockers = list(summary["blockers"])
+    if request.roi:
+        from app.services.validation_preparation_service import crop_box
+        for row in rows:
+            if not row["split"]:
+                continue
+            try:
+                with Image.open(row["source_absolute_path"]) as image:
+                    crop_box(ImageOps.exif_transpose(image).size, request.roi)
+            except (OSError, ValueError) as exc:
+                blockers.append(f"{row['relative_path']}：区域检查失败，{exc}")
     if sum(r["split"] == "train" for r in rows) < 2:
         blockers.append("拟合至少需要 2 张有效正常图片。")
     if sum(r["split"] == "train" for r in rows) > 256 or sum(bool(r["split"]) for r in rows) > 2000:

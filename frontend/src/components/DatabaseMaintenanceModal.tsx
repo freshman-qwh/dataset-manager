@@ -231,7 +231,7 @@ export default function DatabaseMaintenanceModal({
             <div>
               <h3 id="database-backup-title" className="text-sm font-medium text-ink">轻量元数据备份</h3>
               <p className="mt-1 text-sm leading-6 text-gray-500">
-                ZIP 包同时包含数据库、快照、冻结计划和任务恢复元数据；原始图片、缩略图及历史下载产物需另行保存。原有轻量 .db 仅备份数据库。
+                ZIP 包包含数据库、快照、冻结计划、任务恢复元数据，以及验证模型、热图和结果预览；原始图片、算法运行环境、缩略图及历史下载产物需另行保存。轻量 .db 仅备份数据库。
               </p>
             </div>
             <button type="button" disabled={creatingBackup || backupActive} onClick={() => void handleCreateBackup(true)} className="rounded-lg bg-gray-900 px-3 py-2 text-sm text-white disabled:opacity-40">备份元数据与快照 ZIP</button>

@@ -50,6 +50,7 @@ def preview(session: Session, run_id: str, request) -> dict:
             reason = "缺少采集组，请补充或明确声明独立采集"
             blockers.append(reason)
         checked = []
+        labels_by_hash = {}
         for sample in members:
             if sample.id not in selected:
                 continue
@@ -59,8 +60,12 @@ def preview(session: Session, run_id: str, request) -> dict:
             except (OSError, ValueError):
                 readable = False
             checked.append((sample, label, truth_reason))
+            if label is not None:
+                labels_by_hash.setdefault(sample.file_hash,set()).add(label)
             if not readable:
                 reason = reason or "整组排除：原图不可用或内容变化，请重新扫描"
+        if any(len(values)>1 for values in labels_by_hash.values()):
+            reason = "整组排除：相同内容的人工判定矛盾，请先复核"
         seen = set()
         for sample, label, truth_reason in checked:
             excluded = reason or ("精确重复，保留首张" if sample.file_hash in seen else None)

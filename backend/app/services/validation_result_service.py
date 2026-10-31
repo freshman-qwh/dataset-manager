@@ -104,6 +104,7 @@ def overview(session: Session, run_id: str, threshold: float | None = None) -> d
         selected = [r for r in validation if left <= r["score"] and (r["score"] < right or index == 11)]
         bins.append(dict(left=left, right=right, normal=sum(r["label_index"] == 0 for r in selected), abnormal=sum(r["label_index"] == 1 for r in selected), unknown=sum(r["label_index"] is None for r in selected)))
     report = json.loads(decision.report_json) if decision else None
+    roi = contract["recipe"].get("roi")
     return dict(run=runs.read_run(session, run).model_dump(mode="json"), threshold=value, threshold_source=source,
         threshold_range={"min": min(low - span * 0.05, value), "max": max(high + span * 0.05, value)},
         validation_metrics=metrics(validation, value), frozen_decision=report,
@@ -111,6 +112,7 @@ def overview(session: Session, run_id: str, threshold: float | None = None) -> d
         reference_sample_id=reference, reference_run_id=reference_run_id, reference_dataset_id=reference_dataset_id, map_scale=result["map_scale"], histogram=bins,
         total_seconds=result["total_seconds"], fit_seconds=result["fit_seconds"],
         notes=["异常分数不是置信概率；热图沿用原实验验证集标尺。" if run.mode == "batch" else "异常分数不是置信概率；热图采用本次验证集的统一强度标尺。", "没有像素真值，本页不计算像素级指标。"] +
+              ([f"检测区域：左 {roi['x']:.1%}、上 {roi['y']:.1%}、宽 {roi['width']:.1%}、高 {roi['height']:.1%}；区域外不参与评分。"] if roi else ["检测区域：整张图片。"])+
               (["当前项目版本已变化，本页仍保留运行当时的图片和人工判定。"] if run.dataset_revision != runs.get_dataset_or_404(session, run.dataset_id).revision else []))
 
 

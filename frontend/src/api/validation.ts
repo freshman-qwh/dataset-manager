@@ -4,6 +4,7 @@ import type { Job } from "../types/job";
 import type { ValidationRuntime, ValidationRun } from "../types/validation";
 import type { ValidationResults, ValidationPredictions, ValidationDecision } from "../types/validation";
 import type { ValidationReviewSummary } from "../types/validation";
+import type { ValidationPreparation,NormalizedRoi,QualityInspection } from "../types/validation";
 
 const api = axios.create({baseURL: "/api", timeout: 180000});
 
@@ -22,6 +23,9 @@ export const getValidationReview = async (runId:string) => (await api.get<Valida
 export const addValidationReview = async (runId:string,sample_ids:number[]) => (await api.post<ValidationReviewSummary>(`/validation/runs/${runId}/review`,{sample_ids})).data;
 export const updateValidationReview = async (runId:string,sampleId:number,payload:Record<string,unknown>) => (await api.patch<ValidationReviewSummary>(`/validation/runs/${runId}/review/${sampleId}`,payload)).data;
 export const previewValidationBatch = async (runId:string,payload:Record<string,unknown>) => (await api.post<FrozenPlan>(`/validation/runs/${runId}/batch-previews`,payload)).data;
+export const getValidationPreparation = async (id:number) => (await api.get<ValidationPreparation>(`/datasets/${id}/validation/settings`)).data;
+export const saveValidationRoi = async (id:number,roi:NormalizedRoi|null,expected_dataset_revision:number) => (await api.put<ValidationPreparation>(`/datasets/${id}/validation/settings`,{roi,expected_dataset_revision})).data;
+export const inspectValidationQuality = async (id:number,payload:Record<string,unknown>) => (await api.post<QualityInspection>(`/datasets/${id}/validation/quality-inspections`,payload)).data;
 
 export function validationError(error: unknown): string {
   const detail = axios.isAxiosError(error) ? error.response?.data?.detail : null;
