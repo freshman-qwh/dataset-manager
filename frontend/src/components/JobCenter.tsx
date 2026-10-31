@@ -17,7 +17,7 @@ const statusCopy: Record<JobStatus, string> = {
 const terminalRetryStatuses = new Set<JobStatus>(["failed", "cancelled", "interrupted"]);
 const stageCopy: Record<string, string> = {
   queued: "等待开始",
-  preparing_model: "准备基线模型", preparing_weights: "准备预训练权重",
+  loading_algorithm:"载入算法组件（首次可能较慢）", preparing_model: "准备基线模型", preparing_weights: "准备预训练权重",
   fitting_features: "提取正常特征", fitting_distribution: "建立正常基线", predicting: "逐图预测",
   creating_runtime: "创建独立环境", installing_runtime: "下载 CPU 组件", checking_runtime: "检查组件环境",
   starting: "正在启动",

@@ -3,6 +3,7 @@ import type { FrozenPlan } from "../types/industrial";
 import type { Job } from "../types/job";
 import type { ValidationRuntime, ValidationRun } from "../types/validation";
 import type { ValidationResults, ValidationPredictions, ValidationDecision } from "../types/validation";
+import type { ValidationReviewSummary } from "../types/validation";
 
 const api = axios.create({baseURL: "/api", timeout: 180000});
 
@@ -17,6 +18,10 @@ export const getValidationResults = async (runId:string, threshold?:number, sign
 export const getValidationPredictions = async (runId:string, params:Record<string,string|number|undefined>, signal?:AbortSignal) => (await api.get<ValidationPredictions>(`/validation/runs/${runId}/predictions`,{params,signal})).data;
 export const freezeValidationThreshold = async (runId:string,threshold:number) => (await api.post<ValidationDecision>(`/validation/runs/${runId}/freeze-threshold`,{threshold})).data;
 export const validationImageUrl = (runId:string,sampleId:number,kind="preview") => `/api/validation/runs/${runId}/images/${sampleId}?kind=${kind}`;
+export const getValidationReview = async (runId:string) => (await api.get<ValidationReviewSummary>(`/validation/runs/${runId}/review`)).data;
+export const addValidationReview = async (runId:string,sample_ids:number[]) => (await api.post<ValidationReviewSummary>(`/validation/runs/${runId}/review`,{sample_ids})).data;
+export const updateValidationReview = async (runId:string,sampleId:number,payload:Record<string,unknown>) => (await api.patch<ValidationReviewSummary>(`/validation/runs/${runId}/review/${sampleId}`,payload)).data;
+export const previewValidationBatch = async (runId:string,payload:Record<string,unknown>) => (await api.post<FrozenPlan>(`/validation/runs/${runId}/batch-previews`,payload)).data;
 
 export function validationError(error: unknown): string {
   const detail = axios.isAxiosError(error) ? error.response?.data?.detail : null;
@@ -24,3 +29,5 @@ export function validationError(error: unknown): string {
   if (Array.isArray(detail)) return detail.map(item => String(item.msg ?? "请检查填写的参数")).join("；");
   return "请求未完成，请检查本地服务后重试。";
 }
+
+export const deleteValidationRun = async (runId:string) => {await api.delete(`/validation/runs/${runId}`);};

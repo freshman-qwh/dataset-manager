@@ -27,7 +27,8 @@ def completed_run(client, engine, dataset):
                     (root / directory).mkdir(exist_ok=True)
                     Image.new("RGB", (16, 16)).save(root / directory / f"{row['sample_id']}.{extension}")
         predictions = [dict(sample_id=r["sample_id"], score=float(r["sample_id"] % 5)) for r in contract["rows"] if r["split"]]
-        payload = dict(predictions=predictions, map_scale=10, total_seconds=2, fit_seconds=1, model_sha256="a" * 64)
+        (root / "model.pt").write_bytes(b"frozen model")
+        payload = dict(predictions=predictions, map_scale=10, total_seconds=2, fit_seconds=1, model_sha256=hashlib.sha256(b"frozen model").hexdigest())
         (root / "result.json").write_text(json.dumps(payload), encoding="utf-8")
         digest = hashlib.sha256((root / "result.json").read_bytes()).hexdigest()
         job_service.transition_job(session, run.job.id, "succeeded", result=dict(artifact_job_id=run.job.id, result_sha256=digest))

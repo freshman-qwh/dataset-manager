@@ -1,0 +1,20 @@
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { listDatasets } from "../api/client";
+import { createValidationRun, previewValidationBatch, validationError } from "../api/validation";
+import type { Dataset } from "../types/dataset";
+import type { FrozenPlan } from "../types/industrial";
+
+export default function ValidationBatchModal({runId,onClose}:{runId:string;onClose:()=>void}) {
+  const navigate=useNavigate();
+  const [datasets,setDatasets]=useState<Dataset[]>([]);
+  const [target,setTarget]=useState(0);
+  const [independent,setIndependent]=useState(false);
+  const [plan,setPlan]=useState<FrozenPlan|null>(null);
+  const [name,setName]=useState("新批次验证");
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState("");
+  useEffect(()=>{let alive=true;void listDatasets().then(items=>{if(alive)setDatasets(items.filter(d=>d.workflow_profile==="industrial_anomaly"));}).catch(e=>{if(alive)setError(validationError(e));});return()=>{alive=false;};},[]);
+  async function action(fn:()=>Promise<void>){setBusy(true);setError("");try{await fn();}catch(e){setError(validationError(e));}finally{setBusy(false);}}
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"><section role="dialog" aria-modal="true" aria-labelledby="batch-title" className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl"><div className="flex justify-between gap-4"><h2 id="batch-title" className="text-lg font-semibold">用此模型验证新批次</h2><button onClick={onClose} disabled={busy} className="text-sm text-gray-500">关闭</button></div><p className="my-4 text-sm leading-6 text-gray-500">先将新批次扫描到工业项目。这里检查所选项目的全部图片，自动排除旧输入和历史批次的重复内容、同采集组图片；固定原模型、ROI、热图标尺与阈值。</p>{error&&<p role="alert" className="my-3 rounded bg-red-50 p-3 text-sm text-red-700">{error}</p>}<fieldset disabled={busy} className="space-y-4"><label className="block text-sm">新批次所在项目<select aria-label="新批次项目" className="mt-1 w-full rounded-lg border p-2" value={target} onChange={e=>{setTarget(Number(e.target.value));setPlan(null);}}><option value={0}>请选择工业项目</option>{datasets.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label><label className="block text-sm"><input type="checkbox" checked={independent} onChange={e=>{setIndependent(e.target.checked);setPlan(null);}}/> 未填写工件组的图片均来自独立采集，没有同工件连拍或多视角</label><label className="block text-sm">批次记录名称<input aria-label="批次记录名称" className="mt-1 w-full rounded-lg border p-2" maxLength={160} value={name} onChange={e=>setName(e.target.value)}/></label><button disabled={!target||busy} className="rounded-lg border px-4 py-2 text-sm disabled:opacity-40" onClick={()=>void action(async()=>setPlan(await previewValidationBatch(runId,{target_dataset_id:target,independent_capture_declared:independent})))}>检查新批次</button></fieldset>{plan&&<div className="mt-4 space-y-3 border-t pt-4"><p className="text-sm">纳入 {String(plan.summary.included_count)} 张 · 排除 {String(plan.summary.excluded_count)} 张 · 未知人工真值 {String(plan.summary.unknown_count)} 张</p><p className="text-sm text-gray-500">{String(plan.summary.notice)} 原冻结阈值 {Number(plan.summary.threshold).toPrecision(6)}。</p>{(plan.summary.blockers as string[]).map(text=><p key={text} role="alert" className="rounded bg-amber-50 p-2 text-sm text-amber-800">{text}</p>)}<details className="text-xs text-gray-500"><summary className="cursor-pointer">逐图检查结果（前 {plan.rows.length} 项）</summary><ul className="mt-2 max-h-40 space-y-1 overflow-y-auto">{plan.rows.map(row=><li key={String(row.sample_id)}>{String(row.relative_path)} · {String(row.exclusion_reason??"纳入预测")}</li>)}</ul></details><button disabled={busy||plan.summary.blocked!==false||!name.trim()} className="rounded-lg bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-40" onClick={()=>void action(async()=>{await createValidationRun(target,plan,name.trim());window.dispatchEvent(new Event("dataset-manager:jobs-changed"));navigate(`/datasets/${target}/validate`);})}>{busy?"正在创建…":"确认新批次，仅运行预测"}</button></div>}</section></div>;
+}

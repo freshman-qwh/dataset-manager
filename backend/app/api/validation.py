@@ -7,7 +7,7 @@ from app.models.validation import ValidationRun
 from app.schemas.industrial import FrozenPlanRead
 from app.schemas.job import JobRead
 from app.schemas.validation import RuntimeConfigure, RuntimeInstall, RuntimeRead, ValidationPreviewRequest, ValidationRunCreate, ValidationRunRead
-from app.schemas.validation import ThresholdRequest
+from app.schemas.validation import ThresholdRequest, ReviewRequest, ReviewUpdate, BatchPreviewRequest
 from app.services import industrial_plan_service as plans
 from app.services import validation_plan_service, validation_run_service as runs, validation_runtime_service as runtime
 from app.services.dataset_service import get_dataset_or_404
@@ -85,6 +85,11 @@ def read_diagnostics(run_id: str, session: Session = Depends(get_session)):
         return PlainTextResponse(file.read().decode("utf-8", errors="replace"))
 
 
+@router.delete("/validation/runs/{run_id}", status_code=204)
+def delete_validation(run_id: str, session: Session = Depends(get_session)):
+    runs.delete_run(session, run_id)
+
+
 @router.get("/validation/runs/{run_id}/results")
 def read_results(run_id: str, threshold: float | None = Query(None, allow_inf_nan=False), session: Session = Depends(get_session)):
     from app.services.validation_result_service import overview
@@ -123,3 +128,27 @@ def download_report(run_id: str, session: Session = Depends(get_session)):
         rows = [row for row in rows if row["split"] != "test"]
     return JSONResponse(dict(schema_version=1, run=summary, predictions=rows, model_sha256=result["model_sha256"],
         masks_included=False, pixel_metrics=None), headers={"Content-Disposition": f'attachment; filename="validation-{run_id}.json"'})
+
+
+@router.get("/validation/runs/{run_id}/review")
+def review_summary(run_id: str, session: Session = Depends(get_session)):
+    from app.services.validation_review_service import summary
+    return summary(session, run_id)
+
+
+@router.post("/validation/runs/{run_id}/review")
+def add_review(run_id: str, payload: ReviewRequest, session: Session = Depends(get_session)):
+    from app.services.validation_review_service import add_candidates
+    return add_candidates(session, run_id, payload.sample_ids)
+
+
+@router.patch("/validation/runs/{run_id}/review/{sample_id}")
+def update_review(run_id: str, sample_id: int, payload: ReviewUpdate, session: Session = Depends(get_session)):
+    from app.services.validation_review_service import update
+    return update(session, run_id, sample_id, payload)
+
+
+@router.post("/validation/runs/{run_id}/batch-previews", response_model=FrozenPlanRead)
+def preview_batch(run_id: str, payload: BatchPreviewRequest, session: Session = Depends(get_session)):
+    from app.services.validation_batch_service import preview
+    return plans.page(preview(session, run_id, payload))

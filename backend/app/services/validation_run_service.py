@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 from sqlalchemy import text
-from sqlmodel import Session, select
+from sqlmodel import Session, select, delete
 from app.core.config import get_settings
 from app.models.validation import ValidationRun
 from app.models.job import Job
@@ -79,7 +79,7 @@ def create_run(session: Session, dataset_id: int, payload: ValidationRunCreate) 
             (root / "contract.json").write_text(json.dumps(contract, ensure_ascii=False), encoding="utf-8")
             run = ValidationRun(id=run_id, dataset_id=dataset_id, dataset_revision=plan["dataset_revision"],
                 plan_id=payload.plan_id, plan_hash=payload.plan_hash, mode=plan["mode"], name=payload.name.strip() or "基线验证",
-                recipe_json=json.dumps(plan["recipe"]), summary_json=json.dumps(plan["summary"]), contract_sha256=plans.digest(contract))
+                recipe_json=json.dumps(plan["recipe"]), summary_json=json.dumps(plan["summary"]), contract_sha256=plans.digest(contract), parent_run_id=plan.get("parent_run_id"))
             session.add(run)
             session.flush()
             # Commit the run and its queue entry together. The generic helper
@@ -122,7 +122,31 @@ def result_root(session: Session, run: ValidationRun) -> Path:
     return run_root(run.id) / f"attempt-{int(job.result['artifact_job_id'])}"
 
 
+def delete_run(session: Session, run_id: str) -> None:
+    from app.models.validation import ValidationDecision, ValidationReview
+    session.commit(); session.exec(text("BEGIN IMMEDIATE"))
+    try:
+        run = get_run(session, run_id)
+        if session.exec(select(ValidationRun.id).where(ValidationRun.parent_run_id == run_id)).first():
+            raise HTTPException(409, "此模型仍被新批次引用，请先删除这些批次记录。")
+        jobs = session.exec(select(Job).where(Job.job_type == JOB_TYPE, Job.status.in_(["queued", "running"]))).all()
+        if any(json.loads(job.parameters_json).get("run_id") == run_id for job in jobs):
+            raise HTTPException(409, "此实验仍有任务，请先取消并等待任务结束。")
+        root = run_root(run_id).resolve()
+        if root.parent != (get_settings().storage_root / "validation-runs").resolve():
+            raise HTTPException(409, "结果目录不在应用存储内。")
+        session.exec(delete(ValidationReview).where(ValidationReview.run_id == run_id))
+        session.exec(delete(ValidationDecision).where(ValidationDecision.run_id == run_id))
+        session.delete(run); session.commit()
+    except Exception:
+        session.rollback(); raise
+    # Delete only application-generated model, maps and previews. Raw data never lives here.
+    if root.is_dir():
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def execute(context: JobContext, parameters: dict[str, object]) -> dict[str, object]:
+    execution_started = time.monotonic()
     run_id = str(parameters["run_id"])
     with Session(context.engine) as session:
         run = get_run(session, run_id)
@@ -173,13 +197,18 @@ def execute(context: JobContext, parameters: dict[str, object]) -> dict[str, obj
                 parent, _, parent_result = load_result(session, run.parent_run_id)
                 origin = result_root(session, parent)
             worker_input["parent_model"] = dict(path=str(origin / "model.pt"), sha256=parent_result["model_sha256"], map_scale=parent_result["map_scale"])
+            if parent_result["model_sha256"] != contract["parent_model_sha256"]:
+                raise ValueError("原模型与新批次冻结输入不一致。")
         (work / "input.json").write_text(json.dumps(worker_input, ensure_ascii=False), encoding="utf-8")
+        context.report_progress(current=0, total=len(rows), stage="loading_algorithm")
         run_process([checked.python_path, "-I", str(WORKER), "--root", str(work)], root / f"worker-{context.job_id}.log", context.checkpoint, cwd=work, env=env, tick=tick)
         result = json.loads((work / "result.json").read_text(encoding="utf-8"))
         if result.get("recipe") != contract["recipe"] or result.get("anomalib") != "2.7.0":
             raise ValueError("算法结果的配方或组件版本与冻结输入不一致。")
         if not run.parent_run_id and protocol.file_digest(work / "model.pt") != result.get("model_sha256"):
             raise ValueError("模型文件校验失败。")
+        if run.parent_run_id and (result.get("model_sha256") != contract["parent_model_sha256"] or result.get("map_scale") != parent_result["map_scale"] or result.get("fit_seconds") != 0):
+            raise ValueError("新批次未保持原模型、热图标尺或仅推理约束。")
         predicted = {int(r["sample_id"]): float(r["score"]) for r in result["predictions"]}
         if len(predicted) != len(rows) or set(predicted) != {r["sample_id"] for r in rows} or not all(math.isfinite(v) for v in predicted.values()):
             raise ValueError("算法输出的图片集合或分数不完整。")
@@ -192,6 +221,9 @@ def execute(context: JobContext, parameters: dict[str, object]) -> dict[str, obj
         with Session(context.engine) as session:
             if get_dataset_or_404(session, run.dataset_id).revision != run.dataset_revision:
                 raise ValueError("运行过程中项目判定或分组发生变化，请重新检查。")
+        result["algorithm_seconds"] = result.get("total_seconds")
+        result["total_seconds"] = time.monotonic() - execution_started
+        (work / "result.json").write_text(json.dumps(result, ensure_ascii=False, allow_nan=False), encoding="utf-8")
         # Preserve derived previews, maps and model; raw-image backups stay separate.
         shutil.rmtree(work / "images")
         (work / "input.json").unlink()

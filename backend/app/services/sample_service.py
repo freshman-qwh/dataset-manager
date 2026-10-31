@@ -1029,6 +1029,10 @@ def _delete_samples(session: Session, samples: list[Sample]) -> None:
     annotation_service.delete_sample_annotations(session, [sample.id for sample in samples if sample.id is not None])
     sample_ids = [sample.id for sample in samples if sample.id is not None]
     if sample_ids:
+        from sqlalchemy import inspect
+        from app.models.validation import ValidationReview
+        if inspect(session.connection()).has_table("validation_reviews"):
+            session.exec(delete(ValidationReview).where(ValidationReview.sample_id.in_(sample_ids)))
         session.exec(
             delete(SampleDefectLink).where(SampleDefectLink.sample_id.in_(sample_ids))
         )

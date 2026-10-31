@@ -49,6 +49,7 @@ import type {
   TriageStatus
 } from "../types/triage";
 import TriagePolicyModal from "../components/TriagePolicyModal";
+import { updateValidationReview } from "../api/validation";
 
 const QUEUE_LABELS: Record<TriageQueueScope, string> = {
   untriaged: "未分拣",
@@ -230,6 +231,8 @@ export default function TriagePage() {
   const datasetId = Number(routeParams.datasetId);
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedSampleId = Number(searchParams.get("sample")) || null;
+  const reviewRun = searchParams.get("review_run") || undefined;
+  const reviewReturn = searchParams.get("back") || "";
   const requestedQueue = searchParams.get("queue");
   const queueScope: TriageQueueScope =
     requestedQueue === "pending"
@@ -471,6 +474,7 @@ export default function TriagePage() {
     setError(null);
     getTriageNavigation({
       datasetId,
+      reviewRun,
       sampleId: navigationSampleId,
       queueScope,
       split: queueSplit,
@@ -528,7 +532,8 @@ export default function TriagePage() {
     queueSplit,
     replaceSearchParams,
     requestedSampleId,
-    splitOk
+    splitOk,
+    reviewRun
   ]);
 
   useEffect(() => {
@@ -604,6 +609,10 @@ export default function TriagePage() {
       }
       setTriage(saved);
       setDraft(draftFromTriage(saved));
+      if (reviewRun && saved.triage_status !== "pending") {
+        await updateValidationReview(reviewRun,currentSample.id,{state:"reviewed",expected_version:saved.triage_version,expected_file_hash:saved.file_hash});
+        setNavigationRevision(value=>value+1);
+      }
       showToast(options.message, {
         action: options.pendingGuidance ? "pending" : undefined
       });
@@ -620,7 +629,7 @@ export default function TriagePage() {
       savingRef.current = false;
       setSaving(false);
     }
-  }, [advanceAfterSave, currentSample, datasetId, navigation?.next_sample?.id, showToast, triage]);
+  }, [advanceAfterSave, currentSample, datasetId, navigation?.next_sample?.id, showToast, triage, reviewRun]);
 
   const quickAction = useCallback((action: "ok" | "clear" | "borderline" | "ng" | "pending") => {
     const common = {
@@ -724,6 +733,7 @@ export default function TriagePage() {
         undoRecord.sample.id,
         writeFromTriage(undoRecord.before, undoRecord.savedVersion)
       );
+      if (reviewRun) await updateValidationReview(reviewRun,undoRecord.sample.id,{state:"pending"});
       setUndoStack((current) => {
         const next = current.slice(0, -1);
         const previousIndex = next.map((item) => item.sample.id).lastIndexOf(
@@ -754,7 +764,7 @@ export default function TriagePage() {
       savingRef.current = false;
       setSaving(false);
     }
-  }, [currentSample?.id, datasetId, replaceSearchParams, showToast, undoStack]);
+  }, [currentSample?.id, datasetId, replaceSearchParams, showToast, undoStack, reviewRun]);
   undoRef.current = () => void undoLast();
 
   useEffect(() => {
@@ -894,6 +904,7 @@ export default function TriagePage() {
     try {
       const target = await getTriageNavigation({
         datasetId,
+        reviewRun,
         targetIndex: position,
         queueScope,
         split: queueSplit,
@@ -1019,14 +1030,14 @@ export default function TriagePage() {
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-5 py-3">
           <div className="flex min-w-0 items-center gap-4">
             <Link
-              to={`/datasets/${datasetId}`}
+              to={reviewRun ? `/datasets/${datasetId}/validate/${reviewRun}${reviewReturn.startsWith("?")?reviewReturn:""}` : `/datasets/${datasetId}`}
               className="inline-flex min-h-11 shrink-0 items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-950"
             >
-              <ArrowLeft size={18} /> 返回数据集
+              <ArrowLeft size={18} /> {reviewRun?"返回本次实验":"返回数据集"}
             </Link>
             <div className="hidden h-7 w-px bg-line sm:block" />
             <div className="min-w-0">
-              <h1 className="truncate text-lg font-semibold">快速分拣 · {dataset?.name ?? "加载中"}</h1>
+              <h1 className="truncate text-lg font-semibold">{reviewRun?"实验候选复核":"快速分拣"} · {dataset?.name ?? "加载中"}</h1>
               <p className="text-xs text-gray-500">规则版本 {policy?.version ?? "-"} · 保存成功后自动进入下一张</p>
             </div>
           </div>
@@ -1053,7 +1064,7 @@ export default function TriagePage() {
           aria-label="分拣队列"
           className="mx-auto flex max-w-[1600px] gap-1 overflow-x-auto px-5 pb-3"
         >
-          {QUEUE_OPTIONS.map((scope) => {
+          {(reviewRun?[]:QUEUE_OPTIONS).map((scope) => {
             const count = queueCount(scope);
             const active = queueScope === scope;
             const pending = scope === "pending" && pendingCount > 0;
@@ -1099,7 +1110,8 @@ export default function TriagePage() {
       />
 
       <section className="mx-auto max-w-[1600px] px-5 py-4">
-        <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        {reviewRun&&<p className="mb-4 rounded-lg border bg-white p-4 text-sm">本实验待复核 {navigation?.total??0} 张。保留原判定也可再次确认；保存有效 OK/NG 后移出候选，待定仍保留。历史实验不改写。</p>}
+        {!reviewRun&&<div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <div className="rounded-xl border border-line bg-white px-4 py-3">
             <div className="text-xs text-gray-500">已处理 / 图片</div>
             <div className="mt-1 text-xl font-semibold">{progressDone} / {stats?.total_images ?? 0}</div>
@@ -1131,14 +1143,14 @@ export default function TriagePage() {
               {stats?.by_status.pending ?? 0} / {stats?.outdated ?? 0}
             </div>
           </div>
-        </div>
+        </div>}
 
         {error && (
           <div role="alert" className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
             <CircleAlert size={18} className="mt-0.5 shrink-0" /> {error}
           </div>
         )}
-        {queueScope === "current_filter" && (
+        {!reviewRun && queueScope === "current_filter" && (
           <section className="mb-4 rounded-xl border border-line bg-white p-4 shadow-sm" aria-label="分拣统计筛选">
             <div className="flex flex-wrap items-end gap-3">
               <div className="min-w-40 flex-1">
@@ -1287,14 +1299,14 @@ export default function TriagePage() {
                 <div className={`max-w-md text-center ${lightCanvas ? "text-gray-700" : "text-gray-300"}`}>
                   <ListChecks size={42} className={`mx-auto mb-3 ${lightCanvas ? "text-gray-400" : "text-gray-500"}`} />
                   <h2 className={`text-lg font-semibold ${lightCanvas ? "text-gray-950" : "text-white"}`}>
-                    {queueScope === "current_filter" && hasActiveTriageFilters
+                    {reviewRun ? "本实验候选已复核完成" : queueScope === "current_filter" && hasActiveTriageFilters
                       ? "没有符合筛选条件的图片"
                       : queueScope === "current_filter" && (stats?.total_images ?? 0) === 0
                         ? "数据集中没有可分拣图片"
                         : "这个队列已经处理完了"}
                   </h2>
                   <p className={`mt-2 text-sm leading-6 ${lightCanvas ? "text-gray-600" : "text-gray-400"}`}>
-                    {queueScope === "current_filter" && hasActiveTriageFilters
+                    {reviewRun ? "本实验候选已复核完成" : queueScope === "current_filter" && hasActiveTriageFilters
                       ? "请调整或清除筛选条件，当前数据不会被修改。"
                       : queueScope === "current_filter" && (stats?.total_images ?? 0) === 0
                         ? "请先返回数据集扫描图片，再开始快速分拣。"
@@ -1313,7 +1325,7 @@ export default function TriagePage() {
                       清除筛选
                     </button>
                   )}
-                  {!(queueScope === "current_filter" && hasActiveTriageFilters)
+                  {!reviewRun && !(queueScope === "current_filter" && hasActiveTriageFilters)
                     && queueScope !== "pending" && pendingCount > 0 && (
                     <button
                       type="button"
@@ -1323,7 +1335,7 @@ export default function TriagePage() {
                       复看待定（{pendingCount}）
                     </button>
                   )}
-                  {!(queueScope === "current_filter" && hasActiveTriageFilters)
+                  {!reviewRun && !(queueScope === "current_filter" && hasActiveTriageFilters)
                     && (stats?.total_images ?? 0) > 0 && (
                     <Link to={`/datasets/${datasetId}?directoryExport=1`} className="mt-4 inline-flex min-h-10 items-center rounded-lg bg-white px-4 text-sm font-semibold text-gray-950 hover:bg-gray-100">
                       导出分拣目录 / ZIP

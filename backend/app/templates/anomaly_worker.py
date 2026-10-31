@@ -110,7 +110,7 @@ def run(root):
             else:
                 model.subsample_embedding(sampling_ratio=0.01)
         torch.save(model.state_dict(), root / "model.pt")
-    fit_seconds = time.monotonic() - started
+    fit_seconds = 0.0 if parent else time.monotonic() - started
     model.eval()
     predictions = []
     map_samples = []

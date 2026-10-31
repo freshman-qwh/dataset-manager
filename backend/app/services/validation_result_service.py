@@ -91,6 +91,13 @@ def overview(session: Session, run_id: str, threshold: float | None = None) -> d
     low, high = min(values, default=value), max(values, default=value)
     span = max(high - low, abs(value) * 0.05, 1e-6)
     reference = next((r["sample_id"] for r in rows if r["split"] == "train" and r["label_index"] == 0), None)
+    reference_run_id = run.id
+    reference_dataset_id = run.dataset_id
+    if run.mode == "batch":
+        parent_contract = runs.read_contract(runs.get_run(session, run.parent_run_id))
+        reference = next((r["sample_id"] for r in parent_contract["rows"] if r["split"] == "train" and r["label_index"] == 0), None)
+        reference_run_id = run.parent_run_id
+        reference_dataset_id = runs.get_run(session, run.parent_run_id).dataset_id
     bins = []
     for index in range(12):
         left, right = low + index * span / 12, low + (index + 1) * span / 12
@@ -101,9 +108,9 @@ def overview(session: Session, run_id: str, threshold: float | None = None) -> d
         threshold_range={"min": min(low - span * 0.05, value), "max": max(high + span * 0.05, value)},
         validation_metrics=metrics(validation, value), frozen_decision=report,
         test_locked=run.mode == "evaluation" and decision is None,
-        reference_sample_id=reference, map_scale=result["map_scale"], histogram=bins,
+        reference_sample_id=reference, reference_run_id=reference_run_id, reference_dataset_id=reference_dataset_id, map_scale=result["map_scale"], histogram=bins,
         total_seconds=result["total_seconds"], fit_seconds=result["fit_seconds"],
-        notes=["异常分数不是置信概率；热图采用本次验证集的统一强度标尺。", "没有像素真值，本页不计算像素级指标。"] +
+        notes=["异常分数不是置信概率；热图沿用原实验验证集标尺。" if run.mode == "batch" else "异常分数不是置信概率；热图采用本次验证集的统一强度标尺。", "没有像素真值，本页不计算像素级指标。"] +
               (["当前项目版本已变化，本页仍保留运行当时的图片和人工判定。"] if run.dataset_revision != runs.get_dataset_or_404(session, run.dataset_id).revision else []))
 
 
@@ -170,6 +177,11 @@ def rows_page(session: Session, run_id: str, *, split: str = "val", category: st
         sample = current.get(row["sample_id"])
         row["judgment_changed"] = (sample is None or sample.file_hash != row["sha256"] or sample.triage_status != row["triage_status"] or sample.ok_grade != row["ok_grade"] or sample.triage_policy_version != contract["triage_policy"]["version"])
         row["current_sample_available"] = sample is not None and sample.file_hash == row["sha256"]
+    from app.models.validation import ValidationReview
+    review_states = {item.sample_id: item.state for item in session.exec(select(ValidationReview).where(
+        ValidationReview.run_id == run_id, ValidationReview.sample_id.in_([r["sample_id"] for r in items]))).all()} if items else {}
+    for row in items:
+        row["review_state"] = review_states.get(row["sample_id"])
     return dict(items=items, total=len(selected), page=page, page_size=page_size, threshold=value)
 
 

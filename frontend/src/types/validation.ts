@@ -29,7 +29,7 @@ export interface ValidationResults {
   run: ValidationRun; threshold: number; threshold_source: string;
   threshold_range: {min:number; max:number}; validation_metrics: ValidationMetrics;
   frozen_decision: ValidationDecision | null; test_locked: boolean;
-  reference_sample_id: number | null; map_scale: number;
+  reference_sample_id: number | null; reference_run_id: string; reference_dataset_id:number; map_scale: number;
   histogram: Array<{left:number;right:number;normal:number;abnormal:number;unknown:number}>;
   total_seconds: number; fit_seconds: number; notes: string[];
 }
@@ -37,7 +37,10 @@ export interface ValidationPrediction {
   sample_id: number; relative_path: string; sha256: string; split: string; label_index: number | null;
   capture_group_id: string | null; capture_batch_id: string | null; score: number;
   predicted_label: number; category: string; judgment_changed: boolean; current_sample_available: boolean;
+  review_state: "pending" | "reviewed" | "ignored" | null;
 }
+
+export interface ValidationReviewSummary {dataset_id:number;pending:number;reviewed:number;ignored:number}
 export interface ValidationPredictions {
   items: ValidationPrediction[]; total:number;page:number;page_size:number;threshold:number;
 }

@@ -189,6 +189,7 @@ def commit_batch_triage(
 )
 def get_triage_navigation(
     dataset_id: int,
+    review_run: str | None = Query(default=None, pattern=r"^[a-f0-9]{32}$"),
     sample_id: int | None = Query(default=None, gt=0),
     target_index: int | None = Query(default=None, ge=1),
     queue_scope: TriageQueueScope = Query(default="untriaged"),
@@ -204,6 +205,12 @@ def get_triage_navigation(
     session: Session = Depends(get_session),
 ) -> TriageNavigationResponse:
     try:
+        sample_ids = None
+        if review_run:
+            from app.services.validation_review_service import pending_ids
+            sample_ids = pending_ids(session, dataset_id, review_run)
+            queue_scope = "current_filter"
+            search = split = triage_status = ok_grade = defect_severity = defect_type_id = None
         return triage_service.get_triage_navigation(
             session,
             dataset_id,
@@ -216,6 +223,7 @@ def get_triage_navigation(
             ok_grade=ok_grade,
             defect_severity=defect_severity,
             defect_type_id=defect_type_id,
+            sample_ids=sample_ids,
         )
     except triage_service.TriageError as exc:
         _raise_triage_error(exc)

@@ -32,7 +32,8 @@ class ValidationDecision(SQLModel, table=True):
 class ValidationTestExposure(SQLModel, table=True):
     __tablename__ = "validation_test_exposures"
     sha256: str = Field(primary_key=True, max_length=64)
-    first_run_id: str = Field(foreign_key="validation_runs.id")
+    # Retain test exposure even after explicit deletion of a run's artifacts.
+    first_run_id: str = Field(max_length=32)
     created_at: datetime = Field(default_factory=utc_now)
 
 

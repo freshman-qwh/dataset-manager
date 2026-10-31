@@ -1131,6 +1131,7 @@ def get_triage_navigation(
     ok_grade: str | None = None,
     defect_severity: str | None = None,
     defect_type_id: int | None = None,
+    sample_ids: list[int] | None = None,
 ) -> TriageNavigationResponse:
     _ensure_schema(session)
     dataset = get_dataset_or_404(session, dataset_id)
@@ -1155,6 +1156,8 @@ def get_triage_navigation(
         raise TriageValidationError("跳转当前划分前，请先选择一个有效划分。")
 
     def filtered(statement):
+        if sample_ids is not None:
+            statement = statement.where(Sample.id.in_(sample_ids))
         return _triage_filters(
             statement,
             dataset_id,

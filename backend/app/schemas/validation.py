@@ -77,8 +77,11 @@ class ReviewRequest(BaseModel):
 
 class ReviewUpdate(BaseModel):
     state: Literal["pending", "reviewed", "ignored"]
+    expected_version: int | None = Field(default=None, ge=0)
+    expected_file_hash: str | None = None
 
 
 class BatchPreviewRequest(BaseModel):
     target_dataset_id: int = Field(gt=0)
     sample_ids: list[int] | None = Field(default=None, min_length=1, max_length=2000)
+    independent_capture_declared: bool = False
