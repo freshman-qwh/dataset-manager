@@ -7,6 +7,8 @@
 | 要完成的事 | 阅读入口 |
 | --- | --- |
 | 了解定位、核心流程与功能取舍 | [产品范围](product-scope.md)、[项目首页](../README.md) |
+| 快速切换分散的数据集、浏览嵌套目录和图片 | [本地浏览](local-browsing.md) |
+| 管理项目、对象类别与批次，导入 MVTec / VisA | [项目、类别与批次](project-category-batch.md) |
 | 浏览公开工业异常检测数据、官方预览与获取入口 | [数据集图书馆](anomaly-dataset-library.md) |
 | 整理工业图片，生成独立训练/验证/测试数据包 | [工业试用指南](industrial-trial-guide.md) |
 | 建立本地基线、复核误报漏检、验证第二批 | [快速验证指南](quick-validation-guide.md) |

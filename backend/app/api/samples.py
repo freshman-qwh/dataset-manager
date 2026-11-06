@@ -12,6 +12,17 @@ from app.services import sample_service, tag_service, thumbnail_service
 router = APIRouter(prefix="/api", tags=["samples"])
 
 
+@router.get("/samples/{sample_id}/mask")
+def read_sample_mask(sample_id: int, session: Session = Depends(get_session)) -> FileResponse:
+    sample = sample_service.get_sample_or_404(session, sample_id)
+    if not sample.mask_path:
+        raise HTTPException(404, "该图片没有关联的像素真值。")
+    path = Path(sample.mask_path)
+    if not path.is_file():
+        raise HTTPException(404, "关联的 mask 文件已缺失，请检查原始目录。")
+    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "no-cache"})
+
+
 @router.get("/samples/{sample_id}", response_model=SampleRead)
 def get_sample(sample_id: int, session: Session = Depends(get_session)) -> SampleRead:
     return sample_service.get_sample(session, sample_id)

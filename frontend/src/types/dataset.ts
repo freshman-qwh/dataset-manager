@@ -34,6 +34,7 @@ export interface Dataset {
   license: string | null;
   owner: string | null;
   project: string | null;
+  project_id?: number | null;
   notes: string | null;
   auto_scan_on_open: boolean;
   revision: number;
@@ -54,6 +55,7 @@ export interface DatasetCreate {
   license?: string | null;
   owner?: string | null;
   project?: string | null;
+  project_id?: number | null;
   notes?: string | null;
   auto_scan_on_open?: boolean;
 }
@@ -120,6 +122,13 @@ export interface Sample {
   triaged_file_hash: string | null;
   capture_group_id: string | null;
   capture_batch_id: string | null;
+  category_id?: number | null;
+  batch_id?: number | null;
+  import_format?: string | null;
+  official_split?: string | null;
+  benchmark_label?: string | null;
+  benchmark_defect_type?: string | null;
+  mask_path?: string | null;
   triage_outdated: boolean;
   notes: string | null;
   metadata: Record<string, unknown>;

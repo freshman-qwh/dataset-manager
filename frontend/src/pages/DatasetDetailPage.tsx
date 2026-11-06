@@ -77,6 +77,8 @@ import MissingRepairModal from "../components/MissingRepairModal";
 import SampleDetailPanel from "../components/SampleDetailPanel";
 import SampleGrid from "../components/SampleGrid";
 import ScanModal from "../components/ScanModal";
+import OrganizationModal from "../components/OrganizationModal";
+import type { ScanOptions } from "../types/organization";
 import SearchFilterBar from "../components/SearchFilterBar";
 import SplitPlanModal from "../components/SplitPlanModal";
 import StatCard from "../components/StatCard";
@@ -262,6 +264,7 @@ export default function DatasetDetailPage() {
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">(initialCache?.filters.sortOrder ?? "desc");
   const [exportFormat, setExportFormat] = useState("manifest");
   const [scanOpen, setScanOpen] = useState(false);
+  const [organizationOpen, setOrganizationOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
   const [tagStatsOpen, setTagStatsOpen] = useState(false);
@@ -699,13 +702,14 @@ export default function DatasetDetailPage() {
   const startScan = useCallback(async (
     targetDatasetId: number,
     path: string,
-    closeModal: boolean
+    closeModal: boolean,
+    options?: ScanOptions
   ) => {
     setScanning(true);
     setError(null);
     setScanNotice(null);
     try {
-      const response = await createScanJob(targetDatasetId, path);
+      const response = await createScanJob(targetDatasetId, path, options);
       setScanJobId(response.job.id);
       setScanNotice(response.created ? "扫描任务已提交，可继续浏览当前数据" : "已有扫描任务正在运行，已恢复状态跟踪");
       if (closeModal) setScanOpen(false);
@@ -721,7 +725,7 @@ export default function DatasetDetailPage() {
 
     setScanNotice("任务中心尚未启用，本次使用兼容扫描；完成前请保持页面打开");
     try {
-      const result = await scanDataset(targetDatasetId, path);
+      const result = await scanDataset(targetDatasetId, path, options);
       setLastScanResult(result);
       await Promise.all([loadOverview(), loadSamples()]);
       setScanNotice(`兼容扫描完成：新增 ${result.imported}，变更 ${result.updated}，未变 ${result.unchanged}`);
@@ -821,8 +825,8 @@ export default function DatasetDetailPage() {
     void startScan(dataset.id, dataset.root_path, false);
   }, [dataset, startScan]);
 
-  async function handleScan(path: string) {
-    await startScan(datasetId, path, true);
+  async function handleScan(path: string, options?: ScanOptions) {
+    await startScan(datasetId, path, true, options);
   }
 
   async function handleSelect(sample: Sample) {
@@ -1314,6 +1318,7 @@ export default function DatasetDetailPage() {
               数据集
             </Link>
             <div className="flex flex-wrap items-center gap-2">
+              <Link to={`/browse?dataset=${datasetId}`} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"><FolderOpen size={17} />浏览文件夹</Link>
               <button
                 type="button"
                 disabled={scanning || !dataset}
@@ -1557,6 +1562,7 @@ export default function DatasetDetailPage() {
               <ChevronDown size={18} className="shrink-0 text-gray-400 transition group-open:rotate-180" />
             </summary>
             <div className="flex flex-wrap gap-2 border-t border-line px-4 py-4">
+              <button type="button" onClick={() => setOrganizationOpen(true)} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm text-gray-700 hover:bg-gray-50">类别与批次</button>
               <button
                 type="button"
                 onClick={() => {
@@ -1753,12 +1759,14 @@ export default function DatasetDetailPage() {
         </section>
 
       <ScanModal
+        datasetId={datasetId}
         open={scanOpen}
         defaultPath={dataset?.root_path ?? ""}
         scanning={scanning}
         onClose={() => setScanOpen(false)}
         onScan={handleScan}
       />
+      <OrganizationModal datasetId={datasetId} open={organizationOpen} selectedIds={[...selectedSampleIds]} onClose={() => setOrganizationOpen(false)} onUpdated={async () => { await Promise.all([loadOverview(), loadSamples()]); }} />
       <SampleDetailPanel
         sample={selected}
         availableTags={availableTags}

@@ -83,6 +83,9 @@ def _source_signature(database: Path, backup_job_id: int) -> tuple:
         # Review and threshold actions intentionally do not change dataset truth
         # revision, but they must still invalidate an in-progress backup.
         for table,columns in (
+            ("projects","id,name,description,updated_at"),
+            ("dataset_categories","id,dataset_id,name,description"),
+            ("dataset_batches","id,dataset_id,name,code,captured_at,notes"),
             ("validation_runs","id,contract_sha256,job_id,parent_run_id"),
             ("validation_decisions","run_id,threshold,report_json"),
             ("validation_test_exposures","sha256,first_run_id"),

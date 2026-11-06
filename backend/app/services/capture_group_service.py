@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.models.industrial_receipt import IndustrialReceipt
+from app.models.organization import DatasetBatch
 from app.models.sample import Sample
 from app.schemas.industrial import ConfirmationRead, GroupPreviewRequest, PlanConfirmation
 from app.services import industrial_plan_service as plans
@@ -20,6 +21,10 @@ def preview(session: Session, dataset_id: int, request: GroupPreviewRequest) -> 
     samples = list(session.exec(select(Sample).where(Sample.dataset_id == dataset_id).order_by(Sample.id)).all())
     mapping: dict[int, tuple[str | None, str | None]] = {}
     by_path = {s.relative_path.replace("\\", "/"): s for s in samples}
+    path_counts: dict[str, int] = {}
+    for sample in samples:
+        path = sample.relative_path.replace("\\", "/")
+        path_counts[path] = path_counts.get(path, 0) + 1
     if request.mode == "selected":
         ids = set(request.sample_ids)
         if not ids or ids - {s.id for s in samples}:
@@ -54,6 +59,8 @@ def preview(session: Session, dataset_id: int, request: GroupPreviewRequest) -> 
                 raise ValueError("empty or oversized")
             for item in values:
                 path = str(item[request.path_column]).replace("\\", "/")
+                if path_counts.get(path, 0) > 1:
+                    raise ValueError(f"相对路径对应多个来源，请改用所选图片设置工件与批次：{path}")
                 sample = by_path.get(path)
                 if sample is None or sample.id in mapping:
                     raise ValueError(f"路径不匹配或重复：{path}")
@@ -95,6 +102,20 @@ def confirm(session: Session, dataset_id: int, plan_id: str, request: PlanConfir
                 raise HTTPException(409, "图片已变化，请重新预览。")
             sample.capture_group_id = row["capture_group_id"]
             sample.capture_batch_id = row["capture_batch_id"]
+            # The legacy group editor accepts a batch code. Keep its stable
+            # organization relation in sync without altering the grouping rule.
+            if sample.capture_batch_id:
+                batch = session.exec(select(DatasetBatch).where(
+                    DatasetBatch.dataset_id == dataset_id,
+                    DatasetBatch.code == sample.capture_batch_id,
+                )).first()
+                if batch is None:
+                    batch = DatasetBatch(dataset_id=dataset_id, name=sample.capture_batch_id, code=sample.capture_batch_id)
+                    session.add(batch)
+                    session.flush()
+                sample.batch_id = batch.id
+            else:
+                sample.batch_id = None
             session.add(sample)
         if plan.get("filename_rule"):
             dataset = get_dataset_or_404(session, dataset_id)

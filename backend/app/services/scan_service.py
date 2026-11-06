@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import HTTPException, status
 from sqlmodel import Session, select
@@ -15,6 +16,7 @@ from app.models.sample import Sample
 from app.schemas.scan import ScanRequest, ScanResult
 from app.services.dataset_service import get_dataset_or_404
 from app.services.dataset_revision_service import DatasetRevisionTracker
+from app.services.benchmark_import_service import BenchmarkInventory, inspect_benchmark
 from app.utils.file_types import detect_file_type, detect_mime_type
 from app.utils.hashing import sha256_file
 from app.utils.paths import relative_to_root, resolve_local_path
@@ -151,6 +153,7 @@ def _iter_candidates(
     counters: ScanCounters,
     errors: list[str],
     checkpoint: ScanCheckpoint,
+    inventory: BenchmarkInventory | None = None,
 ) -> Iterator[FileCandidate]:
     def record_walk_error(exc: OSError) -> None:
         _record_error(counters, errors, str(exc))
@@ -161,6 +164,9 @@ def _iter_candidates(
             checkpoint()
             path = Path(directory) / filename
             counters.scanned += 1
+            if inventory is not None and inventory.format != "folder" and str(path.resolve()) not in inventory.images:
+                counters.skipped_unsupported += 1
+                continue
             file_type = detect_file_type(path)
             if not file_type:
                 counters.skipped_unsupported += 1
@@ -204,6 +210,32 @@ def _hash_candidates(
     return hashes
 
 
+def _fill_existing_benchmark_metadata(
+    sample: Sample,
+    candidate: FileCandidate,
+    inventory: BenchmarkInventory | None,
+    category_ids: dict[str, int] | None,
+) -> bool:
+    """Explicit recognition fills missing semantics, never manual decisions."""
+    benchmark = inventory.images.get(candidate.absolute_path) if inventory else None
+    if benchmark is None:
+        return False
+    fields = {
+        "category_id": (category_ids or {}).get(benchmark.category),
+        "import_format": inventory.format,
+        "official_split": benchmark.split,
+        "benchmark_label": benchmark.label,
+        "benchmark_defect_type": benchmark.defect,
+        "mask_path": benchmark.mask_path,
+    }
+    changed = False
+    for name, value in fields.items():
+        if getattr(sample, name) in (None, "") and value not in (None, ""):
+            setattr(sample, name, value)
+            changed = True
+    return changed
+
+
 def _process_batch(
     session: Session,
     dataset_id: int,
@@ -215,6 +247,12 @@ def _process_batch(
     hash_workers: int,
     scanned_at: datetime,
     revision_tracker: DatasetRevisionTracker,
+    inventory: BenchmarkInventory | None = None,
+    category_ids: dict[str, int] | None = None,
+    assigned_batch_id: int | None = None,
+    assigned_batch_code: str | None = None,
+    triage_policy_version: int = 1,
+    recognize_existing: bool = False,
 ) -> None:
     absolute_paths = [candidate.absolute_path for candidate in candidates]
     existing_samples = list(
@@ -240,6 +278,8 @@ def _process_batch(
                 seen_sample_ids.add(existing.id)
             metadata_changed = _file_metadata_changed(existing, candidate, existing.file_hash)
             _apply_file_metadata(existing, candidate, existing.file_hash, scanned_at)
+            if recognize_existing:
+                metadata_changed = _fill_existing_benchmark_metadata(existing, candidate, inventory, category_ids) or metadata_changed
             session.add(existing)
             if metadata_changed:
                 counters.updated += 1
@@ -267,6 +307,8 @@ def _process_batch(
                 seen_sample_ids.add(existing.id)
             metadata_changed = _file_metadata_changed(existing, candidate, file_hash)
             _apply_file_metadata(existing, candidate, file_hash, scanned_at)
+            if recognize_existing:
+                metadata_changed = _fill_existing_benchmark_metadata(existing, candidate, inventory, category_ids) or metadata_changed
             session.add(existing)
             if metadata_changed:
                 counters.updated += 1
@@ -289,6 +331,24 @@ def _process_batch(
             file_modified_at=candidate.modified_at,
             last_scanned_at=scanned_at,
         )
+        if assigned_batch_id is not None:
+            sample.batch_id = assigned_batch_id
+            sample.capture_batch_id = assigned_batch_code
+        benchmark = inventory.images.get(candidate.absolute_path) if inventory else None
+        if benchmark is not None:
+            sample.category_id = (category_ids or {}).get(benchmark.category)
+            sample.import_format = inventory.format
+            sample.official_split = benchmark.split
+            sample.split = benchmark.split
+            sample.benchmark_label = benchmark.label
+            sample.benchmark_defect_type = benchmark.defect
+            sample.mask_path = benchmark.mask_path
+            sample.triage_status = "ok" if benchmark.label == "normal" else "ng"
+            sample.ok_grade = "clear" if benchmark.label == "normal" else None
+            sample.triaged_at = scanned_at
+            sample.triage_version = 1
+            sample.triage_policy_version = triage_policy_version
+            sample.triaged_file_hash = file_hash
         session.add(sample)
         counters.imported += 1
         batch_changed = True
@@ -357,6 +417,8 @@ def _build_result(
     root: Path,
     counters: ScanCounters,
     errors: list[str],
+    inventory: BenchmarkInventory | None = None,
+    assigned_batch_id: int | None = None,
 ) -> ScanResult:
     return ScanResult(
         dataset_id=dataset_id,
@@ -373,7 +435,47 @@ def _build_result(
         batches_committed=counters.batches_committed,
         error_count=counters.error_count,
         errors=errors,
+        detected_format=inventory.format if inventory else "folder",
+        assigned_batch_id=assigned_batch_id,
+        benchmark_images=len(inventory.images) if inventory else 0,
+        linked_masks=sum(row.mask_path is not None for row in inventory.images.values()) if inventory else 0,
+        import_warnings=inventory.warnings[:50] if inventory else [],
     )
+
+
+def prepare_scan_batch(session: Session, dataset_id: int, payload: ScanRequest):
+    """Resolve a batch once; jobs persist the numeric choice for retry stability."""
+    from app.models.organization import DatasetBatch
+    if payload.batch_id is not None:
+        batch = session.get(DatasetBatch, payload.batch_id)
+        if batch is None or batch.dataset_id != dataset_id:
+            raise HTTPException(422, "所选批次不属于当前数据集。")
+        return batch
+    if payload.new_batch_name is not None:
+        existing = session.exec(select(DatasetBatch).where(DatasetBatch.dataset_id == dataset_id, DatasetBatch.name == payload.new_batch_name)).first()
+        if existing:
+            raise HTTPException(409, "同名批次已存在，请选择已有批次。")
+        batch = DatasetBatch(dataset_id=dataset_id, name=payload.new_batch_name, code="batch-" + uuid4().hex)
+        session.add(batch)
+        session.flush()
+        return batch
+    return None
+
+
+def preview_import(session: Session, dataset_id: int, payload: ScanRequest):
+    from app.schemas.scan import ImportPreview
+    root = resolve_scan_root(session, dataset_id, payload)
+    if payload.batch_id is not None:
+        prepare_scan_batch(session, dataset_id, payload)
+    inventory = inspect_benchmark(root, payload.import_format)
+    if inventory.format != "folder":
+        result = inventory.preview()
+        result.warnings.append("已登记图片仅补充空的类别、官方划分与 mask 等识别信息，已有人工判定、批次、工件及实际划分保持原值。" if payload.recognize_existing else "仅新登记图片写入类别、官方划分和真值；已有记录的人工判定、批次及划分保持原值。")
+        return result
+    counters = ScanCounters()
+    errors: list[str] = []
+    count = sum(candidate.file_type == "image" for candidate in _iter_candidates(root, counters, errors, lambda: None))
+    return ImportPreview(detected_format="folder", image_count=count, warnings=errors)
 
 
 def scan_dataset(
@@ -392,6 +494,7 @@ def scan_dataset(
         raise ValueError("hash_workers must be at least 1.")
 
     root = resolve_scan_root(session, dataset_id, payload)
+    dataset = get_dataset_or_404(session, dataset_id)
     counters = ScanCounters()
     errors: list[str] = []
     seen_sample_ids: set[int] = set()
@@ -405,7 +508,7 @@ def scan_dataset(
         try:
             check()
         except Exception as exc:
-            raise ScanStopped(_build_result(dataset_id, root, counters, errors)) from exc
+            raise ScanStopped(_build_result(dataset_id, root, counters, errors, inventory, assigned_batch_id)) from exc
 
     def guarded_report(
         stage: str,
@@ -416,10 +519,29 @@ def scan_dataset(
         try:
             report(stage, current, total, error_count)
         except Exception as exc:
-            raise ScanStopped(_build_result(dataset_id, root, counters, errors)) from exc
+            raise ScanStopped(_build_result(dataset_id, root, counters, errors, inventory, assigned_batch_id)) from exc
+
+    inventory = BenchmarkInventory("folder")
+    assigned_batch_id = None
+    inventory = inspect_benchmark(root, payload.import_format, guarded_checkpoint)
+    batch = prepare_scan_batch(session, dataset_id, payload)
+    assigned_batch_id = batch.id if batch else None
+    assigned_batch_code = batch.code if batch else None
+    category_ids: dict[str, int] = {}
+    if inventory.images:
+        from app.models.organization import DatasetCategory
+        for name in sorted({row.category for row in inventory.images.values()}):
+            category = session.exec(select(DatasetCategory).where(DatasetCategory.dataset_id == dataset_id, DatasetCategory.name == name)).first()
+            if category is None:
+                category = DatasetCategory(dataset_id=dataset_id, name=name)
+                session.add(category)
+                session.flush()
+            category_ids[name] = category.id
+    if batch is not None or category_ids:
+        session.commit()
 
     guarded_report("enumerating", 0, None, 0)
-    for candidate in _iter_candidates(root, counters, errors, guarded_checkpoint):
+    for candidate in _iter_candidates(root, counters, errors, guarded_checkpoint, inventory):
         pending.append(candidate)
         if len(pending) < batch_size:
             continue
@@ -435,6 +557,10 @@ def scan_dataset(
             hash_workers=hash_workers,
             scanned_at=scanned_at,
             revision_tracker=revision_tracker,
+            inventory=inventory, category_ids=category_ids,
+            assigned_batch_id=assigned_batch_id, assigned_batch_code=assigned_batch_code,
+            triage_policy_version=dataset.triage_policy_version,
+            recognize_existing=payload.recognize_existing,
         )
         guarded_report("writing", counters.scanned, None, counters.error_count)
         pending = []
@@ -452,6 +578,10 @@ def scan_dataset(
             hash_workers=hash_workers,
             scanned_at=scanned_at,
             revision_tracker=revision_tracker,
+            inventory=inventory, category_ids=category_ids,
+            assigned_batch_id=assigned_batch_id, assigned_batch_code=assigned_batch_code,
+            triage_policy_version=dataset.triage_policy_version,
+            recognize_existing=payload.recognize_existing,
         )
         guarded_report("writing", counters.scanned, None, counters.error_count)
 
@@ -473,4 +603,4 @@ def scan_dataset(
         revision_tracker=revision_tracker,
     )
     guarded_report("completed", counters.scanned, counters.scanned, counters.error_count)
-    return _build_result(dataset_id, root, counters, errors)
+    return _build_result(dataset_id, root, counters, errors, inventory, assigned_batch_id)

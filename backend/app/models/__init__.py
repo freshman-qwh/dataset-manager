@@ -1,6 +1,7 @@
 from app.models.annotation import Annotation
 from app.models.annotation_class import AnnotationClass
 from app.models.dataset import Dataset
+from app.models.organization import Project, DatasetCategory, DatasetBatch
 from app.models.dataset_saved_view import DatasetSavedView
 from app.models.dataset_snapshot import DatasetSnapshot
 from app.models.defect_type import DefectType, SampleDefectLink
@@ -15,6 +16,9 @@ __all__ = [
     "Annotation",
     "AnnotationClass",
     "Dataset",
+    "Project",
+    "DatasetCategory",
+    "DatasetBatch",
     "DatasetSavedView",
     "DatasetSnapshot",
     "DefectType",

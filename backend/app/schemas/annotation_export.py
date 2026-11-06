@@ -18,6 +18,8 @@ AnnotationExportIssueSeverity = Literal["error", "warning", "info"]
 
 
 class AnnotationExportSampleQuery(BaseModel):
+    category_id: int | None = Field(default=None, gt=0)
+    batch_id: int | None = Field(default=None, gt=0)
     triage_status: Literal["untriaged", "pending", "ok", "ng"] | None = None
     ok_grade: Literal["clear", "borderline"] | None = None
     triage_outdated: bool | None = None

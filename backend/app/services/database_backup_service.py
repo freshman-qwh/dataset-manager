@@ -20,6 +20,7 @@ BACKUP_CONTRACT_VERSION = 1
 BACKUP_MEDIA_TYPE = "application/vnd.sqlite3"
 BACKUP_PAGE_BATCH = 256
 BACKUP_TABLES = (
+    "projects", "dataset_categories", "dataset_batches",
     "datasets",
     "samples",
     "tags",

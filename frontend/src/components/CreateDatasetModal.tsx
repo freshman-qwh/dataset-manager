@@ -4,6 +4,8 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import type { DatasetCreate } from "../types/dataset";
 import DirectoryPickerModal from "./DirectoryPickerModal";
 import Modal from "./Modal";
+import ProjectField from "./ProjectField";
+import { organizationError, resolveProjectChoice } from "../api/organization";
 import { datasetTaskOptions } from "../utils/workflow";
 
 interface CreateDatasetModalProps {
@@ -22,7 +24,8 @@ export default function CreateDatasetModal({ open, onClose, onCreate }: CreateDa
   const [modality, setModality] = useState("");
   const [license, setLicense] = useState("");
   const [owner, setOwner] = useState("");
-  const [project, setProject] = useState("");
+  const [projectChoice, setProjectChoice] = useState("");
+  const [newProjectName, setNewProjectName] = useState("");
   const [saving, setSaving] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState("");
@@ -41,6 +44,7 @@ export default function CreateDatasetModal({ open, onClose, onCreate }: CreateDa
     setSaving(true);
     setError("");
     try {
+      const projectId = await resolveProjectChoice(projectChoice, newProjectName);
       await onCreate({
         name: name.trim(),
         description: description.trim() || null,
@@ -51,7 +55,7 @@ export default function CreateDatasetModal({ open, onClose, onCreate }: CreateDa
         modality: modality.trim() || null,
         license: license.trim() || null,
         owner: owner.trim() || null,
-        project: project.trim() || null
+        project_id: projectId
       });
       setName("");
       setDescription("");
@@ -60,12 +64,12 @@ export default function CreateDatasetModal({ open, onClose, onCreate }: CreateDa
       setModality("");
       setLicense("");
       setOwner("");
-      setProject("");
+      setProjectChoice(""); setNewProjectName("");
       setTaskType(profile === "industrial_anomaly" ? "classification" : "detection");
       onClose();
     } catch (caught) {
       const detail: unknown = axios.isAxiosError(caught) ? caught.response?.data?.detail : undefined;
-      setError(typeof detail === "string" ? detail : "创建失败，请检查后端服务和填写内容后重试。已填写的信息会保留。");
+      setError(typeof detail === "string" ? detail : organizationError(caught, "创建失败，请检查后端服务和填写内容后重试。已填写的信息会保留。"));
     } finally {
       submitting.current = false;
       setSaving(false);
@@ -109,6 +113,7 @@ export default function CreateDatasetModal({ open, onClose, onCreate }: CreateDa
               placeholder={profile === "industrial_anomaly" ? "例如 齿轮表面检测 · 首批" : "例如 零件目标检测"}
             />
           </label>
+          <ProjectField open={open} choice={projectChoice} newName={newProjectName} onChange={(choice, value) => {setProjectChoice(choice); setNewProjectName(value);}} />
           {profile === "general" && taskSelection}
           <label className="block">
             <span className="text-sm font-medium text-gray-700">图片目录 <span className="font-normal text-gray-500">（可选）</span></span>
@@ -136,15 +141,6 @@ export default function CreateDatasetModal({ open, onClose, onCreate }: CreateDa
           <details className="rounded-lg border border-line p-3">
             <summary className="cursor-pointer text-sm font-medium text-gray-700">补充资料（可选）</summary>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              <label className="block">
-                <span className="text-sm font-medium text-gray-700">项目</span>
-                <input
-                  value={project}
-                  onChange={(event) => setProject(event.target.value)}
-                  className="mt-2 w-full rounded-lg border border-line px-3 py-2.5 text-sm outline-none transition focus:border-gray-900"
-                  placeholder="课题或项目名"
-                />
-              </label>
               <label className="block">
                 <span className="text-sm font-medium text-gray-700">负责人</span>
                 <input

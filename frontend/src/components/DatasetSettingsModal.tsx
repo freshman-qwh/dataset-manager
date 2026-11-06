@@ -3,6 +3,8 @@ import { FormEvent, useEffect, useState } from "react";
 import type { Dataset, DatasetCreate } from "../types/dataset";
 import DirectoryPickerModal from "./DirectoryPickerModal";
 import Modal from "./Modal";
+import ProjectField from "./ProjectField";
+import { organizationError, resolveProjectChoice } from "../api/organization";
 import { datasetTaskOptions } from "../utils/workflow";
 
 interface DatasetSettingsModalProps {
@@ -29,7 +31,10 @@ export default function DatasetSettingsModal({
   const [confirmProfile, setConfirmProfile] = useState(false);
   const [taskType, setTaskType] = useState<DatasetCreate["task_type"]>("detection");
   const [rootPath, setRootPath] = useState("");
-  const [project, setProject] = useState("");
+  const [projectChoice, setProjectChoice] = useState("");
+  const [newProjectName, setNewProjectName] = useState("");
+  const [projectSaving, setProjectSaving] = useState(false);
+  const [error, setError] = useState("");
   const [owner, setOwner] = useState("");
   const [source, setSource] = useState("");
   const [modality, setModality] = useState("");
@@ -49,7 +54,9 @@ export default function DatasetSettingsModal({
     setConfirmProfile(false);
     setTaskType(datasetTaskOptions.some((option) => option.value === dataset.task_type) ? dataset.task_type as DatasetCreate["task_type"] : "detection");
     setRootPath(dataset.root_path || "");
-    setProject(dataset.project || "");
+    setProjectChoice(dataset.project_id ? String(dataset.project_id) : dataset.project ? "new" : "");
+    setNewProjectName(dataset.project ?? "");
+    setError("");
     setOwner(dataset.owner || "");
     setSource(dataset.source || "");
     setModality(dataset.modality || "");
@@ -66,12 +73,16 @@ export default function DatasetSettingsModal({
       return;
     }
     if (profile !== dataset?.workflow_profile && !confirmProfile) return;
+    if (saving || projectSaving) return;
+    setProjectSaving(true); setError("");
+    try {
+    const projectId = await resolveProjectChoice(projectChoice, newProjectName);
     await onSave({
       name: name.trim(),
       workflow_profile: profile,
       task_type: taskType,
       root_path: rootPath.trim() || null,
-      project: project.trim() || null,
+      project_id: projectId,
       owner: owner.trim() || null,
       source: source.trim() || null,
       modality: modality.trim() || null,
@@ -80,10 +91,12 @@ export default function DatasetSettingsModal({
       notes: notes.trim() || null,
       auto_scan_on_open: autoScanOnOpen
     });
+    } catch (caught) { setError(organizationError(caught, "保存失败，请检查填写内容后重试。")); }
+    finally { setProjectSaving(false); }
   }
 
   return (
-    <Modal open={open} title="数据集设置" onClose={onClose}>
+    <Modal open={open} title="数据集设置" onClose={onClose} dismissible={!saving && !projectSaving}>
       <form onSubmit={handleSubmit} className="max-h-[78vh] space-y-4 overflow-y-auto px-5 py-5">
         <label className="block">
           <span className="text-sm font-medium text-gray-700">名称 *</span>
@@ -133,10 +146,7 @@ export default function DatasetSettingsModal({
             </select>
             {dataset && !dataset.task_capabilities.supported && <span className="mt-1 block text-xs text-amber-700">{dataset.task_capabilities.unsupported_reason}</span>}
           </label>
-          <label className="block">
-            <span className="text-sm font-medium text-gray-700">项目</span>
-            <input value={project} onChange={(event) => setProject(event.target.value)} className="mt-2 w-full rounded-lg border border-line px-3 py-2.5 text-sm outline-none transition focus:border-gray-900" />
-          </label>
+          <ProjectField open={open} choice={projectChoice} newName={newProjectName} onChange={(choice, value) => {setProjectChoice(choice); setNewProjectName(value);}} />
           <label className="block">
             <span className="text-sm font-medium text-gray-700">负责人</span>
             <input value={owner} onChange={(event) => setOwner(event.target.value)} className="mt-2 w-full rounded-lg border border-line px-3 py-2.5 text-sm outline-none transition focus:border-gray-900" />
@@ -201,12 +211,13 @@ export default function DatasetSettingsModal({
           </button>
         </div>
 
+        {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
         <div className="flex justify-end gap-2 border-t border-line pt-4">
-          <button type="button" onClick={onClose} className="rounded-lg border border-line px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+          <button type="button" disabled={saving || projectSaving} onClick={onClose} className="rounded-lg border border-line px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40">
             取消
           </button>
-          <button type="submit" disabled={saving || !name.trim()} className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-gray-300">
-            {saving ? "保存中" : "保存"}
+          <button type="submit" disabled={saving || projectSaving || !name.trim()} className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-gray-300">
+            {saving || projectSaving ? "保存中" : "保存"}
           </button>
         </div>
       </form>

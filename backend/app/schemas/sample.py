@@ -72,6 +72,13 @@ class SamplePreview(BaseModel):
 
 
 class SampleRead(BaseModel):
+    category_id: int | None = None
+    batch_id: int | None = None
+    import_format: str | None = None
+    official_split: str | None = None
+    benchmark_label: str | None = None
+    benchmark_defect_type: str | None = None
+    mask_path: str | None = None
     capture_group_id: str | None = None
     capture_batch_id: str | None = None
     model_config = ConfigDict(from_attributes=True)

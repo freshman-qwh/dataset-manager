@@ -73,6 +73,13 @@ def to_sample_read(
     return SampleRead(
         id=sample.id or 0,
         dataset_id=sample.dataset_id,
+        category_id=sample.category_id,
+        batch_id=sample.batch_id,
+        import_format=sample.import_format,
+        official_split=sample.official_split,
+        benchmark_label=sample.benchmark_label,
+        benchmark_defect_type=sample.benchmark_defect_type,
+        mask_path=sample.mask_path,
         filename=sample.filename,
         absolute_path=sample.absolute_path,
         relative_path=sample.relative_path,
@@ -136,6 +143,8 @@ def get_filtered_samples(
     triage_outdated: bool | None = None,
     capture_group_id: str | None = None,
     capture_batch_id: str | None = None,
+    category_id: int | None = None,
+    batch_id: int | None = None,
 ) -> list[Sample]:
     safe_sort_by = sort_by if sort_by in SORTABLE_SAMPLE_FIELDS else "created_at"
     safe_sort_order = "asc" if sort_order.lower() == "asc" else "desc"
@@ -158,6 +167,8 @@ def get_filtered_samples(
         triage_outdated=triage_outdated,
         capture_group_id=capture_group_id,
         capture_batch_id=capture_batch_id,
+        category_id=category_id,
+        batch_id=batch_id,
     )
     statement = statement.order_by(
         *_sample_order_clauses(
@@ -505,8 +516,14 @@ def _apply_sample_filters(
     triage_outdated: bool | None = None,
     capture_group_id: str | None = None,
     capture_batch_id: str | None = None,
+    category_id: int | None = None,
+    batch_id: int | None = None,
 ):
     statement = statement.where(Sample.dataset_id == dataset_id)
+    if category_id is not None:
+        statement = statement.where(Sample.category_id == category_id)
+    if batch_id is not None:
+        statement = statement.where(Sample.batch_id == batch_id)
     if capture_group_id:
         statement = statement.where(Sample.capture_group_id == capture_group_id)
     if capture_batch_id:

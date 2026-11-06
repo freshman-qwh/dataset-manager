@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
+
 from sqlalchemy import text
 from sqlmodel import Session
 
-from app.schemas.job import JobCreate
+from app.models.job import Job
 from app.schemas.scan import ScanJobCreateResponse, ScanRequest
 from app.services import dataset_service, job_service, scan_service
 from app.services.job_runner import JobCancelled, JobContext, JobInterrupted
@@ -30,16 +32,28 @@ def create_scan_job(
         session.commit()
         return ScanJobCreateResponse(job=active, created=False)
 
-    created = job_service.create_job(
-        session,
-        JobCreate(
-            job_type=SCAN_JOB_TYPE,
-            title=f"扫描数据集：{dataset.name}",
-            dataset_id=dataset_id,
-            parameters={"folder_path": str(root)},
-        ),
+    batch = scan_service.prepare_scan_batch(session, dataset_id, payload)
+    frozen_parameters: dict[str, object] = {"folder_path": str(root)}
+    if payload.import_format != "auto":
+        frozen_parameters["import_format"] = payload.import_format
+    if payload.recognize_existing:
+        frozen_parameters["recognize_existing"] = True
+    if batch is not None:
+        frozen_parameters["batch_id"] = batch.id
+
+    # Schema/dataset checks ran before BEGIN IMMEDIATE. Commit the batch and
+    # queued job together, without opening another schema-inspection connection
+    # inside this transaction (notably important with SQLite StaticPool).
+    job = Job(
+        job_type=SCAN_JOB_TYPE,
+        title=f"扫描数据集：{dataset.name}",
+        dataset_id=dataset_id,
+        parameters_json=json.dumps(frozen_parameters, ensure_ascii=False),
     )
-    return ScanJobCreateResponse(job=created, created=True)
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    return ScanJobCreateResponse(job=job_service.to_job_read(job), created=True)
 
 
 def run_scan_job(
@@ -60,7 +74,7 @@ def run_scan_job(
             result = scan_service.scan_dataset(
                 session,
                 job.dataset_id,
-                ScanRequest(folder_path=folder_path),
+                ScanRequest.model_validate(parameters),
                 checkpoint=context.checkpoint,
                 progress=lambda stage, current, total, error_count: (
                     context.report_progress(

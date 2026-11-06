@@ -28,6 +28,7 @@ class Dataset(SQLModel, table=True):
     license: str | None = Field(default=None, max_length=160)
     owner: str | None = Field(default=None, max_length=160)
     project: str | None = Field(default=None, max_length=160)
+    project_id: int | None = Field(default=None, foreign_key="projects.id", index=True)
     notes: str | None = Field(default=None, max_length=4000)
     auto_scan_on_open: bool = Field(default=False)
     triage_policy_version: int = Field(

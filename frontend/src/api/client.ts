@@ -1,4 +1,5 @@
 import axios from "axios";
+import type { ScanOptions } from "../types/organization";
 
 export async function createIndustrialExample(): Promise<Dataset> {
   const { data } = await client.post<Dataset>("/datasets/industrial-example");
@@ -540,20 +541,22 @@ export async function createAnnotationImportRollbackJob(
   return data;
 }
 
-export async function scanDataset(datasetId: number, folderPath: string): Promise<ScanResult> {
+export async function scanDataset(datasetId: number, folderPath: string, options?: ScanOptions): Promise<ScanResult> {
   const { data } = await client.post<ScanResult>(`/datasets/${datasetId}/scan`, {
-    folder_path: folderPath
+    folder_path: folderPath,
+    ...options
   });
   return data;
 }
 
 export async function createScanJob(
   datasetId: number,
-  folderPath: string
+  folderPath: string,
+  options?: ScanOptions
 ): Promise<ScanJobCreateResponse> {
   const { data } = await client.post<ScanJobCreateResponse>(
     `/datasets/${datasetId}/scan-jobs`,
-    { folder_path: folderPath }
+    { folder_path: folderPath, ...options }
   );
   return data;
 }

@@ -52,6 +52,13 @@ class Sample(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     dataset_id: int = Field(foreign_key="datasets.id", index=True)
+    category_id: int | None = Field(default=None, foreign_key="dataset_categories.id", index=True)
+    batch_id: int | None = Field(default=None, foreign_key="dataset_batches.id", index=True)
+    import_format: str | None = Field(default=None, max_length=40)
+    official_split: str | None = Field(default=None, max_length=40)
+    benchmark_label: str | None = Field(default=None, max_length=40)
+    benchmark_defect_type: str | None = Field(default=None, max_length=160)
+    mask_path: str | None = Field(default=None, max_length=2000)
     filename: str = Field(index=True, max_length=512)
     absolute_path: str = Field(max_length=2000)
     relative_path: str = Field(index=True, max_length=2000)

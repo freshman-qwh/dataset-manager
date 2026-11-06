@@ -35,7 +35,12 @@ def list_datasets(session: Session) -> list[DatasetRead]:
 
 
 def create_dataset(session: Session, payload: DatasetCreate) -> DatasetRead:
-    dataset = Dataset(**payload.model_dump())
+    from app.services.organization_service import resolve_project_values
+
+    values = payload.model_dump()
+    if "project_id" not in payload.model_fields_set:
+        values.pop("project_id", None)
+    dataset = Dataset(**resolve_project_values(session, values))
     if payload.workflow_profile == "industrial_anomaly":
         from app.schemas.triage import TriagePolicyValues
 
@@ -63,8 +68,10 @@ def get_dataset(session: Session, dataset_id: int) -> DatasetRead:
 
 
 def update_dataset(session: Session, dataset_id: int, payload: DatasetUpdate) -> DatasetRead:
+    from app.services.organization_service import resolve_project_values
+
     dataset = get_dataset_or_404(session, dataset_id)
-    updates = payload.model_dump(exclude_unset=True)
+    updates = resolve_project_values(session, payload.model_dump(exclude_unset=True))
     for key, value in updates.items():
         setattr(dataset, key, value)
     dataset.updated_at = utc_now().astimezone(timezone.utc)
@@ -137,6 +144,12 @@ def delete_dataset(session: Session, dataset_id: int) -> None:
         session,
         dataset_id,
     )
+    # Organization containers have their own identity; deleting a data set only
+    # removes its categories/batches, while its parent project remains usable.
+    from app.models.organization import DatasetBatch, DatasetCategory
+    session.flush()
+    session.exec(delete(DatasetCategory).where(DatasetCategory.dataset_id == dataset_id))
+    session.exec(delete(DatasetBatch).where(DatasetBatch.dataset_id == dataset_id))
     session.delete(dataset)
     session.commit()
     dataset_snapshot_service.remove_snapshot_artifacts(snapshot_artifacts)

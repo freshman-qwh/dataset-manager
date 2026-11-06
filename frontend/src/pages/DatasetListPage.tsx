@@ -1,4 +1,4 @@
-import { BookOpen, Calendar, Database, Plus, RefreshCw, Settings } from "lucide-react";
+import { BookOpen, Calendar, Database, FolderOpen, Plus, RefreshCw, Settings } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -7,6 +7,9 @@ import CreateDatasetModal from "../components/CreateDatasetModal";
 import DatabaseMaintenanceModal from "../components/DatabaseMaintenanceModal";
 import DatasetSettingsModal from "../components/DatasetSettingsModal";
 import type { Dataset, DatasetCreate } from "../types/dataset";
+import { listProjects } from "../api/organization";
+import ProjectManagerModal from "../components/ProjectManagerModal";
+import type { Project } from "../types/organization";
 
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat("zh-CN", {
@@ -20,6 +23,9 @@ export default function DatasetListPage() {
   const navigate = useNavigate();
   const [creatingExample, setCreatingExample] = useState(false);
   const [datasets, setDatasets] = useState<Dataset[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectFilter, setProjectFilter] = useState("");
+  const [projectsOpen, setProjectsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [maintenanceOpen, setMaintenanceOpen] = useState(false);
@@ -32,7 +38,8 @@ export default function DatasetListPage() {
     setLoading(true);
     setError(null);
     try {
-      setDatasets(await listDatasets());
+      const [items, projectItems] = await Promise.all([listDatasets(), listProjects()]);
+      setDatasets(items); setProjects(projectItems);
     } catch {
       setError("无法连接后端服务");
     } finally {
@@ -78,6 +85,8 @@ export default function DatasetListPage() {
     }
   }
 
+  const visibleDatasets = datasets.filter((dataset) => !projectFilter || (projectFilter === "unassigned" ? !dataset.project_id : dataset.project_id === Number(projectFilter)));
+
   return (
     <main className="min-h-screen bg-canvas">
       <header className="border-b border-line bg-white/90 backdrop-blur">
@@ -87,6 +96,10 @@ export default function DatasetListPage() {
             <p className="mt-1 text-sm text-gray-500">本地工业数据准备与快速验证</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <Link to="/browse" className="inline-flex items-center gap-2 rounded-lg border border-line bg-white px-3 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50">
+              <FolderOpen size={17} />
+              本地浏览
+            </Link>
             <Link to="/library" className="inline-flex items-center gap-2 rounded-lg border border-line bg-white px-3 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50">
               <BookOpen size={17} />
               数据集图书馆
@@ -128,7 +141,7 @@ export default function DatasetListPage() {
             {["扫描图片并分拣", "确认工件与采集分组", "快速验证或导出训练包"].map((step, index) => <li key={step} className="flex items-center gap-2"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-100 text-xs font-medium text-gray-600" aria-hidden="true">{index + 1}</span>{step}</li>)}
           </ol>
         </div>
-        <div className="mb-4 flex items-center justify-between gap-3"><h2 className="text-base font-semibold text-ink">我的数据集</h2>{!loading && <span className="text-sm text-gray-500">共 {datasets.length} 个</span>}</div>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-3"><h2 className="text-base font-semibold text-ink">我的数据集</h2>{!loading && <span className="text-sm text-gray-500">{visibleDatasets.length} / {datasets.length} 个</span>}</div><div className="flex flex-wrap gap-2"><select aria-label="按项目筛选数据集" value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)} className="min-h-10 rounded-lg border border-line bg-white px-3 text-sm text-gray-600"><option value="">全部项目</option><option value="unassigned">未归属项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select><button type="button" onClick={() => setProjectsOpen(true)} className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50">管理项目</button></div></div>
         {error && <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><span>{error}</span><button type="button" className="underline underline-offset-2" onClick={() => void loadDatasets()}>重新加载</button></div>}
 
         {loading ? (
@@ -147,9 +160,9 @@ export default function DatasetListPage() {
               创建数据集
             </button>
           </div>
-        ) : (
+        ) : visibleDatasets.length === 0 ? <div className="rounded-lg border border-line bg-white p-8 text-center text-sm text-gray-500">该项目还没有数据集。<button type="button" onClick={() => setProjectFilter("")} className="ml-2 underline underline-offset-2">查看全部</button></div> : (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {datasets.map((dataset) => (
+            {visibleDatasets.map((dataset) => (
               <div
                 key={dataset.id}
                 className="relative min-w-0 rounded-lg border border-line bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-soft"
@@ -169,6 +182,7 @@ export default function DatasetListPage() {
                   <div className="flex flex-col items-start gap-3">
                     <div className="min-w-0 w-full">
                       <h2 title={dataset.name} className="line-clamp-2 break-words text-base font-semibold text-ink">{dataset.name}</h2>
+                      {dataset.project && <p className="mt-1 truncate text-xs text-gray-400" title={dataset.project}>{dataset.project}</p>}
                       <p className="mt-2 line-clamp-2 min-h-10 text-sm text-gray-500">
                         {dataset.description || "未填写描述"}
                       </p>
@@ -194,6 +208,10 @@ export default function DatasetListPage() {
                     </span>
                   </div>
                 </Link>
+                <div className="mt-4 flex min-w-0 items-center justify-between gap-3 border-t border-line pt-3">
+                  <span className="min-w-0 truncate text-xs text-gray-500" title={dataset.root_path ?? undefined}>{dataset.root_path || "尚未添加本地目录"}</span>
+                  <Link to={`/browse?dataset=${dataset.id}`} className="inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"><FolderOpen size={15} />浏览</Link>
+                </div>
               </div>
             ))}
           </div>
@@ -202,6 +220,7 @@ export default function DatasetListPage() {
 
       <CreateDatasetModal open={modalOpen} onClose={() => setModalOpen(false)} onCreate={handleCreate} />
       <DatabaseMaintenanceModal open={maintenanceOpen} onClose={() => setMaintenanceOpen(false)} />
+      <ProjectManagerModal open={projectsOpen} onClose={() => setProjectsOpen(false)} onUpdated={loadDatasets} />
       <DatasetSettingsModal
         dataset={settingsDataset}
         open={Boolean(settingsDataset)}

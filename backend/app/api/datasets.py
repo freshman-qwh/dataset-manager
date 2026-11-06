@@ -35,7 +35,7 @@ from app.schemas.sample import (
     SampleListResponse,
     SampleNavigationResponse,
 )
-from app.schemas.scan import ScanJobCreateResponse, ScanRequest, ScanResult
+from app.schemas.scan import ImportPreview, ScanJobCreateResponse, ScanRequest, ScanResult
 from app.schemas.split import SplitPlanRequest, SplitPlanResult
 from app.schemas.training_split import TrainingSplitCommitRequest, TrainingSplitCommitResult, TrainingSplitPreview, TrainingSplitRequest
 from app.schemas.stats import DatasetStats
@@ -71,6 +71,11 @@ from app.services import (
 )
 
 router = APIRouter(prefix="/api", tags=["datasets"])
+
+
+@router.post("/datasets/{dataset_id}/import-preview", response_model=ImportPreview)
+def preview_dataset_import(dataset_id: int, payload: ScanRequest, session: Session = Depends(get_session)) -> ImportPreview:
+    return scan_service.preview_import(session, dataset_id, payload)
 
 
 @router.post("/datasets/industrial-example", response_model=DatasetRead)

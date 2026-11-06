@@ -26,6 +26,7 @@ class DatasetCreate(BaseModel):
     license: str | None = Field(default=None, max_length=160)
     owner: str | None = Field(default=None, max_length=160)
     project: str | None = Field(default=None, max_length=160)
+    project_id: int | None = Field(default=None, gt=0)
     notes: str | None = Field(default=None, max_length=4000)
     auto_scan_on_open: bool = False
 
@@ -41,6 +42,7 @@ class DatasetUpdate(BaseModel):
     license: str | None = Field(default=None, max_length=160)
     owner: str | None = Field(default=None, max_length=160)
     project: str | None = Field(default=None, max_length=160)
+    project_id: int | None = Field(default=None, gt=0)
     notes: str | None = Field(default=None, max_length=4000)
     auto_scan_on_open: bool | None = None
 
@@ -67,6 +69,7 @@ class DatasetRead(BaseModel):
     license: str | None
     owner: str | None
     project: str | None
+    project_id: int | None = None
     notes: str | None
     auto_scan_on_open: bool
     triage_policy_version: int = Field(ge=1)

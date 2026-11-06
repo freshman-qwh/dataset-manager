@@ -73,6 +73,20 @@ def preview(session: Session, dataset_id: int, request: ValidationPreviewRequest
             full_dataset_checked=len(samples), group_count=len(groups),
             notice="正常一致性探索：只评价已知正常的误报与分数分布，没有异常检出率或独立测试结论。")
     blockers = list(summary["blockers"])
+    included_ids = [row["sample_id"] for row in rows if row["split"]]
+    if included_ids:
+        categories = set(session.exec(select(Sample.category_id).where(
+            Sample.dataset_id == dataset_id, Sample.id.in_(included_ids),
+            Sample.category_id.is_not(None),
+        )).all())
+        if len(categories) > 1:
+            blockers.append("当前基线按单一对象类别拟合，请筛选一个类别后创建实验。")
+        official_test_ids = set(session.exec(select(Sample.id).where(
+            Sample.dataset_id == dataset_id, Sample.id.in_(included_ids),
+            Sample.official_split == "test",
+        )).all())
+        if any(row["sample_id"] in official_test_ids and row["split"] == "train" for row in rows):
+            blockers.append("官方测试图片不能用于拟合，请保留官方测试范围并显式准备独立验证集。")
     if request.roi:
         from app.services.validation_preparation_service import crop_box
         for row in rows:

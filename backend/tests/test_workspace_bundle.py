@@ -16,7 +16,7 @@ from app.services import industrial_example_service, dataset_snapshot_service, w
 from app.services.job_runner import JobContext
 
 
-def fixture_bundle(tmp_path, monkeypatch):
+def fixture_bundle(tmp_path, monkeypatch, organization=False):
     database = tmp_path / "source.db"
     migrations.upgrade_database(database)
     engine = create_engine(f"sqlite:///{database.as_posix()}", connect_args={"check_same_thread": False})
@@ -40,6 +40,23 @@ def fixture_bundle(tmp_path, monkeypatch):
     monkeypatch.setattr(industrial_plan_service,"get_settings",lambda:settings)
     monkeypatch.setattr(validation_runtime_service,"status",lambda *args:RuntimeRead(ready=True,message="test"))
     completed_run(client,engine,dataset)
+    if organization:
+        from app.models.organization import Project, DatasetCategory, DatasetBatch
+        from app.models.dataset import Dataset
+        from app.models.sample import Sample
+        from sqlmodel import select
+        with Session(engine) as session:
+            project = Project(name="probe")
+            category = DatasetCategory(dataset_id=dataset["id"], name="probe-A")
+            batch = DatasetBatch(dataset_id=dataset["id"], name="first-capture")
+            session.add_all([project, category, batch]); session.flush()
+            stored_dataset = session.get(Dataset, dataset["id"])
+            stored_dataset.project_id = project.id; stored_dataset.project = project.name
+            sample = session.exec(select(Sample).where(Sample.dataset_id == dataset["id"]).order_by(Sample.id)).first()
+            sample.category_id = category.id; sample.batch_id = batch.id; sample.capture_batch_id = batch.code
+            sample.import_format = "mvtec_ad"; sample.official_split = "test"; sample.benchmark_label = "anomaly"
+            sample.mask_path = str(tmp_path / "original-mask.png")
+            session.add(stored_dataset); session.add(sample); session.commit()
     (storage / "job-recovery").mkdir()
     (storage / "job-recovery" / "recovery.json").write_text('{"test": true}', encoding="utf-8")
     with Session(engine) as session:
@@ -65,6 +82,19 @@ def test_restore_to_new_location_verifies_database_and_external_snapshots(tmp_pa
     assert source_db.is_file()
     with pytest.raises(ValueError, match="新目录"):
         backups.restore_bundle(archive, target)
+
+
+def test_restore_preserves_organization_and_external_mask_references(tmp_path, monkeypatch):
+    archive, source_db, storage, result = fixture_bundle(tmp_path, monkeypatch, organization=True)
+    target = tmp_path / "organized-restore"
+    restored = backups.restore_bundle(archive, target)
+    counts = restored["verification"]["table_counts"]
+    assert counts["projects"] == counts["dataset_categories"] == counts["dataset_batches"] == 1
+    with sqlite3.connect(target / "database/app.db") as connection:
+        row = connection.execute("SELECT category_id,batch_id,import_format,official_split,mask_path FROM samples WHERE category_id IS NOT NULL").fetchone()
+        assert row[:4] == (1, 1, "mvtec_ad", "test")
+        assert row[4] == str(tmp_path / "original-mask.png")
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
 @pytest.mark.parametrize("corruption", ["content", "missing", "traversal"])
