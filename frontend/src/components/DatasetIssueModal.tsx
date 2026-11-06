@@ -171,7 +171,7 @@ export default function DatasetIssueModal({
               {visibleReport?.group_count ?? duplicateGroupCount} 组精确重复
             </div>
             <div className="mt-1 text-xs text-amber-700">
-              涉及 {visibleReport?.duplicate_sample_count ?? duplicateSampleCount} 个样本，仅比较本地 SHA-256。
+              涉及 {visibleReport?.duplicate_sample_count ?? duplicateSampleCount} 个样本，只识别文件内容完全相同的图片。
             </div>
           </div>
           <div className={`rounded-lg border p-3 text-sm ${crossSplitGroupCount > 0 ? "border-red-200 bg-red-50 text-red-900" : "border-emerald-200 bg-emerald-50 text-emerald-900"}`}>
@@ -203,13 +203,13 @@ export default function DatasetIssueModal({
 
         {visibleReport && visibleReport.groups.length > 0 ? (
           <div className="max-h-[52vh] space-y-3 overflow-auto pr-1">
-            {visibleReport.groups.map((group) => (
+            {visibleReport.groups.map((group, index) => (
               <section key={group.file_hash} className="rounded-lg border border-line p-3">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-xs font-medium text-gray-800" title={group.file_hash}>
-                        {group.file_hash.slice(0, 16)}…
+                      <span className="text-sm font-medium text-gray-800">
+                        重复组 {(visibleReport.page - 1) * visibleReport.page_size + index + 1}
                       </span>
                       {group.cross_split && (
                         <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-700">跨划分泄漏</span>

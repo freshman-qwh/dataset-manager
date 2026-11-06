@@ -58,3 +58,61 @@ def test_quality_inspection_is_read_only_and_uses_roi(tmp_path,monkeypatch):
     from app.services import validation_preparation_service as prep
     monkeypatch.setattr(prep.sample_service,"get_filtered_samples",lambda *args,**kwargs:[None]*301)
     assert client.post(endpoint,json={}).status_code==422
+
+
+def test_quality_inspection_decodes_once_without_full_file_checksums(tmp_path, monkeypatch):
+    """Read-only measurements should not reread every image to checksum it."""
+    from app.services import anomaly_protocol_service, validation_preparation_service as prep
+
+    client, _, dataset = workspace(tmp_path, monkeypatch)
+    sample = client.get(f"/api/datasets/{dataset['id']}/samples").json()["items"][0]
+    digest_calls = []
+    real_digest = anomaly_protocol_service.file_digest
+    image_opens = []
+    real_open = prep.Image.open
+
+    def tracked_digest(path):
+        digest_calls.append(Path(path))
+        return real_digest(path)
+
+    def tracked_open(path, *args, **kwargs):
+        image_opens.append(Path(path))
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(anomaly_protocol_service, "file_digest", tracked_digest)
+    monkeypatch.setattr(prep.Image, "open", tracked_open)
+    response = client.post(
+        f"/api/datasets/{dataset['id']}/validation/quality-inspections",
+        json={"sample_query": {"sample_ids": [sample["id"]]}},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["processed"] == 1
+    assert len(image_opens) == 1
+    assert digest_calls == []
+
+
+def test_quality_inspection_rejects_file_changes_before_and_during_read(tmp_path, monkeypatch):
+    from app.services import validation_preparation_service as prep
+
+    client, _, dataset = workspace(tmp_path, monkeypatch)
+    samples = client.get(f"/api/datasets/{dataset['id']}/samples").json()["items"]
+    first, second = samples[:2]
+    Path(first["absolute_path"]).write_bytes(b"changed before inspection")
+    endpoint = f"/api/datasets/{dataset['id']}/validation/quality-inspections"
+    before = client.post(endpoint, json={"sample_query": {"sample_ids": [first["id"]]}})
+    assert before.status_code == 200, before.text
+    assert before.json()["failed"] == 1
+    assert before.json()["images"][0]["brightness"] is None
+
+    real_transpose = prep.ImageOps.exif_transpose
+
+    def change_after_decode(image):
+        decoded = real_transpose(image)
+        Path(second["absolute_path"]).write_bytes(b"changed during inspection")
+        return decoded
+
+    monkeypatch.setattr(prep.ImageOps, "exif_transpose", change_after_decode)
+    during = client.post(endpoint, json={"sample_query": {"sample_ids": [second["id"]]}})
+    assert during.status_code == 200, during.text
+    assert during.json()["failed"] == 1
+    assert during.json()["images"][0]["brightness"] is None

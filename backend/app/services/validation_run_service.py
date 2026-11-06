@@ -1,3 +1,4 @@
+import hashlib
 import json
 import math
 import os
@@ -107,9 +108,10 @@ def load_result(session: Session, run_id: str) -> tuple[ValidationRun, dict, dic
     try:
         artifact_job = int(job.result["artifact_job_id"])
         path = run_root(run.id) / f"attempt-{artifact_job}" / "result.json"
-        if protocol.file_digest(path) != job.result["result_sha256"]:
+        payload = path.read_bytes()
+        if hashlib.sha256(payload).hexdigest() != job.result["result_sha256"]:
             raise ValueError("checksum")
-        result = json.loads(path.read_text(encoding="utf-8"))
+        result = json.loads(payload.decode("utf-8"))
         return run, read_contract(run), result
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise HTTPException(409, "验证结果文件缺失或校验失败。") from exc
@@ -214,8 +216,7 @@ def execute(context: JobContext, parameters: dict[str, object]) -> dict[str, obj
             raise ValueError("算法输出的图片集合或分数不完整。")
         for row in rows:
             context.checkpoint()
-            if protocol.file_digest(Path(row["source_absolute_path"])) != row["sha256"]:
-                raise ValueError("运行过程中原图发生变化，请重新扫描并创建实验。")
+            # The worker used the verified copies, not the live source folder.
             if not (work / "previews" / f"{row['sample_id']}.jpg").is_file() or not (work / "heatmaps" / f"{row['sample_id']}.png").is_file():
                 raise ValueError("算法结果缺少图片预览或热图。")
         with Session(context.engine) as session:

@@ -52,6 +52,7 @@ import type {
 } from "../types/dataset";
 import { buildQueueChangeParams, writeAnnotationQueue } from "../utils/annotationQueue";
 import { annotationProgressCopy, reviewStatusCopy } from "../utils/workflow";
+import { okGradeCopy } from "../utils/uiCopy";
 
 const EMPTY_DRAFT_STATE: AnnotationDraftState = { active: false, shapeType: null, canCommit: false };
 const AUTO_SAVE_ON_NAVIGATION_KEY = "dataset-manager.annotation.autoSaveOnNavigation";
@@ -1259,7 +1260,7 @@ export default function AnnotationPage() {
                 <div role="group" aria-label="快速分拣详情" className="absolute right-0 top-full z-40 mt-2 w-64 rounded-lg border border-line bg-white p-3 text-gray-700 shadow-lg">
                   <div className="mb-2 font-semibold text-ink">快速分拣结果</div>
                   <div>判定：{sample.triage_status === "ok" ? "OK" : sample.triage_status === "ng" ? "NG" : sample.triage_status === "pending" ? "待定" : "未分拣"}</div>
-                  {sample.ok_grade && <div className="mt-1">OK 等级：{sample.ok_grade === "clear" ? "完全 OK" : "勉强 OK"}</div>}
+                  {sample.ok_grade && <div className="mt-1">OK 等级：{okGradeCopy[sample.ok_grade]}</div>}
                   {sample.defect_severity && <div className="mt-1">缺陷程度：{{ mild: "轻微", moderate: "中等", severe: "严重" }[sample.defect_severity]}</div>}
                   {sample.triage_outdated && <div className="mt-1 text-amber-700">原判定需要重新核对</div>}
                   {sample.triage_note && <div className="mt-2 max-h-28 overflow-auto break-words border-t border-line pt-2">备注：{sample.triage_note}</div>}

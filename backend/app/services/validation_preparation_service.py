@@ -1,5 +1,6 @@
 """Small image preparation tools. All image access is read-only."""
 import json
+from datetime import timezone
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -7,7 +8,7 @@ from PIL import Image, ImageFilter, ImageOps, ImageStat
 from sqlalchemy import text
 from sqlmodel import Session, select
 from app.models.sample import Sample
-from app.services import anomaly_protocol_service as protocol, sample_service
+from app.services import sample_service
 from app.services.dataset_revision_service import bump_dataset_revision
 from app.services.dataset_service import get_dataset_or_404
 from app.schemas.validation import NormalizedRoi
@@ -65,7 +66,13 @@ def inspect_quality(session: Session, dataset_id: int, request) -> dict:
             brightness=None,sharpness=None,issues=[],error=None)
         try:
             path = Path(sample.absolute_path)
-            if sample.file_type != "image" or sample.file_status != "normal" or protocol.file_digest(path) != sample.file_hash:
+            before = path.stat()
+            modified_at = sample.file_modified_at
+            if modified_at is not None and modified_at.tzinfo is None:
+                modified_at = modified_at.replace(tzinfo=timezone.utc)
+            if (sample.file_type != "image" or sample.file_status != "normal"
+                    or before.st_size != sample.file_size
+                    or modified_at is not None and abs(before.st_mtime - modified_at.timestamp()) > 0.00001):
                 raise ValueError("不是可用图片或内容已变化，请重新扫描。")
             with Image.open(path) as source:
                 image = ImageOps.exif_transpose(source).convert("L")
@@ -83,7 +90,10 @@ def inspect_quality(session: Session, dataset_id: int, request) -> dict:
             for y in range(8):
                 for x in range(8):
                     fingerprint = (fingerprint << 1) | int(pixels[y*9+x] > pixels[y*9+x+1])
-            if protocol.file_digest(path) != sample.file_hash:
+            # Measurements decode the image once; use cheap metadata to catch
+            # concurrent edits instead of rereading its contents for checksums.
+            after = path.stat()
+            if (before.st_size, before.st_mtime_ns, before.st_ino) != (after.st_size, after.st_mtime_ns, after.st_ino):
                 raise ValueError("体检过程中内容变化，请重新扫描。")
             fingerprints[sample.id] = fingerprint
         except (OSError,ValueError,Image.DecompressionBombError) as exc:

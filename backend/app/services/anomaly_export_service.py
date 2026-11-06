@@ -1,6 +1,5 @@
 """Publish verified image-level packages using the existing local job worker."""
 import csv
-import hashlib
 import io
 import json
 import os
@@ -70,7 +69,7 @@ protocol.json 记录分拣标准、采集独立声明、比例、排除原因和
 1. 在独立 Python 环境中安装 requirements-reader.txt；本次读取验收环境为 Windows x64 / Python 3.13 / CPU。
    可复现本次环境：python -m pip install -r requirements-reader-lock-windows.txt --extra-index-url https://download.pytorch.org/whl/cpu
    不在 Dataset Manager 的应用环境内安装训练依赖。
-2. python load_anomalib.py --check-only 先校验所有图片 hash、组隔离和类别覆盖（无需训练框架）。
+2. python load_anomalib.py --check-only 先检查图片完整性、组隔离和类别覆盖（无需训练框架）。
 3. python load_anomalib.py 完整读取三个集合。成功应打印 split_preserved: true 及各组数量。
 4. 算法代码中：from load_anomalib import create_datamodule；使用 create_datamodule(本包目录)。
    读取器显式提供 train/val/test，禁用 Anomalib 自动重分。更换版本后需要重新做完整读取验证。
@@ -114,20 +113,23 @@ def run_export(context: JobContext, parameters: dict[str, object]) -> dict[str, 
         filename = f"industrial-{dataset_id}-{context.job_id}.zip"
         with job_artifact_service.JobArtifactWorkspace(job_artifact_service.job_artifact_root(),
             job_id=context.job_id, filename=filename, media_type="application/zip") as workspace:
+            copied_sizes: dict[str, int] = {}
             with ZipFile(workspace.path, "w", compression=ZIP_STORED, allowZip64=True) as archive:
                 for index, row in enumerate(rows, 1):
                     with archive.open(row["image_path"], "w", force_zip64=True) as output:
-                        _copy_verified(Path(row["source_absolute_path"]), output, expected_hash=row["sha256"], checkpoint=context.checkpoint)
+                        copied_sizes[row["image_path"]] = _copy_verified(Path(row["source_absolute_path"]), output, expected_hash=row["sha256"], checkpoint=context.checkpoint)
                     context.report_progress(current=index, total=len(rows), stage="copying_files")
                 for name, content in metadata_files.items():
                     archive.writestr(name, content.encode("utf-8"))
-            # Verify actual package bytes, not just bytes read from the source.
+            # Copying already checks image content in the same read. Check only
+            # the archive index here; finalize computes the whole-package hash.
             with ZipFile(workspace.path) as archive:
-                for row in rows:
-                    context.checkpoint()
-                    with archive.open(row["image_path"]) as file:
-                        if hashlib.file_digest(file, "sha256").hexdigest() != row["sha256"]:
-                            raise ValueError("Exported image checksum mismatch.")
+                entries = archive.infolist()
+                expected_names = set(copied_sizes) | set(metadata_files)
+                if len(entries) != len(expected_names) or {entry.filename for entry in entries} != expected_names:
+                    raise ValueError("Exported package file list does not match the plan.")
+                if any(archive.getinfo(name).file_size != size for name, size in copied_sizes.items()):
+                    raise ValueError("Exported image size mismatch.")
             _fresh(context, dataset_id, request)
             artifact = workspace.finalize(checkpoint=context.checkpoint)
             context.checkpoint()
@@ -146,9 +148,9 @@ def run_export(context: JobContext, parameters: dict[str, object]) -> dict[str, 
             destination = temporary / row["image_path"]
             destination.parent.mkdir(parents=True, exist_ok=True)
             with destination.open("xb") as output:
-                _copy_verified(Path(row["source_absolute_path"]), output, expected_hash=row["sha256"], checkpoint=context.checkpoint)
-            if protocols.file_digest(destination) != row["sha256"]:
-                raise ValueError("Exported image checksum mismatch.")
+                copied_size = _copy_verified(Path(row["source_absolute_path"]), output, expected_hash=row["sha256"], checkpoint=context.checkpoint)
+            if destination.stat().st_size != copied_size:
+                raise ValueError("Exported image size mismatch.")
             context.report_progress(current=index, total=len(rows), stage="copying_files")
         for name, content in metadata_files.items():
             (temporary / name).write_text(content, encoding="utf-8")

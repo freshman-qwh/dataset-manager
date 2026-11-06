@@ -1,13 +1,16 @@
 import hashlib
 import json
 import threading
+from collections import Counter
 from pathlib import Path
 
 from PIL import Image
+import pytest
 from sqlmodel import Session, select
 from app.models.sample import Sample
 from app.schemas.validation import ValidationRunCreate
 from app.services import job_service, validation_run_service as runs
+from app.services import anomaly_protocol_service as protocol
 from app.services.job_runner import JobContext
 from test_validation_execution import workspace
 from test_validation_results import completed_run
@@ -113,3 +116,40 @@ def test_batch_excludes_conflicting_truth_for_identical_content(tmp_path, monkey
     plan=client.post(base+"/batch-previews",json={"target_dataset_id":target["id"]}).json()
     assert plan["summary"]["included_count"]==2
     assert sum("判定矛盾" in (r["exclusion_reason"] or "") for r in plan["rows"])==2
+
+
+@pytest.mark.parametrize("truth", ["known", "unknown", "changed"])
+def test_batch_checks_each_source_content_once(tmp_path, monkeypatch, truth):
+    client, engine, dataset = workspace(tmp_path, monkeypatch)
+    parent, old = completed_run(client, engine, dataset)
+    base = f"/api/validation/runs/{parent.id}"
+    assert client.post(base + "/freeze-threshold", json={"threshold": 2}).status_code == 200
+    target = new_batch(client, engine, tmp_path, old)
+    with Session(engine) as session:
+        samples = session.exec(select(Sample).where(Sample.dataset_id == target["id"]).order_by(Sample.filename)).all()
+        paths = {Path(sample.absolute_path) for sample in samples}
+        if truth != "unknown":
+            for sample in samples:
+                sample.triage_status = "ok"
+                sample.ok_grade = "clear"
+                sample.triaged_file_hash = sample.file_hash
+                sample.triage_policy_version = 1
+                session.add(sample)
+            session.commit()
+        if truth == "changed":
+            Image.new("RGB", (24, 24), "red").save(samples[2].absolute_path)
+    reads = Counter()
+    original_digest = protocol.file_digest
+    def count_source_digests(path):
+        if path in paths:
+            reads[path] += 1
+        return original_digest(path)
+    monkeypatch.setattr(protocol, "file_digest", count_source_digests)
+    response = client.post(base + "/batch-previews", json={"target_dataset_id": target["id"]})
+    assert response.status_code == 200, response.text
+    plan = response.json()
+    assert reads == Counter({path: 1 for path in paths})
+    assert plan["summary"]["included_count"] == (2 if truth == "changed" else 4)
+    assert plan["summary"]["unknown_count"] == (4 if truth == "unknown" else 0)
+    if truth == "changed":
+        assert sum("原图不可用或内容变化" in (row["exclusion_reason"] or "") for row in plan["rows"]) == 2

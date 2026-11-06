@@ -54,11 +54,15 @@ def preview(session: Session, run_id: str, request) -> dict:
         for sample in members:
             if sample.id not in selected:
                 continue
-            label, truth_reason = protocol._eligibility(sample, dataset.triage_policy_version, True)
+            # Every candidate needs one file check, including unknown truth.
+            # Reuse it rather than rereading known samples in _eligibility.
+            label, truth_reason = protocol._eligibility(sample, dataset.triage_policy_version, True, check_file=False)
             try:
                 readable = sample.file_type == "image" and sample.file_status == "normal" and image_is_decodable(Path(sample.absolute_path)) and protocol.file_digest(Path(sample.absolute_path)) == sample.file_hash
             except (OSError, ValueError):
                 readable = False
+            if label is not None and not readable:
+                label, truth_reason = None, "原图不可解码或内容已变化，请重新扫描并复核"
             checked.append((sample, label, truth_reason))
             if label is not None:
                 labels_by_hash.setdefault(sample.file_hash,set()).add(label)

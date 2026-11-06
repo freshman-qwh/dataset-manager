@@ -79,3 +79,22 @@ def test_test_lock_frozen_report_and_truth_history(tmp_path: Path, monkeypatch):
     second, _ = completed_run(client, engine, dataset)
     reused = client.post(f"/api/validation/runs/{second.id}/freeze-threshold", json={"threshold": 2}).json()
     assert reused["reused_test_hashes"] > 0 and not reused["independent_test"]
+
+
+@pytest.mark.parametrize("tampered", [False, True])
+def test_result_is_read_once_and_still_rejects_tampering(tmp_path: Path, monkeypatch, tampered):
+    client, engine, dataset = workspace(tmp_path, monkeypatch)
+    run, _ = completed_run(client, engine, dataset)
+    result_path = runs.run_root(run.id) / f"attempt-{run.job.id}" / "result.json"
+    if tampered:
+        result_path.write_text('{"predictions": []}', encoding="utf-8")
+    reads = []
+    original_open = Path.open
+    def count_result_reads(path, mode="r", *args, **kwargs):
+        if path == result_path and mode in {"r", "rb"}:
+            reads.append(mode)
+        return original_open(path, mode, *args, **kwargs)
+    monkeypatch.setattr(Path, "open", count_result_reads)
+    response = client.get(f"/api/validation/runs/{run.id}/results")
+    assert response.status_code == (409 if tampered else 200), response.text
+    assert len(reads) == 1

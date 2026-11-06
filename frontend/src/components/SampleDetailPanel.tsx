@@ -1,5 +1,5 @@
 import { PencilLine, Save, Trash2, Wrench, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { getSampleFileUrl, getSamplePreview } from "../api/client";
 import type { Sample, SamplePreview, Tag } from "../types/dataset";
@@ -67,8 +67,6 @@ export default function SampleDetailPanel({
       });
     }
   }, [sample]);
-
-  const shortHash = useMemo(() => sample?.file_hash.slice(0, 16), [sample]);
 
   if (!sample) {
     return null;
@@ -147,10 +145,6 @@ export default function SampleDetailPanel({
           <div className="col-span-2 rounded-lg border border-line px-3 py-2">
             <dt className="text-gray-500">相对路径</dt>
             <dd className="mt-1 break-all font-medium text-ink">{sample.relative_path}</dd>
-          </div>
-          <div className="col-span-2 rounded-lg border border-line px-3 py-2">
-            <dt className="text-gray-500">SHA256</dt>
-            <dd className="mt-1 break-all font-mono text-xs text-ink">{shortHash}...</dd>
           </div>
         </dl>
 

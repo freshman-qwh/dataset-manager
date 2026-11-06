@@ -48,14 +48,18 @@ def package_rows(root: Path) -> list[dict]:
 
 
 def create_datamodule(root: Path, batch_size: int = 16, image_size: int = 256):
+    root = root.resolve()
+    rows = package_rows(root)
+    return _datamodule_from_verified_rows(root, rows, batch_size, image_size)
+
+
+def _datamodule_from_verified_rows(root: Path, rows: list[dict], batch_size: int = 16, image_size: int = 256):
     if version("anomalib") != "2.7.0":
         raise RuntimeError("This reader is verified against anomalib==2.7.0")
     from anomalib.data.datamodules.base.image import AnomalibDataModule
     from anomalib.data.datasets.image.tabular import TabularDataset
     from torchvision.transforms.v2 import Resize
 
-    root = root.resolve()
-    rows = package_rows(root)
     # Anomalib's automatic label inference does not cover normal VAL rows.
     # Supply both columns explicitly and keep package-only metadata separate.
     samples = [{
@@ -93,8 +97,9 @@ def create_datamodule(root: Path, batch_size: int = 16, image_size: int = 256):
 
 
 def check_reader(root: Path) -> dict:
+    root = root.resolve()
     rows = package_rows(root)
-    module = create_datamodule(root)
+    module = _datamodule_from_verified_rows(root, rows)
     for stage in ("fit", "test"):
         module.setup(stage)
         for split in ("train", "val", "test"):

@@ -13,7 +13,7 @@ import type {
   DatasetSavedViewQuery
 } from "../types/datasetSavedView";
 import { annotationQueueCopy } from "../utils/annotationQueue";
-import { annotationProgressCopy, reviewStatusCopy } from "../utils/uiCopy";
+import { annotationProgressCopy, okGradeCopy, reviewStatusCopy } from "../utils/uiCopy";
 
 interface DatasetSavedViewModalProps {
   datasetId: number;
@@ -45,7 +45,7 @@ function querySummary(query: DatasetSavedViewQuery): string {
   if (query.capture_group_id) parts.push(`工件 ${query.capture_group_id}`);
   if (query.capture_batch_id) parts.push(`批次 ${query.capture_batch_id}`);
   if (query.triage_status) parts.push(`分拣 ${query.triage_status}`);
-  if (query.ok_grade) parts.push(query.ok_grade === "clear" ? "完全 OK" : "临界可接受");
+  if (query.ok_grade) parts.push(okGradeCopy[query.ok_grade]);
   if (typeof query.triage_outdated === "boolean") parts.push(query.triage_outdated ? "判定待复核" : "当前判定");
   if (query.defect_severity) parts.push(`程度 ${query.defect_severity}`);
   if (query.defect_type_id) parts.push(`缺陷类型 ${query.defect_type_id}`);

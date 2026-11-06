@@ -147,7 +147,7 @@ export default function DatasetSnapshotModal({
     <Modal open={open} title="数据集快照" onClose={onClose} size="lg">
       <div className="max-h-[78vh] space-y-5 overflow-y-auto p-5">
         <div className="rounded-xl border border-line bg-gray-50 p-4 text-sm text-gray-600">
-          快照冻结当前筛选范围、文件 hash、标签、划分与标注元数据。它不会复制或修改原始文件。
+          快照记录当前筛选范围、文件信息、标签、划分与标注元数据。它不会复制或修改原始文件。
           当前数据集为 Revision {datasetRevision}。
         </div>
 
@@ -198,7 +198,7 @@ export default function DatasetSnapshotModal({
                         <span className="rounded-md bg-gray-100 px-2 py-1 text-xs text-gray-600">Revision {snapshot.dataset_revision}</span>
                       </div>
                       <p className="mt-2 text-xs text-gray-500">
-                        {formatTime(snapshot.created_at)} · {snapshot.sample_count} 样本 · {snapshot.annotation_count} 标注 · SHA-256 {snapshot.content_sha256.slice(0, 12)}…
+                        {formatTime(snapshot.created_at)} · {snapshot.sample_count} 样本 · {snapshot.annotation_count} 标注
                       </p>
                     </div>
                     <div className="flex shrink-0 flex-wrap gap-2">
@@ -254,8 +254,11 @@ export default function DatasetSnapshotModal({
               <span>{selected.content.sample_count} 个样本</span>
               <span>{selected.content.annotation_count} 个标注</span>
               <span>{selected.content.class_map.length} 个类别映射</span>
-              <span className="truncate" title={selected.content_sha256}>SHA-256 {selected.content_sha256}</span>
             </div>
+            <details className="mt-3 text-xs text-gray-500">
+              <summary className="cursor-pointer">快照文件校验</summary>
+              <p className="mt-2 break-all font-mono">SHA-256 {selected.content_sha256}</p>
+            </details>
           </section>
         )}
 
@@ -294,8 +297,12 @@ export default function DatasetSnapshotModal({
               <div className="min-w-0">
                 <h3 className="text-sm font-semibold text-ink">训练标签已重建</h3>
                 <p className="mt-2 text-xs text-gray-500">
-                  {trainingLabels.format} · {trainingLabels.sample_count} 样本 · SHA-256 {trainingLabels.label_sha256}
+                  {trainingLabels.format} · {trainingLabels.sample_count} 样本
                 </p>
+                <details className="mt-2 text-xs text-gray-500">
+                  <summary className="cursor-pointer">下载包校验</summary>
+                  <p className="mt-2 break-all font-mono">SHA-256 {trainingLabels.label_sha256}</p>
+                </details>
               </div>
               <a
                 href={getDatasetSnapshotTrainingLabelsDownloadUrl(datasetId, trainingLabels.snapshot_id)}

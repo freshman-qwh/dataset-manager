@@ -1,507 +1,76 @@
 # AGENTS.md
 
-This file defines the project standards and operating workflow for AI coding agents working on this repository.
-
-中文说明：这是整个项目的“标准 + 工作流程”文档。Agent 在本仓库工作时，应优先遵守本文；当本文与用户本轮明确指令冲突时，先按用户本轮指令执行，并在必要时说明取舍。
-
-## Project Overview
-
-This project is a local-first research dataset management system. It manages datasets, samples, labels, annotations, statistics, and metadata while keeping raw files on disk.
-
-The system starts as a local Web application and may later be packaged as a desktop application.
-
-Primary goals:
-
-- Provide a clean UI for managing research datasets.
-- Store raw data safely on the local filesystem.
-- Store metadata in SQLite.
-- Support cross-platform development on Windows, Debian, and Linux.
-- Keep the architecture modular and extensible.
-- Make iterative local development easy to verify and easy to roll back.
-
-## Current Target: MVP
-
-Focus only on the MVP unless explicitly instructed otherwise.
-
-MVP scope:
-
-- Dataset creation and listing
-- Local folder scanning
-- Sample metadata registration
-- Sample preview grid
-- Sample detail panel
-- Label editing
-- Basic search and filtering
-- Dataset statistics
-- Manifest export
-- Basic image geometry annotation: rectangle, polygon, point/points, object list, category editing, manual save, annotation metadata export
-
-Do not implement the following in the MVP unless explicitly requested:
-
-- Authentication
-- Multi-user permissions
-- Cloud sync
-- AI API integration
-- Tauri / Electron desktop packaging
-- Complex annotation tools such as brush, mask, skeleton, video frame tracking, or CVAT-scale task/job workflows
-- Vector database integration
-- Distributed task queues
-
-## Agent Operating Workflow
-
-Agents should work in small, reviewable loops:
-
-1. Establish state.
-   - Run `git status --short --branch`.
-   - Read `TODO.md`, `CHANGELOG.md`, and `ACCEPTANCE_TESTS.md` when the task affects workflow, behavior, or release scope.
-   - Read the relevant source files before proposing or editing code.
-   - Treat existing uncommitted changes as user or prior-agent work. Do not revert them unless explicitly instructed.
-
-2. Clarify only when needed.
-   - Ask the user before major scope changes, destructive operations, adding large dependencies, changing raw-data behavior, or moving work outside MVP.
-   - If there is no serious ambiguity, make a conservative decision and proceed.
-   - If a requested change conflicts with data safety rules, stop and ask.
-
-3. Implement conservatively.
-   - Keep edits scoped to the requested task and nearby code.
-   - Prefer existing project patterns over new abstractions.
-   - Keep route handlers thin; put business logic in services.
-   - Keep frontend state simple and explicit.
-   - Do not introduce broad refactors while fixing narrow bugs.
-
-4. Verify.
-   - Run focused checks for the changed area.
-   - For frontend layout or interaction changes, run `npm run build` and use the browser to visually verify the affected page when practical.
-   - For backend behavior changes, run compile checks and relevant pytest tests.
-   - Always run `git diff --check` before reporting done.
-
-5. Update docs.
-   - Update `TODO.md` when task status, priority, or remaining scope changes.
-   - Prepend `CHANGELOG.md` for user-visible behavior changes, feature additions, bug fixes, or workflow changes.
-   - Prepend `ACCEPTANCE_TESTS.md` with concrete human validation steps when behavior changes.
-   - For documentation-only changes, update only the relevant document unless the user requests release notes.
-
-6. Report clearly.
-   - Summarize what changed, where, and how it was verified.
-   - Mention tests or verification that were not run.
-   - Include local service URLs only if services were started.
-
-## Codex Skill and Plugin Routing
-
-The repository installs a small project-scoped development toolkit. See
-`docs/codex-skill-plugin-usage.md` for the installed versions, detailed routing,
-known compatibility limits, and maintenance commands.
-
-Use these rules when selecting skills:
-
-- Keep `dataset-manager-development` as the primary repository workflow. Project
-  architecture, MVP scope, data-safety rules, and verification commands in this
-  file override generic plugin advice.
-- For a bug, failing test, build failure, or unexpected behavior, use
-  `systematic-debugging` before proposing or implementing a fix.
-- Before claiming work complete, fixed, or passing, use
-  `verification-before-completion` and run fresh checks appropriate to the
-  claim. Always include `git diff --check` for repository changes.
-- For Python/FastAPI work, select only the matching `python-development` skill,
-  especially `python-testing-patterns`, `python-error-handling`,
-  `python-type-safety`, or `async-python-patterns`. Do not adopt generic
-  microservice, packaging, background-job, or observability patterns unless the
-  task actually requires them and remains within MVP scope.
-- For React/Tailwind work, prefer `react-state-management` and
-  `tailwind-design-system`. For UI review or implementation, select the matching
-  `ui-design` web skill: `accessibility-compliance`, `responsive-design`,
-  `visual-design-foundations`, `web-component-design`, or
-  `design-system-patterns`.
-- Do not use Next.js, React Native, iOS, or Android skills for this Vite Web
-  application unless the user explicitly changes the project scope.
-- The installed `unit-testing` plugin currently contributes no Codex `SKILL.md`;
-  use `python-testing-patterns`, project tests, and browser verification instead.
-- Use `requesting-code-review` after a major feature or before merge. Unless the
-  user explicitly requests subagent review, apply its reviewer checklist inline
-  as a read-only self-review; do not spawn a reviewer automatically.
-- Use `receiving-code-review` when acting on review feedback: verify each item
-  against this repository, clarify ambiguity, and implement verified items one
-  at a time.
-- Do not load every installed skill for one task. Choose the smallest matching
-  set and state which skill is influencing the work.
-
-## Version, Git, and Release Workflow
-
-Use Git as the project history boundary.
-
-- Small updates should be committed when they are coherent and verified.
-- Larger version milestones may be pushed for remote version management, but do not push unless the user explicitly asks or approves.
-- Prefer one commit per coherent unit of work:
-  - bug fix
-  - feature slice
-  - documentation/workflow update
-  - acceptance-test update tied to a behavior change
-- Do not mix unrelated refactors into a feature or bug-fix commit.
-- Commit messages should be short, imperative, and specific, for example:
-  - `Fix annotation panel scrolling`
-  - `Add labelme annotation export`
-  - `Plan annotation follow-up batches`
-- Before committing:
-  - Ensure the working tree only contains intended changes.
-  - Run appropriate verification.
-  - Run `git diff --check`.
-- After committing:
-  - Confirm `git status --short --branch` is clean, unless the user intentionally asked to leave changes unstaged.
-
-## TODO Workflow
-
-`TODO.md` is the active scope and priority control document.
-
-Keep it useful rather than archival:
-
-- Keep current and near-future work visible.
-- Delete or compress completed tasks from old versions once they no longer help current planning.
-- Preserve only completed baseline items that explain current architecture or release state.
-- Use priority labels:
-  - `P0`: blocks usability or causes obvious incorrect behavior
-  - `P1`: core workflow and review efficiency
-  - `P2`: capability polish or secondary feature work
-  - `P3`: engineering foundation or long-term work
-- Use task attributes:
-  - `Bug 修复`
-  - `优化`
-  - `新增`
-  - `工程`
-- When planning larger work, group tasks by batch or phase and state the goal of each batch.
-- Do not let `TODO.md` become a full changelog; completed historical detail belongs in `CHANGELOG.md` or release notes.
-
-## CHANGELOG Workflow
-
-`CHANGELOG.md` records meaningful project changes.
-
-- Always prepend the newest entry at the top.
-- Use the current date.
-- Keep entries concise and user-facing.
-- For small updates, add a short entry only when behavior, workflow, UI, API, data model, or verification scope changes.
-- For larger versions, merge and compress older detailed entries into higher-signal summaries when the file becomes too long.
-- Avoid duplicating every low-level implementation detail already visible in Git history.
-
-## ACCEPTANCE_TESTS Workflow
-
-`ACCEPTANCE_TESTS.md` records human validation steps.
-
-- Always prepend the newest acceptance scope at the top.
-- Write concrete steps and pass criteria.
-- Keep old acceptance tests only while they remain useful regression coverage.
-- Delete or merge overly old sections into a compact core regression checklist.
-- Every user-visible workflow change should have at least one manual validation path.
-
-## Tech Stack
-
-Backend:
-
-- Python
-- FastAPI
-- SQLModel or SQLAlchemy
-- SQLite
-- Pydantic
-- Pillow / OpenCV when needed
-
-Frontend:
-
-- React
-- TypeScript
-- Vite
-- Tailwind CSS
-- Axios
-- React Router
-- Lucide Icons
-
-Storage:
-
-- Raw files stay on disk.
-- Database stores metadata only.
-- Do not store large binary files directly in SQLite.
-
-## Architecture Rules
-
-Use a clean modular structure.
-
-Backend should follow this pattern:
-
-```text
-backend/app/
-├── main.py
-├── core/
-├── models/
-├── schemas/
-├── services/
-├── api/
-└── utils/
-```
-
-Responsibilities:
-
-- `api/`: FastAPI routes only. Keep route handlers thin.
-- `services/`: business logic, scanning logic, statistics, annotation logic, export logic.
-- `models/`: database models.
-- `schemas/`: request and response schemas.
-- `core/`: config, database session, app settings.
-- `utils/`: reusable helpers such as hashing, file type detection, image size reading, path handling.
-
-Frontend should follow this pattern:
-
-```text
-frontend/src/
-├── pages/
-├── components/
-├── api/
-├── hooks/
-├── types/
-└── styles/
-```
-
-Responsibilities:
-
-- `pages/`: route-level views.
-- `components/`: reusable UI components.
-- `components/annotation/`: annotation-specific canvas, toolbar, object list, and history helpers.
-- `api/`: API client functions.
-- `hooks/`: reusable React hooks.
-- `types/`: shared TypeScript types.
-- `styles/`: global styles.
-
-## Data Safety Rules
-
-The application must not silently modify, move, rename, or delete user data files.
-
-Allowed by default:
-
-- Read file metadata
-- Generate hashes
-- Generate thumbnails
-- Read image dimensions
-- Store relative and absolute paths
-- Register file records in the database
-- Store labels, annotations, splits, review status, and other metadata in SQLite
-
-Not allowed unless explicitly requested:
-
-- Delete raw files
-- Move raw files
-- Rename raw files
-- Overwrite raw files
-- Rewrite source annotations next to raw data files
-- Generate sidecar files in raw dataset directories
-
-When scanning folders, handle missing permissions, broken files, and unsupported file types gracefully.
-
-Annotation saves are metadata-only operations. They may replace rows in the SQLite `annotations` table for a sample, but must not write back to the original image.
-
-## Database Rules
-
-Use SQLite for the MVP.
-
-The database should store:
-
-- Dataset metadata
-- Sample metadata
-- File paths
-- Labels
-- Annotation metadata
-- Dataset statistics
-- Split information
-- Manifest export information
-
-The database should not store:
-
-- Large image binaries
-- Large video binaries
-- Large raw dataset archives
-
-Prefer stable models that can be migrated later to PostgreSQL.
-
-For SQLite model additions, add lightweight startup column/table backfill in `backend/app/core/database.py` unless a real migration system is introduced.
-
-## API Design Rules
-
-Use REST-style endpoints under `/api`.
-
-Core MVP endpoints:
-
-```text
-GET    /api/datasets
-POST   /api/datasets
-GET    /api/datasets/{id}
-PATCH  /api/datasets/{id}
-DELETE /api/datasets/{id}
-POST   /api/datasets/{id}/scan
-GET    /api/datasets/{id}/samples
-GET    /api/samples/{id}
-PATCH  /api/samples/{id}
-GET    /api/stats/datasets/{id}
-GET    /api/datasets/{id}/export-manifest
-```
-
-Annotation endpoints:
-
-```text
-GET    /api/samples/{id}/annotations
-PUT    /api/samples/{id}/annotations
-POST   /api/samples/{id}/annotations/export-labelme
-```
-
-Use clear response objects. Do not return raw ORM objects directly if schemas are available.
-
-## UI Style Rules
-
-The UI should feel clean, white, modern, and premium.
-
-Design references:
-
-- ChatGPT Web layout style
-- iOS white minimal interface
-- Rounded cards
-- Soft shadows
-- Light borders
-- Clear spacing
-- Minimal visual noise
-
-Avoid:
-
-- Overly colorful dashboards
-- Dense enterprise-style tables as the only view
-- Dark UI as the default
-- Complex animations in the MVP
-
-Recommended main views:
-
-- Dataset list page
-- Dataset detail page
-- Sample grid
-- Sample detail side panel
-- Statistics cards
-- Search and filter bar
-- Image annotation workspace
-
-Annotation UI rules:
-
-- Keep the canvas, object list, and save state visually stable.
-- Object lists must scroll internally and must not resize the image canvas.
-- Save status must be explicit when edits are dirty.
-- Switching samples while dirty must require a clear save/discard/cancel path.
-
-## Coding Standards
-
-General:
-
-- Keep code simple and readable.
-- Prefer explicit names over clever abstractions.
-- Add concise comments for non-obvious logic.
-- Avoid premature optimization.
-- Do not introduce large dependencies without a clear reason.
-
-Python:
-
-- Use type hints.
-- Use Pydantic / SQLModel schemas where appropriate.
-- Keep API route functions thin.
-- Put scanning, annotation, statistics, and export logic in services.
-- Handle filesystem errors explicitly.
-
-TypeScript:
-
-- Use typed API responses.
-- Avoid `any` unless absolutely necessary.
-- Keep UI components reusable but not over-engineered.
-- Keep state management simple in the MVP.
-- Use stable layout constraints for card grids, toolbars, canvases, and side panels to avoid overlap or resize loops.
-
-## Testing Expectations
-
-For the MVP, add focused tests when practical:
-
-- File scanning utility tests
-- Hashing utility tests
-- Dataset API tests
-- Annotation API tests
-- Manifest export tests
-- Metadata import/export tests
-
-Do not block MVP progress with complex test infrastructure.
-
-Verification guidance:
-
-- Backend syntax check:
-
-```bash
-cd backend
-python -m compileall app tests
-```
-
-- Backend tests:
-
-```bash
-cd backend
-python -m pytest
-```
-
-- Frontend build:
-
-```bash
-cd frontend
-npm run build
-```
-
-Run the smallest reliable subset first, then broaden when touching shared behavior.
-
-## Development Commands
-
-Backend example:
-
-```bash
-cd backend
-uv sync
-uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
-
-Frontend example:
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Default local URLs:
-
-- Backend: `http://127.0.0.1:8000`
-- Frontend: `http://127.0.0.1:5173`
-
-## Implementation Priority
-
-When implementing from scratch, follow this order:
-
-1. Backend project skeleton
-2. Config and database setup
-3. Dataset and Sample models
-4. Dataset CRUD API
-5. Folder scanning service
-6. Sample listing API
-7. Manifest export API
-8. Frontend project skeleton
-9. Dataset list page
-10. Dataset detail page
-11. Sample grid and filters
-12. Sample detail panel
-13. Basic statistics cards
-14. Basic image annotation workflow
-15. README and workflow document updates
-
-For current development, use `TODO.md` as the active priority source instead of this historical bootstrap order.
-
-## Important Constraints
-
-- Keep the first version runnable locally.
-- Do not require Docker for the MVP.
-- Do not require external cloud services.
-- Do not require GPU dependencies.
-- Do not assume a specific dataset format.
-- Do not hard-code absolute paths.
-- Do not commit generated databases, cache files, thumbnails, raw datasets, or local logs.
-- Do not push to a remote repository unless the user explicitly requests or approves it.
+本文件是全仓库共同约束。中文沟通；用户本轮明确指令优先于项目约定。进入子目录时同时遵守该目录的 `AGENTS.md`，子文件只补充局部规则，不重复或放宽数据安全约束。
+
+## 产品与范围
+
+Dataset Manager 是本地优先的工业图片数据准备与快速验证工作台。主流程为：创建项目 → 扫描图片 → OK/NG 分拣 → 工件/采集批次分组 → 独立验证或训练包导出 → 人工复核与第二批复用。通用检测、分割和分类数据准备作为已有辅助流程保留。
+
+- 当前范围以 [TODO.md](TODO.md) 顶部当前主线和用户指令为准。IA0–IA5、Q1–Q5 已扩展原始 MVP；不要把现有便携包、SAM、画笔或本地快速验证再次当成未经授权的范围。
+- 继续以单机、本地 Web 和 SQLite 为基础。整理与导出不依赖 GPU、训练框架、Docker 或外部云服务；可选算法环境独立于基础应用。
+- 不主动新增登录、团队权限、云同步、在线模型服务、分布式训练/任务队列、视频逐帧标注或表格标注平台。新增大依赖、改变原图行为或扩展上述边界前，先确认本轮是否已有授权；没有授权时再询问。
+- 几何标注按需进入；工业图像级流程不要求先画框或建立普通标签。像素级能力不得由图像级结果推断。
+- 本机测试、合成示例和实际算法读取只证明对应工程路径。干净 Windows 验收、真实用户复用、产线效果分别取证，不能互相替代。
+
+## 文档分工与读取顺序
+
+| 文件 | 职责 | 何时读取或更新 |
+| --- | --- | --- |
+| `README.md` | 产品定位、首次使用、运行入口和交付边界 | 首次进入或改变用户入口 |
+| `AGENTS.md` 及目录内同名文件 | 稳定约束、分工与完成门槛 | 首次进入相关目录；约束变化时更新 |
+| `TODO.md` | 当前优先级、阶段目标和未完成事项 | 行为/范围/发布任务先读顶部；状态或优先级变化时更新 |
+| `CHANGELOG.md` | 已实现的用户可见变化 | 行为、UI、API 或开发流程变化时按日期前置记录 |
+| `ACCEPTANCE_TESTS.md` | 人可执行的步骤与通过标准 | 行为变化时前置对应验收路径 |
+| `docs/README.md` | 操作指南、设计契约及历史证据导航 | 查找具体任务资料 |
+| `docs/development-workflow.md` | 可执行的开发、验证、交接流程 | 开发命令、检查矩阵或交接方式变化 |
+
+事实优先看当前实现、配置和本轮验证结果；当前计划看 `TODO.md`；详细语义看相关契约。带日期的计划、发布说明和验收记录只说明当时状态，不覆盖后续实现。发现冲突时修正当前入口并保留历史证据，不把旧记录改写成新结论。
+
+## 每轮开发闭环
+
+1. **建立状态**：运行 `git status --short --branch`；识别已有改动与本地产物；读取相关目录规则、源码和必要文档。不要回退用户或其他 agent 的改动。
+2. **确定最小交付**：说明用户目标、受影响流程和验证路径。已有授权内的可逆工作直接推进，重大范围/数据安全问题才澄清。
+3. **实施**：沿用现有模式，按可独立检查的单元修改；后端路由薄、业务在 service；前端状态明确。修窄问题不夹带大重构。
+4. **验证**：先聚焦再按影响扩大，采用 [开发流程检查矩阵](docs/development-workflow.md#验证矩阵)。UI 改动构建并尽可能检查真实页面；后端行为改动 compileall 与相关 pytest。仓库改动始终运行 `git diff --check`。
+5. **同步文档**：有用户行为变化时更新 changelog 与验收步骤，任务状态变化时更新 TODO。纯文档修订只改相关文档；改变协作流程时记录 workflow 变化。不要为凑齐文件机械更新三份记录。
+6. **自审与报告**：对照原始需求、相关契约和最终 diff 检查，报告改变、证据、未跑检查及未完成边界。只在实际启动服务后给出 URL，并说明停止方式。
+
+## 数据安全不变量
+
+- 原始文件保留在用户磁盘；SQLite 存路径、标签、标注、分组等元数据，不存大型二进制。
+- 扫描、预览、分拣、几何标注保存、缺失修复和记录删除都不得静默删除、移动、重命名、覆盖原文件，或在原目录写旁车文件。
+- 用户明确发起导出后，仅向新的应用管理目录或 ZIP 复制文件；保留来源、hash、范围与排除原因，不合并覆盖已有交付目录。
+- 预检/冻结计划与正式提交分开；数据变化、版本冲突或源文件变化必须拒绝旧计划。取消、失败和重试不能伪报成功。
+- 工业训练仅使用有效纯正常候选；组隔离优先于比例。验证调参、冻结测试与历史结果的独立性必须保留；模型预测不得自动改写人工判定。
+- 原图、数据库、模型、缓存和导出物的备份范围应清楚区分。元数据恢复不意味着恢复原图。
+
+## 架构与编码
+
+- 后端：`backend/app/api` 路由，`services` 业务，`models` 数据模型，`schemas` 输入输出，`core` 配置/数据库/运行时，`utils` 通用工具。Python 使用类型提示和明确的文件系统异常处理。
+- 前端：`frontend/src/pages` 路由页，`components` 组件，`api` 客户端，`hooks` 复用逻辑，`types` 共享类型，`styles` 样式。React 18 + TypeScript + Vite + Tailwind v3；避免无必要的 `any`、全局状态和新依赖。
+- 新增持久化结构使用已有 Alembic 迁移。`core/database.py` 的启动回填是冻结历史基线兼容，不能替代新迁移；已有实际数据库按显式离线、备份、校验、原子升级流程维护。
+- REST API 使用 `/api` 和清晰 schema；不要向客户端直接暴露缺乏契约的 ORM 对象。
+- 不硬编码开发者绝对路径；不提交数据库、原图、缓存、模型、导出包、截图、日志或本地验收产物。
+
+## 界面与流程
+
+- 白色为主、浅边框、适量圆角和留白。优先把“当前状态、下一步、主要操作”讲清楚，避免把所有功能平铺在首页或同一工具栏。
+- 高级/辅助操作按使用场景收纳，保留可发现入口。删除功能前核对实际调用、替代路径、数据兼容和用户授权；入口收敛不等于删除底层能力。
+- 保持画布、对象列表、保存状态稳定；对象列表内部滚动。脏数据离开时提供保存/放弃/取消路径。
+- 操作需有明确反馈，错误需可恢复；窄屏、长名称、空数据、加载和禁用状态都应检查。
+
+## 技能路由
+
+以 `dataset-manager-development` 为主；任务匹配时再选最少的专业技能，完整说明见 [技能指南](docs/codex-skill-plugin-usage.md)。
+
+- Bug/测试失败先用 `systematic-debugging` 定位根因；声称完成前用 `verification-before-completion` 取得本轮证据。
+- Python、React、Tailwind 和 UI 只用匹配技能。不要把 Next.js、移动端或 Tailwind v4 示例直接套到当前项目。
+- 重大功能或合并前使用 `requesting-code-review` 的清单做只读自审；用户明确请求独立 reviewer 时才自动委派审查。实施分工不属于独立审查。
+- 收到反馈时用 `receiving-code-review` 验证适用性后逐项处理。`unit-testing` 插件无 Codex `SKILL.md`，不能作为可调用技能依赖。
+
+## Git 与交接
+
+- 默认保留改动供用户检查；仅在用户请求提交或本轮已有明确授权时创建 commit。不得自动 push、发布或覆盖交付包。
+- 获准提交时按一个完整行为单元提交，使用简短明确的命令式消息；先检查 diff、完成验证并运行 `git diff --check`。
+- 提交后确认 `git status --short --branch`；说明有意保留的未提交文件。已有未跟踪产物不擅自删除，也不加入提交。
+- 中途交接写清：目标、已改文件、最新验证及命令、服务/端口、剩余风险和下一步。不要把计划写成已验收结果。

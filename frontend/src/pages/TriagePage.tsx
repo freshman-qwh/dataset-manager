@@ -50,6 +50,7 @@ import type {
 } from "../types/triage";
 import TriagePolicyModal from "../components/TriagePolicyModal";
 import { updateValidationReview } from "../api/validation";
+import { okGradeCopy } from "../utils/uiCopy";
 
 const QUEUE_LABELS: Record<TriageQueueScope, string> = {
   untriaged: "未分拣",
@@ -156,10 +157,10 @@ function resultPresentation(value: SampleTriage | null, splitOk: boolean) {
     return { tone: "ng" as const, label: "NG" };
   }
   if (splitOk && value.ok_grade === "clear") {
-    return { tone: "clear" as const, label: "完全 OK" };
+    return { tone: "clear" as const, label: okGradeCopy.clear };
   }
   if (splitOk && value.ok_grade === "borderline") {
-    return { tone: "borderline" as const, label: "勉强 OK" };
+    return { tone: "borderline" as const, label: okGradeCopy.borderline };
   }
   return { tone: "ok" as const, label: "OK" };
 }
@@ -647,12 +648,12 @@ export default function TriagePage() {
     } else if (action === "clear") {
       void savePayload(
         { ...common, triage_status: "ok", ok_grade: "clear" },
-        { advance: true, message: "已保存为完全 OK" }
+        { advance: true, message: `已保存为${okGradeCopy.clear}` }
       );
     } else if (action === "borderline") {
       void savePayload(
         { ...common, triage_status: "ok", ok_grade: "borderline" },
-        { advance: true, message: "已保存为勉强 OK" }
+        { advance: true, message: `已保存为${okGradeCopy.borderline}` }
       );
     } else if (action === "ng") {
       void savePayload(
@@ -700,7 +701,7 @@ export default function TriagePage() {
       };
     }
     if (nextDraft.status === "ok" && splitOk && !nextDraft.okGrade) {
-      setError("请选择完全 OK 或勉强 OK。");
+      setError(`请选择${okGradeCopy.clear}或${okGradeCopy.borderline}。`);
       return;
     }
     void savePayload(
@@ -1121,11 +1122,11 @@ export default function TriagePage() {
           {splitOk ? (
             <>
               <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-                <div className="text-xs text-emerald-700">完全 OK</div>
+                <div className="text-xs text-emerald-700">{okGradeCopy.clear}</div>
                 <div className="mt-1 text-xl font-semibold text-emerald-900">{stats?.by_ok_grade.clear ?? 0}</div>
               </div>
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-                <div className="text-xs text-amber-700">勉强 OK</div>
+                <div className="text-xs text-amber-700">{okGradeCopy.borderline}</div>
                 <div className="mt-1 text-xl font-semibold text-amber-900">{stats?.by_ok_grade.borderline ?? 0}</div>
               </div>
             </>
@@ -1167,8 +1168,8 @@ export default function TriagePage() {
                   <label htmlFor="filter-ok-grade" className="text-xs font-medium text-gray-600">OK 等级</label>
                   <select id="filter-ok-grade" value={filterOkGrade ?? ""} onChange={(event) => setTriageFilter("okGrade", event.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-line bg-white px-3 text-sm">
                     <option value="">全部 OK 等级</option>
-                    <option value="clear">完全 OK</option>
-                    <option value="borderline">勉强 OK</option>
+                    <option value="clear">{okGradeCopy.clear}</option>
+                    <option value="borderline">{okGradeCopy.borderline}</option>
                   </select>
                 </div>
               )}
@@ -1316,7 +1317,9 @@ export default function TriagePage() {
                       ? "目前没有待定图片；遇到边界不清的样本时，可用“待定复看”暂存。"
                       : pendingCount > 0
                         ? `还有 ${pendingCount} 张待定图片需要复看。`
-                        : "没有待复看的图片，可检查全部结果或开始导出。"}
+                        : dataset?.workflow_profile === "industrial_anomaly"
+                          ? "没有待复看的图片，可继续分组、快速验证或导出训练包。"
+                          : "没有待复看的图片，可检查全部结果或开始导出。"}
                   </p>
                   {queueScope === "current_filter" && hasActiveTriageFilters && (
                     <button
@@ -1339,8 +1342,8 @@ export default function TriagePage() {
                   )}
                   {!reviewRun && !(queueScope === "current_filter" && hasActiveTriageFilters)
                     && (stats?.total_images ?? 0) > 0 && (
-                    <Link to={`/datasets/${datasetId}?directoryExport=1`} className="mt-4 inline-flex min-h-10 items-center rounded-lg bg-white px-4 text-sm font-semibold text-gray-950 hover:bg-gray-100">
-                      导出分拣目录 / ZIP
+                    <Link to={dataset?.workflow_profile === "industrial_anomaly" ? `/datasets/${datasetId}` : `/datasets/${datasetId}?directoryExport=1`} className="mt-4 inline-flex min-h-10 items-center rounded-lg bg-white px-4 text-sm font-semibold text-gray-950 hover:bg-gray-100">
+                      {dataset?.workflow_profile === "industrial_anomaly" ? "返回数据准备" : "导出分拣目录 / ZIP"}
                     </Link>
                   )}
                 </div>
@@ -1427,10 +1430,10 @@ export default function TriagePage() {
                   {splitOk ? (
                     <>
                       <button type="button" disabled={!triage || saving || !imageReady} onClick={() => quickAction("clear")} className="flex min-h-16 items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 text-left hover:bg-emerald-100 disabled:opacity-40">
-                        <span><span className="block font-semibold text-emerald-950">完全 OK</span><span className="mt-1 block text-xs text-emerald-700">{policy?.clear_ok_definition}</span></span><kbd className="rounded bg-emerald-900 px-2 py-1 text-sm font-bold text-white">1</kbd>
+                        <span><span className="block font-semibold text-emerald-950">{okGradeCopy.clear}</span><span className="mt-1 block text-xs text-emerald-700">{policy?.clear_ok_definition}</span></span><kbd className="rounded bg-emerald-900 px-2 py-1 text-sm font-bold text-white">1</kbd>
                       </button>
                       <button type="button" disabled={!triage || saving || !imageReady} onClick={() => quickAction("borderline")} className="flex min-h-16 items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 text-left hover:bg-amber-100 disabled:opacity-40">
-                        <span><span className="block font-semibold text-amber-950">勉强 OK</span><span className="mt-1 block text-xs text-amber-700">可在详细模式记录轻微缺陷</span></span><kbd className="rounded bg-amber-900 px-2 py-1 text-sm font-bold text-white">2</kbd>
+                        <span><span className="block font-semibold text-amber-950">{okGradeCopy.borderline}</span><span className="mt-1 block text-xs text-amber-700">可在详细模式记录轻微缺陷</span></span><kbd className="rounded bg-amber-900 px-2 py-1 text-sm font-bold text-white">2</kbd>
                       </button>
                     </>
                   ) : (
@@ -1474,7 +1477,7 @@ export default function TriagePage() {
                           type="button"
                           onClick={() => setDraft((current) => ({ ...current, okGrade: grade }))}
                           className={`min-h-11 rounded-lg border text-sm font-medium ${draft.okGrade === grade ? "border-gray-900 bg-gray-900 text-white" : "border-line bg-white text-gray-700"}`}
-                        >{grade === "clear" ? "完全 OK" : "勉强 OK"}</button>
+                        >{okGradeCopy[grade]}</button>
                       ))}
                     </div>
                   </fieldset>

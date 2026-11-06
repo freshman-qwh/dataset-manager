@@ -44,7 +44,7 @@ export default function MissingRepairModal({
     <Modal open={open} title="修复缺失文件" onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4 px-5 py-5">
         <div className="rounded-lg border border-line bg-gray-50 p-3 text-sm text-gray-600">
-          按样本的相对路径在新目录下查找文件，找到后只更新数据库路径、hash 和文件状态，不移动或删除本地文件。
+          按样本的相对路径在新目录下查找文件，找到后只更新数据库路径和文件信息，不移动或删除本地文件。
         </div>
         <label className="block">
           <span className="text-sm font-medium text-gray-700">新的数据根目录</span>

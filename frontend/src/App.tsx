@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import AnnotationPage from "./pages/AnnotationPage";
 import DatasetDetailPage from "./pages/DatasetDetailPage";
 import DatasetListPage from "./pages/DatasetListPage";
+import DatasetLibraryPage from "./pages/DatasetLibraryPage";
 import ValidationResultPage from "./pages/ValidationResultPage";
 import ValidationPage from "./pages/ValidationPage";
 import TriagePage from "./pages/TriagePage";
@@ -15,6 +16,7 @@ export default function App() {
     <StartupGuard>
       <Routes>
         <Route path="/" element={<DatasetListPage />} />
+        <Route path="/library" element={<DatasetLibraryPage />} />
         <Route path="/datasets/:datasetId" element={<DatasetDetailPage />} />
         <Route path="/datasets/:datasetId/annotate" element={<AnnotationPage />} />
         <Route path="/datasets/:datasetId/validate" element={<ValidationPage />} />

@@ -2,6 +2,7 @@ import hashlib
 import json
 import sys
 import threading
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -45,6 +46,13 @@ def test_worker_publication_and_failure_are_atomic(tmp_path: Path, monkeypatch, 
         run = runs.create_run(session, dataset["id"], ValidationRunCreate(plan_id=plan["plan_id"], plan_hash=plan["plan_hash"]))
         job = job_service.transition_job(session, run.job.id, "running")
     before = {row["source_absolute_path"]: row["sha256"] for row in plan["rows"]}
+    source_reads = Counter()
+    original_open = Path.open
+    def count_source_reads(path, mode="r", *args, **kwargs):
+        if str(path) in before and mode == "rb":
+            source_reads[str(path)] += 1
+        return original_open(path, mode, *args, **kwargs)
+    monkeypatch.setattr(Path, "open", count_source_reads)
     def worker(command, log, checkpoint, **kwargs):
         root = Path(command[-1])
         request = json.loads((root / "input.json").read_text(encoding="utf-8"))
@@ -61,7 +69,7 @@ def test_worker_publication_and_failure_are_atomic(tmp_path: Path, monkeypatch, 
         (root / "result.json").write_text(json.dumps(dict(anomalib="2.7.0", recipe=request["recipe"], predictions=predictions,
             model_sha256=hashlib.sha256(b"owned model state").hexdigest())), encoding="utf-8")
     monkeypatch.setattr(runs, "run_process", worker)
-    if failure:
+    if failure in {"cancel", "missing"}:
         with pytest.raises((JobCancelled, ValueError)):
             runs.execute(JobContext(job.id, engine, threading.Event()), job.parameters)
         assert not (runs.run_root(run.id) / f"attempt-{job.id}").exists()
@@ -69,9 +77,28 @@ def test_worker_publication_and_failure_are_atomic(tmp_path: Path, monkeypatch, 
         result = runs.execute(JobContext(job.id, engine, threading.Event()), job.parameters)
         assert result["sample_count"] == 16
         assert not (runs.run_root(run.id) / f"attempt-{job.id}" / "images").exists()
+    # Images are verified while copying the frozen inputs. Later changes in the
+    # original folder must not invalidate results computed from those copies.
+    assert source_reads == Counter({path: 1 for path in before})
     assert not list(runs.run_root(run.id).glob("*.part"))
     if failure != "source":
         assert all(hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest for path, digest in before.items())
+
+
+def test_changed_source_is_rejected_before_frozen_copy(tmp_path: Path, monkeypatch):
+    client, engine, dataset = workspace(tmp_path, monkeypatch)
+    plan = client.post(f"/api/datasets/{dataset['id']}/validation/previews", json={}).json()
+    with Session(engine) as session:
+        run = runs.create_run(session, dataset["id"], ValidationRunCreate(plan_id=plan["plan_id"], plan_hash=plan["plan_hash"]))
+        job = job_service.transition_job(session, run.job.id, "running")
+    Path(plan["rows"][0]["source_absolute_path"]).write_bytes(b"changed after preview")
+    worker_calls = []
+    monkeypatch.setattr(runs, "run_process", lambda *args, **kwargs: worker_calls.append(args))
+    with pytest.raises(ValueError, match="源文件内容在预检后发生变化"):
+        runs.execute(JobContext(job.id, engine, threading.Event()), job.parameters)
+    assert worker_calls == []
+    assert not (runs.run_root(run.id) / f"attempt-{job.id}").exists()
+    assert not list(runs.run_root(run.id).glob("*.part"))
 
 
 def test_child_process_cancellation_stops_waiting(tmp_path: Path):

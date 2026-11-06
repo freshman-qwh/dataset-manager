@@ -22,7 +22,7 @@ def file_digest(path: Path) -> str:
         return hashlib.file_digest(file, "sha256").hexdigest()
 
 
-def _eligibility(sample: Sample, policy: int, borderline: bool) -> tuple[int | None, str | None]:
+def _eligibility(sample: Sample, policy: int, borderline: bool, *, check_file: bool = True) -> tuple[int | None, str | None]:
     if sample.file_type != "image" or sample.file_status != "normal":
         return None, "文件不可用或不是图片"
     if sample.triage_status not in {"ok", "ng"}:
@@ -33,12 +33,13 @@ def _eligibility(sample: Sample, policy: int, borderline: bool) -> tuple[int | N
         return None, "统一 OK 尚未确认正常等级"
     if sample.ok_grade == "borderline" and not borderline:
         return None, "临界 OK 默认排除"
-    try:
-        path = Path(sample.absolute_path)
-        if not image_is_decodable(path) or file_digest(path) != sample.file_hash:
-            return None, "原图不可解码或内容已变化，请重新扫描并复核"
-    except (OSError, ValueError):
-        return None, "原图不可读取"
+    if check_file:
+        try:
+            path = Path(sample.absolute_path)
+            if not image_is_decodable(path) or file_digest(path) != sample.file_hash:
+                return None, "原图不可解码或内容已变化，请重新扫描并复核"
+        except (OSError, ValueError):
+            return None, "原图不可读取"
     return int(sample.triage_status == "ng"), None
 
 

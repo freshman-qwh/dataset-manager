@@ -1,4 +1,9 @@
-import type { AnnotationProgress, ReviewStatus } from "../types/dataset";
+import type { AnnotationProgress, OkGrade, ReviewStatus } from "../types/dataset";
+
+export const okGradeCopy: Record<OkGrade, string> = {
+  clear: "完全 OK",
+  borderline: "临界可接受"
+};
 
 export const uiCopy = {
   datasetQuality: "数据质量",

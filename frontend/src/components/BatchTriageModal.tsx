@@ -16,11 +16,11 @@ import type {
   BatchTriageState,
   DefectSeverity,
   DefectType,
-  OkGrade,
   TriagePolicy,
   TriageStatus
 } from "../types/triage";
 import Modal from "./Modal";
+import { okGradeCopy } from "../utils/uiCopy";
 
 interface BatchTriageModalProps {
   datasetId: number;
@@ -32,14 +32,9 @@ interface BatchTriageModalProps {
 
 const STATUS_LABELS: Record<TriageStatus, string> = {
   untriaged: "未分拣",
-  pending: "待确认",
+  pending: "待定",
   ok: "OK",
   ng: "NG"
-};
-
-const GRADE_LABELS: Record<OkGrade, string> = {
-  clear: "完全 OK",
-  borderline: "勉强 OK"
 };
 
 const SEVERITY_LABELS: Record<DefectSeverity, string> = {
@@ -77,7 +72,7 @@ function errorMessage(error: unknown, fallback: string): string {
 
 function stateLabel(state: BatchTriageState, defectTypes: Map<number, DefectType>): string {
   const parts = [STATUS_LABELS[state.triage_status]];
-  if (state.ok_grade) parts.push(GRADE_LABELS[state.ok_grade]);
+  if (state.ok_grade) parts.push(okGradeCopy[state.ok_grade]);
   if (state.defect_severity) parts.push(SEVERITY_LABELS[state.defect_severity]);
   if (state.defect_type_ids.length > 0) {
     parts.push(
@@ -277,7 +272,7 @@ export default function BatchTriageModal({
                 判定
                 <select value={statusChoice(operation)} onChange={(event) => changeStatus(event.target.value)} className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm">
                   <option value="preserve">保留原判定</option>
-                  <option value="set:pending">设置为待确认</option>
+                  <option value="set:pending">设置为待定</option>
                   <option value="set:ok">设置为 OK</option>
                   <option value="set:ng">设置为 NG</option>
                   <option value="clear">清空判定及全部分拣详情</option>
@@ -289,8 +284,8 @@ export default function BatchTriageModal({
                 <select disabled={resettingJudgment} value={optionalChoice(operation.ok_grade_mode, operation.ok_grade)} onChange={(event) => changeOptionalField("ok_grade", event.target.value)} className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm disabled:bg-gray-100">
                   <option value="preserve">保留原等级</option>
                   <option value="clear">清空等级</option>
-                  {policy.split_ok && <option value="set:clear">设置为完全 OK</option>}
-                  {policy.split_ok && <option value="set:borderline">设置为勉强 OK</option>}
+                  {policy.split_ok && <option value="set:clear">设置为{okGradeCopy.clear}</option>}
+                  {policy.split_ok && <option value="set:borderline">设置为{okGradeCopy.borderline}</option>}
                 </select>
               </label>
 

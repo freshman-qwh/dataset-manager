@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { getSampleFileUrl, getSampleThumbnailUrl } from "../api/client";
 import type { Sample } from "../types/dataset";
 import { tagChipStyle } from "../utils/colors";
+import { okGradeCopy } from "../utils/uiCopy";
 
 interface SampleGridProps {
   samples: Sample[];
@@ -100,7 +101,7 @@ function triageBadge(sample: Sample): { label: string; className: string } {
   }
   if (sample.triage_status === "ok") {
     return {
-      label: sample.ok_grade === "clear" ? "完全 OK" : sample.ok_grade === "borderline" ? "勉强 OK" : "OK",
+      label: sample.ok_grade ? okGradeCopy[sample.ok_grade] : "OK",
       className: sample.ok_grade !== "borderline"
         ? "border-emerald-200 bg-emerald-50 text-emerald-800"
         : "border-amber-200 bg-amber-50 text-amber-800"

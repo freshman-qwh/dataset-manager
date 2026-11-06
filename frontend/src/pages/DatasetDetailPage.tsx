@@ -1263,7 +1263,9 @@ export default function DatasetDetailPage() {
   }
 
   function filterDuplicateHash(fileHash: string) {
-    applyGlobalFilters({ fileStatus: "duplicate" });
+    // The content query already identifies the group. A second duplicate-only
+    // filter would remain active after clearing or replacing this query.
+    applyGlobalFilters({});
     setSearch(fileHash);
     setIssueModal(null);
     window.requestAnimationFrame(() => {
@@ -1281,6 +1283,10 @@ export default function DatasetDetailPage() {
   async function openQualityIssue(issue: QualityIssue) {
     setQualityOpen(false);
     if (!issue.sample_id) {
+      return;
+    }
+    if (issue.code === "TRIAGE_REVIEW_REQUIRED") {
+      navigate(`/datasets/${datasetId}/triage?queue=current_filter&sample=${issue.sample_id}`);
       return;
     }
     if (issue.code === "FILE_UNAVAILABLE" || issue.code === "SAMPLE_TAG_MISSING") {
@@ -1302,15 +1308,24 @@ export default function DatasetDetailPage() {
     <main className="min-h-screen bg-canvas">
       <header className="border-b border-line bg-white/90 backdrop-blur">
         <div className="mx-auto max-w-7xl px-5 py-4">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <Link to="/" className="inline-flex min-h-11 items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-900">
               <ArrowLeft size={17} />
               数据集
             </Link>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={scanning || !dataset}
+                onClick={() => setScanOpen(true)}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+              >
+                <FolderInput size={17} />
+                {scanning ? "扫描中…" : "添加图片"}
+              </button>
               <Link
                 to={`/datasets/${datasetId}/triage?queue=untriaged`}
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 text-sm font-semibold text-white hover:bg-gray-800"
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
                 <ListChecks size={17} />
                 快速分拣
@@ -1520,14 +1535,12 @@ export default function DatasetDetailPage() {
                 </div>
               </div>
               {lastScanResult && (
-                <div className="grid gap-2 rounded-lg border border-line p-3 text-sm sm:grid-cols-3 xl:grid-cols-9">
+                <div className="grid gap-2 rounded-lg border border-line p-3 text-sm sm:grid-cols-3 xl:grid-cols-4">
                   <span>扫描 {lastScanResult.scanned}</span>
                   <span>新增 {lastScanResult.imported}</span>
                   <span>变更 {lastScanResult.updated}</span>
                   <span>未变 {lastScanResult.unchanged}</span>
                   <span>缺失 {lastScanResult.missing}</span>
-                  <span>计算 hash {lastScanResult.hashed}</span>
-                  <span>跳过 hash {lastScanResult.hash_skipped_unchanged}</span>
                   <span>跳过 {lastScanResult.skipped_unsupported}</span>
                   <span>错误 {lastScanResult.error_count}</span>
                 </div>
@@ -1539,7 +1552,7 @@ export default function DatasetDetailPage() {
             <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
               <div>
                 <div className="text-sm font-semibold text-ink">管理与导出</div>
-                <div className="mt-0.5 text-xs text-gray-500">质量、划分、标签、导入与导出</div>
+                <div className="mt-0.5 text-xs text-gray-500">快照、旧目录、元数据与格式导出</div>
               </div>
               <ChevronDown size={18} className="shrink-0 text-gray-400 transition group-open:rotate-180" />
             </summary>
@@ -1583,16 +1596,12 @@ export default function DatasetDetailPage() {
                 exportFormat={exportFormat}
                 onExportFormatChange={setExportFormat}
                 onManageTags={() => setTagsOpen(true)}
-                onScan={() => setScanOpen(true)}
                 onImportMetadata={() => setMetadataImportOpen(true)}
                 onImportLabelme={() => setLabelmeImportOpen(true)}
                 onExport={() => void handleExport()}
-                onDirectoryExport={() => setDirectoryExportOpen(true)}
-                onDirectoryMapping={() => setDirectoryMappingOpen(true)}
                 onAnnotationExport={() => setAnnotationExportOpen(true)}
                 annotationExportEnabled={geometryTask}
                 annotationImportEnabled={geometryTask}
-                scanning={scanning}
                 annotationExportHint={
                   classificationTask ? "分类整理请使用 CSV 标签表" : dataset?.task_capabilities.unsupported_reason ?? undefined
                 }
@@ -1642,6 +1651,7 @@ export default function DatasetDetailPage() {
             reviewStatus={reviewStatus}
             annotationProgress={annotationProgress}
             showAnnotationProgress={!classificationTask}
+            compact={dataset?.workflow_profile === "industrial_anomaly"}
             onSearchChange={setSearch}
             onFileTypeChange={setFileType}
             onFileStatusChange={setFileStatus}
@@ -1665,6 +1675,7 @@ export default function DatasetDetailPage() {
           <div className="flex flex-col gap-3 rounded-lg border border-line bg-white p-3 shadow-sm lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-col gap-3 sm:flex-row">
             <select
+              aria-label="样本排序字段"
               value={sortBy}
               onChange={(event) => {
                 setPage(1);
@@ -1680,6 +1691,7 @@ export default function DatasetDetailPage() {
               <option value="file_status">文件状态</option>
             </select>
             <select
+              aria-label="样本排序方向"
               value={sortOrder}
               onChange={(event) => {
                 setPage(1);
@@ -1691,6 +1703,7 @@ export default function DatasetDetailPage() {
               <option value="asc">升序</option>
             </select>
             <select
+              aria-label="每页样本数量"
               value={pageSize}
               onChange={(event) => {
                 setPage(1);

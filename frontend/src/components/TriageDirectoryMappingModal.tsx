@@ -30,6 +30,7 @@ import type {
 } from "../types/triageDirectoryMapping";
 import type { DefectSeverity, OkGrade } from "../types/triage";
 import Modal from "./Modal";
+import { okGradeCopy } from "../utils/uiCopy";
 
 
 interface TriageDirectoryMappingModalProps {
@@ -73,7 +74,7 @@ function mappingTargetLabel(
 ): string {
   if (!item.target_status) return "—";
   const values = [STATUS_LABELS[item.target_status] ?? item.target_status];
-  if (item.target_ok_grade) values.push(item.target_ok_grade === "clear" ? "完全 OK" : "勉强 OK");
+  if (item.target_ok_grade) values.push(okGradeCopy[item.target_ok_grade]);
   if (item.target_defect_type_id) {
     const defect = sources?.defect_types.find((candidate) => candidate.id === item.target_defect_type_id);
     values.push(defect?.name ?? `缺陷 #${item.target_defect_type_id}`);
@@ -331,7 +332,7 @@ export default function TriageDirectoryMappingModal({
                       </div>
                       {rule?.triage_status === "ok" && policy?.split_ok && (
                         <select aria-label={`${directoryLabel(source.directory)} OK 等级`} value={rule.ok_grade ?? ""} onChange={(event) => updateRule(source.directory, { ok_grade: (event.target.value || undefined) as OkGrade | undefined })} className="min-h-10 w-full rounded-lg border border-amber-300 bg-amber-50 px-3 text-sm">
-                          <option value="">必须明确选择 OK 等级</option><option value="clear">完全 OK</option><option value="borderline">勉强 OK</option>
+                          <option value="">必须明确选择 OK 等级</option><option value="clear">{okGradeCopy.clear}</option><option value="borderline">{okGradeCopy.borderline}</option>
                         </select>
                       )}
                       {rule?.triage_status === "ng" && (allowsType || allowsSeverity) && (
