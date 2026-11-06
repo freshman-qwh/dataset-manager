@@ -37,7 +37,7 @@
 
 ## 当前源码与交付边界
 
-- 当前发行准备采用 `v0.5.0-rc.3` 预发行标记，包含工作台、名片、对照以及本地浏览和项目/类别/批次管理。下载与实际验收范围以 [GitHub Releases](https://github.com/freshman-qwh/dataset-manager/releases) 的对应条目及包内 `build-manifest.json` 为准。
+- 当前 Windows x64 预发行版为 [v0.5.0-rc.3](https://github.com/freshman-qwh/dataset-manager/releases/tag/v0.5.0-rc.3)，包含工作台、名片、对照以及本地浏览和项目/类别/批次管理。程序源码固定在 `6ac9522`，下载与实际验收范围以发行条目及包内 `build-manifest.json` 为准；后续发布记录提交不改变该候选包。
 - 应用内版本为 `0.5.0`。当前源码已包含工业数据准备与 Q1–Q5 快速验证；状态看 [TODO](TODO.md)，已实现变化看 [CHANGELOG](CHANGELOG.md)。
 - 2026-10-30 的 [工业便携候选](docs/industrial-trial-delivery-2026-10-30.md) 只包含当日交付能力，**不包含后续快速验证页面**。源码升级不会自动更新已有 ZIP。
 - [2026-11-01 验证记录](docs/quick-validation-verification-2026-11-01.md) 是当时的本机工程证据。独立干净 Windows 10/11 和真实工业用户的两批数据复用仍待外部验收；没有正式产线效果结论。

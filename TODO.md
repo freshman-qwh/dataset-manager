@@ -9,7 +9,7 @@
 - IA0–IA4、IA5 本机恢复链路及 Q1–Q5 快速验证已有源码实现。操作见 [工业试用指南](docs/industrial-trial-guide.md)、[快速验证指南](docs/quick-validation-guide.md)。
 - 应用内版本为 0.5.0；已发布 v0.4.1、2026-10-30 便携候选与当前源码分别管理，不能把源码新增能力算进旧 ZIP。
 - [2026-11-01 本机记录](docs/quick-validation-verification-2026-11-01.md) 是对应日期的工程证据。独立干净 Windows 和真实用户验收仍未完成；此前界面优化没有重建便携包。
-- 当前发行准备：`v0.5.0-rc.3` 作为独立 Windows x64 预发行候选，重新构建与实际 ZIP 验收后发布；不覆盖旧候选。外部验收与 Linux/macOS 便携发行仍待完成。
+- 当前预发行：[v0.5.0-rc.3](https://github.com/freshman-qwh/dataset-manager/releases/tag/v0.5.0-rc.3) 已发布独立 Windows x64 ZIP 与整包校验，程序源码固定 `6ac9522`。同包 215 项功能断言、启动恢复、工业导出/备份恢复及浏览器检查通过；外部验收与 Linux/macOS 便携发行仍待完成。
 
 状态：`[ ]` 未开始，`[~]` 实施中，`[x]` 已完成。优先级：P0 正确性/可用性阻断，P1 核心流程，P2 次要优化，P3 延后工程。属性：Bug 修复、优化、新增、工程。
 
