@@ -44,12 +44,15 @@ function Assert-Condition([bool]$Condition, [string]$Message) {
 }
 
 function Invoke-Api([string]$Path, [string]$Method = "Get", $Body = $null) {
-    $request = @{ Uri = "$($script:baseUrl)$Path"; Method = $Method; TimeoutSec = 30 }
+    $request = @{ Uri = "$($script:baseUrl)$Path"; Method = $Method; TimeoutSec = 30; UseBasicParsing = $true }
     if ($null -ne $Body) {
         $request.ContentType = "application/json; charset=utf-8"
         $request.Body = [Text.Encoding]::UTF8.GetBytes(($Body | ConvertTo-Json -Depth 12 -Compress))
     }
-    return Invoke-RestMethod @request
+    # FastAPI JSON has no charset; Windows PowerShell 5 otherwise decodes
+    # Chinese response values as ANSI, including the verified workspace path.
+    $response = Invoke-WebRequest @request
+    return ([Text.Encoding]::UTF8.GetString($response.RawContentStream.ToArray()) | ConvertFrom-Json)
 }
 
 # Small valid 4x4 PNGs; using PNG bytes in the official .JPG paths deliberately
