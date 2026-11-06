@@ -78,6 +78,7 @@ import SampleDetailPanel from "../components/SampleDetailPanel";
 import SampleGrid from "../components/SampleGrid";
 import ScanModal from "../components/ScanModal";
 import OrganizationModal from "../components/OrganizationModal";
+import DatasetCardModal from "../components/DatasetCardModal";
 import type { ScanOptions } from "../types/organization";
 import SearchFilterBar from "../components/SearchFilterBar";
 import SplitPlanModal from "../components/SplitPlanModal";
@@ -119,6 +120,7 @@ import {
   writeDatasetDetailCache
 } from "../utils/datasetDetailCache";
 import { reviewStatusCopy, uiCopy } from "../utils/uiCopy";
+import { rememberDatasetVisit } from "../utils/workbenchPreferences";
 
 function formatBytes(value: number): string {
   if (value < 1024) {
@@ -265,6 +267,7 @@ export default function DatasetDetailPage() {
   const [exportFormat, setExportFormat] = useState("manifest");
   const [scanOpen, setScanOpen] = useState(false);
   const [organizationOpen, setOrganizationOpen] = useState(false);
+  const [cardOpen, setCardOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
   const [tagStatsOpen, setTagStatsOpen] = useState(false);
@@ -304,6 +307,10 @@ export default function DatasetDetailPage() {
   const [qualityError, setQualityError] = useState<string | null>(null);
   const [trainingReadiness, setTrainingReadiness] = useState<TrainingReadinessReport | null>(null);
   const [trainingReadinessError, setTrainingReadinessError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (dataset?.id === datasetId) rememberDatasetVisit(datasetId);
+  }, [dataset?.id, datasetId]);
 
   useEffect(() => {
     const openDirectoryExport = pageSearchParams.get("directoryExport") === "1";
@@ -1562,6 +1569,7 @@ export default function DatasetDetailPage() {
               <ChevronDown size={18} className="shrink-0 text-gray-400 transition group-open:rotate-180" />
             </summary>
             <div className="flex flex-wrap gap-2 border-t border-line px-4 py-4">
+              <button type="button" onClick={() => setCardOpen(true)} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm text-gray-700 hover:bg-gray-50">数据集名片</button>
               <button type="button" onClick={() => setOrganizationOpen(true)} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm text-gray-700 hover:bg-gray-50">类别与批次</button>
               <button
                 type="button"
@@ -1767,6 +1775,7 @@ export default function DatasetDetailPage() {
         onScan={handleScan}
       />
       <OrganizationModal datasetId={datasetId} open={organizationOpen} selectedIds={[...selectedSampleIds]} onClose={() => setOrganizationOpen(false)} onUpdated={async () => { await Promise.all([loadOverview(), loadSamples()]); }} />
+      <DatasetCardModal datasetId={datasetId} open={cardOpen} onClose={() => setCardOpen(false)} />
       <SampleDetailPanel
         sample={selected}
         availableTags={availableTags}

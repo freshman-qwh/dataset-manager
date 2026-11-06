@@ -1,4 +1,4 @@
-import { BookOpen, Calendar, Database, FolderOpen, Plus, RefreshCw, Settings } from "lucide-react";
+import { BookOpen, Calendar, Database, FolderOpen, Pin, Plus, RefreshCw, Settings } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -10,6 +10,8 @@ import type { Dataset, DatasetCreate } from "../types/dataset";
 import { listProjects } from "../api/organization";
 import ProjectManagerModal from "../components/ProjectManagerModal";
 import type { Project } from "../types/organization";
+import ProjectWorkbench from "../components/ProjectWorkbench";
+import { getContinueBrowseUrl, MAX_PINNED_DATASETS, pruneWorkbenchPreferences, readWorkbenchPreferences, subscribeWorkbenchPreferences, togglePinnedDataset } from "../utils/workbenchPreferences";
 
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat("zh-CN", {
@@ -33,6 +35,8 @@ export default function DatasetListPage() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [deletingDataset, setDeletingDataset] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [preferences, setPreferences] = useState(readWorkbenchPreferences);
+  const [pinMessage, setPinMessage] = useState<string | null>(null);
 
   async function loadDatasets() {
     setLoading(true);
@@ -40,6 +44,8 @@ export default function DatasetListPage() {
     try {
       const [items, projectItems] = await Promise.all([listDatasets(), listProjects()]);
       setDatasets(items); setProjects(projectItems);
+      pruneWorkbenchPreferences(items.map((dataset) => dataset.id));
+      setPreferences(readWorkbenchPreferences());
     } catch {
       setError("无法连接后端服务");
     } finally {
@@ -50,6 +56,8 @@ export default function DatasetListPage() {
   useEffect(() => {
     void loadDatasets();
   }, []);
+
+  useEffect(() => subscribeWorkbenchPreferences(() => setPreferences(readWorkbenchPreferences())), []);
 
   async function handleCreate(payload: DatasetCreate) {
     const dataset = await createDataset(payload);
@@ -85,7 +93,24 @@ export default function DatasetListPage() {
     }
   }
 
-  const visibleDatasets = datasets.filter((dataset) => !projectFilter || (projectFilter === "unassigned" ? !dataset.project_id : dataset.project_id === Number(projectFilter)));
+  const pinnedIds = new Set(preferences.pinnedDatasetIds);
+  const visibleDatasets = datasets.filter((dataset) => !projectFilter || (projectFilter === "unassigned" ? !dataset.project_id : dataset.project_id === Number(projectFilter)))
+    .sort((a, b) => Number(pinnedIds.has(b.id)) - Number(pinnedIds.has(a.id)));
+
+  const guide = <>
+    <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="max-w-2xl"><h2 className="text-lg font-semibold text-ink">从本地图片开始，准备可信的异常检测数据</h2><p className="mt-2 text-sm leading-6 text-gray-500">分清正常与异常，按工件隔离数据，再运行基线验证或导出训练包。原始图片保留在本地。</p></div>
+      <button type="button" disabled={creatingExample} className="shrink-0 rounded-lg border border-line px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50" onClick={async () => {
+        setCreatingExample(true);
+        try { const example = await createIndustrialExample(); navigate(`/datasets/${example.id}`); }
+        catch { setError("示例创建失败，请检查应用存储和数据库维护状态。"); }
+        finally { setCreatingExample(false); }
+      }}>{creatingExample ? "正在准备示例…" : "体验合成示例"}</button>
+    </div>
+    <ol className="mt-5 grid gap-3 border-t border-line pt-4 text-sm text-gray-600 sm:grid-cols-3" aria-label="主要使用流程">
+      {["扫描图片并分拣", "确认工件与采集分组", "快速验证或导出训练包"].map((step, index) => <li key={step} className="flex items-center gap-2"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-100 text-xs font-medium text-gray-600" aria-hidden="true">{index + 1}</span>{step}</li>)}
+    </ol>
+  </>;
 
   return (
     <main className="min-h-screen bg-canvas">
@@ -127,21 +152,10 @@ export default function DatasetListPage() {
       </header>
 
       <section className="mx-auto max-w-7xl px-5 py-8">
-        <div className="mb-7 rounded-xl border border-line bg-white p-5 sm:p-6">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="max-w-2xl"><h2 className="text-lg font-semibold text-ink">从本地图片开始，准备可信的异常检测数据</h2><p className="mt-2 text-sm leading-6 text-gray-500">分清正常与异常，按工件隔离数据，再运行基线验证或导出训练包。原始图片保留在本地。</p></div>
-            <button type="button" disabled={creatingExample} className="shrink-0 rounded-lg border border-line px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50" onClick={async () => {
-              setCreatingExample(true);
-              try { const example = await createIndustrialExample(); navigate(`/datasets/${example.id}`); }
-              catch { setError("示例创建失败，请检查应用存储和数据库维护状态。"); }
-              finally { setCreatingExample(false); }
-            }}>{creatingExample ? "正在准备示例…" : "体验合成示例"}</button>
-          </div>
-          <ol className="mt-5 grid gap-3 border-t border-line pt-4 text-sm text-gray-600 sm:grid-cols-3" aria-label="主要使用流程">
-            {["扫描图片并分拣", "确认工件与采集分组", "快速验证或导出训练包"].map((step, index) => <li key={step} className="flex items-center gap-2"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-100 text-xs font-medium text-gray-600" aria-hidden="true">{index + 1}</span>{step}</li>)}
-          </ol>
-        </div>
+        {datasets.length > 0 ? <details className="mb-5 rounded-lg border border-line bg-white px-4 py-3 text-sm text-gray-600"><summary className="cursor-pointer font-medium">使用指南</summary><div className="pb-1 pt-5">{guide}</div></details> : !loading && <div className="mb-7 rounded-xl border border-line bg-white p-5 sm:p-6">{guide}</div>}
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-3"><h2 className="text-base font-semibold text-ink">我的数据集</h2>{!loading && <span className="text-sm text-gray-500">{visibleDatasets.length} / {datasets.length} 个</span>}</div><div className="flex flex-wrap gap-2"><select aria-label="按项目筛选数据集" value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)} className="min-h-10 rounded-lg border border-line bg-white px-3 text-sm text-gray-600"><option value="">全部项目</option><option value="unassigned">未归属项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select><button type="button" onClick={() => setProjectsOpen(true)} className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50">管理项目</button></div></div>
+        {!loading && <ProjectWorkbench datasets={visibleDatasets} preferences={preferences} />}
+        {pinMessage && <p role="status" className="mb-4 text-sm text-gray-500">{pinMessage}</p>}
         {error && <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><span>{error}</span><button type="button" className="underline underline-offset-2" onClick={() => void loadDatasets()}>重新加载</button></div>}
 
         {loading ? (
@@ -167,7 +181,20 @@ export default function DatasetListPage() {
                 key={dataset.id}
                 className="relative min-w-0 rounded-lg border border-line bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-soft"
               >
-                <div className="absolute right-4 top-4">
+                <div className="absolute right-4 top-4 flex gap-1">
+                  <button
+                    type="button"
+                    title={pinnedIds.has(dataset.id) ? "取消置顶" : "置顶数据集"}
+                    aria-label={`${pinnedIds.has(dataset.id) ? "取消置顶" : "置顶"}${dataset.name}`}
+                    aria-pressed={pinnedIds.has(dataset.id)}
+                    onClick={() => {
+                      const result = togglePinnedDataset(dataset.id);
+                      setPinMessage(result.limitReached ? `最多置顶 ${MAX_PINNED_DATASETS} 个数据集，请先取消一个置顶。` : null);
+                    }}
+                    className={`rounded-lg p-2 hover:bg-gray-100 ${pinnedIds.has(dataset.id) ? "text-gray-900" : "text-gray-400 hover:text-gray-900"}`}
+                  >
+                    <Pin size={17} fill={pinnedIds.has(dataset.id) ? "currentColor" : "none"} />
+                  </button>
                   <button
                     type="button"
                     title="数据集设置"
@@ -178,7 +205,7 @@ export default function DatasetListPage() {
                     <Settings size={17} />
                   </button>
                 </div>
-                <Link to={`/datasets/${dataset.id}`} className="block min-w-0 pr-8">
+                <Link to={`/datasets/${dataset.id}`} className="block min-w-0 pr-20">
                   <div className="flex flex-col items-start gap-3">
                     <div className="min-w-0 w-full">
                       <h2 title={dataset.name} className="line-clamp-2 break-words text-base font-semibold text-ink">{dataset.name}</h2>
@@ -210,7 +237,7 @@ export default function DatasetListPage() {
                 </Link>
                 <div className="mt-4 flex min-w-0 items-center justify-between gap-3 border-t border-line pt-3">
                   <span className="min-w-0 truncate text-xs text-gray-500" title={dataset.root_path ?? undefined}>{dataset.root_path || "尚未添加本地目录"}</span>
-                  <Link to={`/browse?dataset=${dataset.id}`} className="inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"><FolderOpen size={15} />浏览</Link>
+                  <Link to={getContinueBrowseUrl(dataset.id, preferences)} className="inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"><FolderOpen size={15} />浏览</Link>
                 </div>
               </div>
             ))}

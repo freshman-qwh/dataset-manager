@@ -30,3 +30,10 @@ Dataset Manager Windows x64 便携版
 数据库维护可下载包含快照的元数据 ZIP，再校验恢复到新工作区；不包含原图与历史下载包。
 安全退出后，可运行 DatasetManager.exe --workspace "恢复完成的工作区目录" 打开恢复位置。直接双击仍打开默认工作区。
 build-manifest.json 记录对应源码与验收边界。本机工程检查不代替干净 Windows 和真实用户试用。
+
+日常浏览与数据组织：
+首页工作台可继续上次浏览、查看最近打开、置顶常用数据集；本地浏览可按项目切换、按类别和批次筛选。
+“添加图片”可选择或新建采集批次；MVTec AD、VisA 可识别类别、官方划分和已有 Mask。
+“数据集名片”可自动生成并下载 PNG；“正常与缺陷对照”按同类对象查看正常参考和缺陷，支持同步缩放和 Mask。
+详细操作见 docs\daily-tools.md、docs\local-browsing.md、docs\project-category-batch.md。
+本地快速验证使用独立算法环境，见 docs\quick-validation-guide.md；基础浏览与整理无需该环境。

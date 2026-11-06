@@ -8,11 +8,12 @@ import LocalBrowsePreview from "../components/LocalBrowsePreview";
 import BrowseFileCard from "../components/BrowseFileCard";
 import BrowseOrganizationPanel from "../components/BrowseOrganizationPanel";
 import OrganizationModal from "../components/OrganizationModal";
+import DatasetCardModal from "../components/DatasetCardModal";
 import LocalBrowseThumbnail from "../components/LocalBrowseThumbnail";
 import type { Dataset } from "../types/dataset";
 import type { LocalBrowseResponse } from "../types/localBrowse";
+import { getRememberedBrowseLocation as rememberedLocation, rememberDatasetVisit } from "../utils/workbenchPreferences";
 
-const LOCATION_KEY = "dataset-manager:local-browse-locations:v1";
 const buttonStyle = "inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border border-line bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-35";
 
 function positivePage(value: string | null): number {
@@ -33,17 +34,6 @@ function browseCaption(absolutePath: string, data: LocalBrowseResponse): string 
   if (!source) return absolutePath;
   const relative = sourceRelativePath(absolutePath, source.path);
   return data.sources.length === 1 ? relative : `${source.path.replace(/\\/g, "/").split("/").filter(Boolean).pop()}/${relative}`;
-}
-
-function rememberedLocation(datasetId: number): URLSearchParams {
-  try {
-    const saved: unknown = JSON.parse(sessionStorage.getItem(LOCATION_KEY) ?? "{}");
-    if (saved && typeof saved === "object" && String(datasetId) in saved) {
-      const value = (saved as Record<string, unknown>)[String(datasetId)];
-      if (typeof value === "string") return new URLSearchParams(value);
-    }
-  } catch { /* Session storage is optional; URL navigation remains available. */ }
-  return new URLSearchParams();
 }
 
 export default function LocalBrowsePage() {
@@ -69,6 +59,7 @@ export default function LocalBrowsePage() {
   const [datasetSearch, setDatasetSearch] = useState("");
   const [projectFilter, setProjectFilter] = useState("");
   const [organizationOpen, setOrganizationOpen] = useState(false);
+  const [cardOpen, setCardOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [searchDraft, setSearchDraft] = useState({ locationKey, value: search });
   const draftSearch = searchDraft.locationKey === locationKey ? searchDraft.value : search;
@@ -127,13 +118,13 @@ export default function LocalBrowsePage() {
   }, [datasets, listLoading, params, setParams]);
 
   useEffect(() => {
-    if (!selected) return;
-    try {
-      const stored: unknown = JSON.parse(sessionStorage.getItem(LOCATION_KEY) ?? "{}");
-      const locations = stored && typeof stored === "object" ? stored : {};
-      sessionStorage.setItem(LOCATION_KEY, JSON.stringify({ ...locations, [datasetId]: paramsKey }));
-    } catch { /* Browsing does not require persistent browser storage. */ }
-  }, [datasetId, paramsKey, selected]);
+    if (!selected || !data || data.dataset_id !== datasetId) return;
+    const verified = new URLSearchParams(paramsKey);
+    if (data.folder) verified.set("folder", data.folder); else verified.delete("folder");
+    if (data.page > 1) verified.set("page", String(data.page)); else verified.delete("page");
+    if (data.folder_page > 1) verified.set("folderPage", String(data.folder_page)); else verified.delete("folderPage");
+    rememberDatasetVisit(datasetId, verified);
+  }, [data, datasetId, paramsKey, selected]);
 
   useEffect(() => { setSearchDraft({ locationKey, value: search }); }, [locationKey, search]);
   useEffect(() => {
@@ -203,7 +194,7 @@ export default function LocalBrowsePage() {
         </aside>
         <section aria-label="目录浏览" className="min-w-0">
           {!listLoading && !listError && !selected && datasets.length > 0 ? <div className="rounded-xl border border-line bg-white p-8 text-sm text-gray-500">该数据集不存在，请选择其他数据集。</div> : selected && <>
-            <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h2 className="break-words text-xl font-semibold text-ink">{selected.name}</h2><p className="mt-1 text-xs leading-5 text-gray-500">按原目录浏览，也可展开子文件夹连续看图。</p></div><Link to={`/datasets/${datasetId}`} className={buttonStyle}>进入数据准备</Link></div>
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h2 className="break-words text-xl font-semibold text-ink">{selected.name}</h2><p className="mt-1 text-xs leading-5 text-gray-500">按原目录浏览，也可展开子文件夹连续看图。</p></div><div className="flex flex-wrap gap-2"><Link to={`/datasets/${datasetId}/compare${categoryId || batchId ? `?${new URLSearchParams({ ...(categoryId ? { category: String(categoryId) } : {}), ...(batchId ? { batch: String(batchId) } : {}) })}` : ""}`} state={{ returnTo: `/browse?${paramsKey}` }} className={buttonStyle}>正常与缺陷对照</Link><button type="button" onClick={() => setCardOpen(true)} className={buttonStyle}>数据集名片</button><Link to={`/datasets/${datasetId}`} className={buttonStyle}>进入数据准备</Link></div></div>
             <BrowseOrganizationPanel datasetId={datasetId} revision={version} categoryId={categoryId} batchId={batchId} onManage={() => setOrganizationOpen(true)} onFilter={(category, batch) => changeQuery({ category: category ? String(category) : null, batch: batch ? String(batch) : null, folder: null, page: null, folderPage: null, q: null, source: null, recursive: category || batch ? "1" : params.get("recursive") })} />
             {categoryId && selected.workflow_profile === "industrial_anomaly" && <Link to={`/datasets/${datasetId}/validate`} state={{ currentQuery: { category_id: categoryId, ...(batchId ? { batch_id: batchId } : {}) } }} className="mb-3 inline-flex rounded-lg border border-line bg-white px-3 py-2 text-xs text-gray-600 hover:bg-gray-50">验证此类别</Link>}
             {selectedIds.length > 0 && <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-line bg-white px-3 py-2 text-sm text-gray-600"><span>已选择 {selectedIds.length} 张</span><button type="button" onClick={() => setOrganizationOpen(true)} className="underline underline-offset-4">设置类别或批次</button><button type="button" onClick={() => setSelectedIds([])} className="text-xs">取消选择</button></div>}
@@ -217,13 +208,14 @@ export default function LocalBrowsePage() {
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><h3 className="text-sm font-medium text-gray-700">{recursive ? "当前目录及子文件夹" : "当前目录"}<span className="ml-2 text-xs font-normal text-gray-400">{data.total.toLocaleString()} {fileType ? "张图片" : "个文件"}</span></h3><div className="flex flex-wrap gap-2"><select aria-label="浏览文件类型" value={fileType || "all"} onChange={(event) => changeQuery({ type: event.target.value === "all" ? "all" : null, page: null })} className="min-h-9 rounded-lg border border-line bg-white px-2 text-xs text-gray-600"><option value="image">仅图片</option><option value="all">全部类型</option></select><select aria-label="缩略图大小" value={size === 150 ? "small" : size === 300 ? "large" : "medium"} onChange={(event) => changeQuery({ size: event.target.value === "medium" ? null : event.target.value }, true)} className="min-h-9 rounded-lg border border-line bg-white px-2 text-xs text-gray-600"><option value="small">小图</option><option value="medium">中图</option><option value="large">大图</option></select></div></div>
               {data.items.length === 0 ? <div className="flex min-h-60 flex-col items-center justify-center rounded-xl border border-dashed border-line bg-white px-5 text-center"><Images size={30} className="text-gray-300" /><p className="mt-3 text-sm text-gray-500">{search ? "没有匹配的文件" : recursive ? "该范围暂无已登记的图片或文件" : "当前目录没有直接存放的图片或文件"}</p>{!recursive && data.folders_total > 0 && <button type="button" onClick={() => changeQuery({ recursive: "1", page: null })} className="mt-3 text-sm text-gray-800 underline underline-offset-4">查看所有子文件夹中的图片</button>}{search && <button type="button" onClick={() => changeQuery({ q: null, page: null })} className="mt-3 text-sm text-gray-800 underline underline-offset-4">清除搜索</button>}{data.total > 0 && page > 1 && <button type="button" onClick={() => changeQuery({ page: null })} className="mt-3 text-sm text-gray-800 underline underline-offset-4">回到第一页</button>}</div> : <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${size}px), 1fr))` }}>{data.items.map((sample, index) => <BrowseFileCard key={sample.id} sample={sample} selected={selectedIds.includes(sample.id)} caption={recursive || allSources ? browseCaption(sample.absolute_path, data) : ""} thumbnailRevision={thumbnailRevision} deferOriginal={thumbnailReadyKey !== requestKey} onSelect={() => setSelectedIds((current) => current.includes(sample.id) ? current.filter((id) => id !== sample.id) : [...current, sample.id])} onPreview={() => setPreviewIndex(index)} />)}</div>}
               {pageCount > 1 && <div className="mt-5 flex flex-wrap items-center justify-center gap-3 text-xs text-gray-500"><button type="button" disabled={data.page <= 1} onClick={() => changeQuery({ page: String(data.page - 1) })} className={buttonStyle}><ChevronLeft size={15} />上一页</button><span>第 {data.page} / {pageCount} 页</span><button type="button" disabled={data.page >= pageCount} onClick={() => changeQuery({ page: String(data.page + 1) })} className={buttonStyle}>下一页<ChevronRight size={15} /></button></div>}
-              <p className="mt-5 text-xs leading-5 text-gray-400">仅浏览已登记文件。目录有新增或移动时，可进入数据准备重新扫描。切换数据集会记住本次会话的浏览位置。</p>
+              <p className="mt-5 text-xs leading-5 text-gray-400">仅浏览已登记文件。目录有新增或移动时，可进入数据准备重新扫描。切换数据集会记住此浏览器中的浏览位置。</p>
             </>}
           </>}
         </section>
       </div>
       {data && previewIndex !== null && data.items[previewIndex] && <LocalBrowsePreview sample={data.items[previewIndex]} index={previewIndex} count={data.items.length} onClose={() => setPreviewIndex(null)} onNavigate={(offset) => setPreviewIndex((current) => current === null ? null : Math.max(0, Math.min(data.items.length - 1, current + offset)))} />}
       {selected && <OrganizationModal datasetId={datasetId} open={organizationOpen} selectedIds={selectedIds} onClose={() => setOrganizationOpen(false)} onUpdated={async () => { setVersion((value) => value + 1); setListVersion((value) => value + 1); }} />}
+      {selected && <DatasetCardModal datasetId={datasetId} open={cardOpen} onClose={() => setCardOpen(false)} />}
     </main>
   );
 }

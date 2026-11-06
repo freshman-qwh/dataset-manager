@@ -20,6 +20,19 @@ powershell -ExecutionPolicy Bypass -File .\packaging\windows\test-portable.ps1
 
 脚本解压 ZIP 到含中文和空格的隔离目录，以受限 PATH 运行 EXE，并验证端口冲突、重复启动、异常恢复、覆盖升级、数据保留及原始文件哈希。验收目录会保留并输出路径，便于人工复核。
 
+## 带版本的 GitHub 预发行
+
+先提交已验证的源码，再构建到独立版本目录，避免覆盖旧候选。下例以 `v0.5.0-rc.3` 为例：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File packaging/windows/build-portable.ps1 -Python backend/.venv/Scripts/python.exe -ReleaseTag v0.5.0-rc.3 -OutputDirectory dist/releases/v0.5.0-rc.3 -OutputName DatasetManager-v0.5.0-rc.3-windows-x64-portable.zip
+powershell -NoProfile -ExecutionPolicy Bypass -File packaging/windows/test-daily-tools.ps1 -ZipPath dist/releases/v0.5.0-rc.3/DatasetManager-v0.5.0-rc.3-windows-x64-portable.zip
+```
+
+`build-manifest.json` 记录版本标记、源码提交、受控文件是否有改动、构建测试状态及能力清单。基础回归另用 `test-portable.ps1 -PortableRoot <本次ZIP解压后的DatasetManager目录>` 执行，不能误用旧版默认 ZIP。通过后将版本 ZIP 和 `.sha256.txt` 一起上传 GitHub Release；算法环境、权重、用户数据库和原图不上传。
+
+独立干净 Windows 10/11 与真实用户验收完成前，标记为 prerelease；本机隔离测试通过不等于正式产线定版。当前 Linux/macOS 可从源码验证基础 Web 功能，便携启动器与发行包尚未适配；可选算法环境也需要各平台独立验证。
+
 ## 工业试用候选
 
 可通过 `-OutputName DatasetManager-industrial-trial-20261030-windows-x64.zip` 输出独立文件，避免混淆旧候选。包内 `build-manifest.json` 记录对应源码提交、是否有未提交改动、是否运行构建测试和待完成的外部验收；ZIP 的 `.sha256.txt` 用于核对最终文件。

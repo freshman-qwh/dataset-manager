@@ -8,6 +8,8 @@ from app.api import (
     annotation_exports,
     annotations,
     browse,
+    comparison,
+    dataset_card,
     datasets,
     directory_exports,
     industrial,
@@ -54,6 +56,8 @@ app.add_middleware(
 app.include_router(datasets.router)
 app.include_router(organization.router)
 app.include_router(browse.router)
+app.include_router(dataset_card.router)
+app.include_router(comparison.router)
 app.include_router(industrial.router)
 app.include_router(validation.router)
 app.include_router(directory_exports.router)

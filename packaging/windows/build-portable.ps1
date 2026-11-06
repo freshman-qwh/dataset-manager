@@ -2,7 +2,9 @@
 param(
     [string]$Python = "python",
     [switch]$SkipTests,
-    [string]$OutputName = "DatasetManager-windows-x64-portable.zip"
+    [string]$OutputName = "DatasetManager-windows-x64-portable.zip",
+    [string]$OutputDirectory = "dist",
+    [string]$ReleaseTag = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,7 +15,12 @@ $buildRoot = Join-Path $repoRoot "build\windows-portable"
 $venvRoot = Join-Path $buildRoot "venv"
 $stageRoot = Join-Path $buildRoot "stage"
 $pyinstallerWork = Join-Path $buildRoot "pyinstaller"
-$distRoot = Join-Path $repoRoot "dist"
+$defaultDist = Join-Path $repoRoot "dist"
+$distRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot $OutputDirectory))
+if ($distRoot -ne $defaultDist -and -not $distRoot.StartsWith($defaultDist + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "输出目录必须位于仓库 dist 内。"
+}
+if ($ReleaseTag -and $ReleaseTag -notmatch '^v\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$') { throw "版本标记格式无效。" }
 $portableRoot = Join-Path $distRoot "DatasetManager"
 if ($OutputName -notmatch '^[A-Za-z0-9._-]+\.zip$') { throw "输出名必须是简单 ZIP 文件名。" }
 $zipPath = Join-Path $distRoot $OutputName
@@ -47,13 +54,31 @@ if ($LASTEXITCODE -ne 0) { throw "安装打包依赖失败。" }
 if (-not $SkipTests) {
     & $venvPython -m pip install --disable-pip-version-check pytest
     if ($LASTEXITCODE -ne 0) { throw "安装验证工具失败。" }
+    $testRoot = Join-Path $buildRoot ("verification-" + [Guid]::NewGuid().ToString("N").Substring(0, 8))
+    New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
+    $testEnvironment = @{
+        DATASET_MANAGER_PORTABLE = "1"
+        DATABASE_URL = "sqlite:///" + (Join-Path $testRoot "test-default.db").Replace('\', '/')
+        STORAGE_ROOT = Join-Path $testRoot "storage"
+        TMP = $testRoot
+        TEMP = $testRoot
+    }
+    $previousTestEnvironment = @{}
+    foreach ($key in $testEnvironment.Keys) {
+        $previousTestEnvironment[$key] = [Environment]::GetEnvironmentVariable($key, "Process")
+        [Environment]::SetEnvironmentVariable($key, $testEnvironment[$key], "Process")
+    }
     Push-Location $backendRoot
     try {
-        & $venvPython -m pytest -q
+        & $venvPython -m pytest -q --basetemp (Join-Path $testRoot "pytest") -p no:cacheprovider
         if ($LASTEXITCODE -ne 0) { throw "后端测试失败，停止打包。" }
     } finally {
         Pop-Location
+        foreach ($key in $previousTestEnvironment.Keys) {
+            [Environment]::SetEnvironmentVariable($key, $previousTestEnvironment[$key], "Process")
+        }
     }
+    Write-Host "构建测试隔离目录：$testRoot"
 }
 
 $env:DATASET_MANAGER_PORTABLE_FRONTEND = (Resolve-Path (Join-Path $frontendRoot "dist")).Path
@@ -76,6 +101,7 @@ $trackedChanges = & git -C $repoRoot status --porcelain --untracked-files=no
 $manifest = [ordered]@{
     product = "Dataset Manager"
     channel = "industrial-trial"
+    release_tag = $ReleaseTag
     source_commit = $sourceCommit
     tracked_changes_present = [bool]$trackedChanges
     built_at_utc = [DateTime]::UtcNow.ToString("o")
@@ -84,9 +110,18 @@ $manifest = [ordered]@{
     reader = "anomalib==2.7.0; separate environment"
     clean_windows_acceptance = "pending"
     real_user_acceptance = "pending"
+    capabilities = @("industrial-data-preparation", "quick-validation-q1-q5", "local-browsing", "project-category-batch", "mvtec-visa-import", "dataset-library", "dataset-card", "project-workbench", "normal-defect-comparison")
 }
 $manifest | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 (Join-Path $portableRoot "build-manifest.json")
 Copy-Item (Join-Path $repoRoot "docs\industrial-trial-guide.md") (Join-Path $portableRoot "工业试用指南.md") -Force
+$guideRoot = Join-Path $portableRoot "docs"
+New-Item -ItemType Directory -Force -Path $guideRoot | Out-Null
+Get-ChildItem -LiteralPath (Join-Path $repoRoot "docs") -Filter "*.md" -File |
+    Where-Object { $_.Name -ne "AGENTS.md" } |
+    Copy-Item -Destination $guideRoot -Force
+foreach ($guide in @("README.md", "CHANGELOG.md", "TODO.md", "ACCEPTANCE_TESTS.md")) {
+    Copy-Item (Join-Path $repoRoot $guide) (Join-Path $portableRoot $guide) -Force
+}
 Compress-Archive -Force -Path $portableRoot -DestinationPath $zipPath
 $zipHash = (Get-FileHash -Algorithm SHA256 $zipPath).Hash
 [IO.File]::WriteAllText(
