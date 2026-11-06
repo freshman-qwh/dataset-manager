@@ -140,7 +140,7 @@ export default function ComparisonPage() {
       next.delete("normalPage");
       next.delete("anomalyPage");
       return next;
-    });
+    }, { state: location.state });
   }
 
   function changePage(side: ComparisonSideName, page: number) {
@@ -150,7 +150,7 @@ export default function ComparisonPage() {
       if (!categoryId && data?.category_id) next.set("category", String(data.category_id));
       next.set(side === "normal" ? "normalPage" : "anomalyPage", String(page));
       return next;
-    });
+    }, { state: location.state });
   }
 
   const returnTo = browseDestination(location.state, datasetId ?? 0, categoryId ?? data?.category_id, batchId);
