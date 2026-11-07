@@ -86,6 +86,7 @@ def _source_signature(database: Path, backup_job_id: int) -> tuple:
             ("projects","id,name,description,updated_at"),
             ("dataset_categories","id,dataset_id,name,description"),
             ("dataset_batches","id,dataset_id,name,code,captured_at,notes"),
+            ("sample_collections","id,version,name,kind,dataset_id,category_id,items_json,updated_at"),
             ("validation_runs","id,contract_sha256,job_id,parent_run_id"),
             ("validation_decisions","run_id,threshold,report_json"),
             ("validation_test_exposures","sha256,first_run_id"),

@@ -1,6 +1,7 @@
 import axios from "axios";
 import {
   ArrowLeft,
+  BookOpen,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -17,7 +18,7 @@ import {
   ZoomOut
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import {
   createDefectType,
@@ -49,8 +50,14 @@ import type {
   TriageStatus
 } from "../types/triage";
 import TriagePolicyModal from "../components/TriagePolicyModal";
+import ReferenceCasesPanel from "../components/ReferenceCasesPanel";
+import TriageReasonChips from "../components/TriageReasonChips";
+import WorkpieceViewsPanel from "../components/WorkpieceViewsPanel";
+import Modal from "../components/Modal";
 import { updateValidationReview } from "../api/validation";
 import { okGradeCopy } from "../utils/uiCopy";
+import { getWorkNavigation, getWorkScope, getWorkState, type WorkScopeQuery } from "../api/triageWork";
+import { completeWorkSample, readTriageWork, reconcileWork, workIds, workQuery, writeTriageWork, type TriageWork, type WorkView } from "../utils/triageWork";
 
 const QUEUE_LABELS: Record<TriageQueueScope, string> = {
   untriaged: "未分拣",
@@ -228,9 +235,15 @@ function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 export default function TriagePage() {
+  const { datasetId } = useParams();
+  return <TriageWorkspace key={datasetId} />;
+}
+
+function TriageWorkspace() {
   const routeParams = useParams();
   const datasetId = Number(routeParams.datasetId);
   const location = useLocation();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedSampleId = Number(searchParams.get("sample")) || null;
   const reviewRun = searchParams.get("review_run") || undefined;
@@ -247,19 +260,25 @@ export default function TriagePage() {
   const filterOkGrade = (searchParams.get("okGrade") || undefined) as OkGrade | undefined;
   const filterSeverity = (searchParams.get("severity") || undefined) as DefectSeverity | undefined;
   const filterDefectTypeId = Number(searchParams.get("defectType")) || undefined;
-  const navigationSampleId = useMemo(() => {
-    if (requestedSampleId) return requestedSampleId;
-    try {
-      const stored = JSON.parse(
-        window.localStorage.getItem(`dataset-manager.triage.${datasetId}`) ?? "null"
-      ) as { sampleId?: number; queueScope?: TriageQueueScope } | null;
-      return stored?.queueScope === queueScope && Number.isInteger(stored.sampleId)
-        ? stored.sampleId ?? null
-        : null;
-    } catch {
-      return null;
-    }
-  }, [datasetId, queueScope, requestedSampleId]);
+  const navigationSampleId = requestedSampleId;
+  const [work, setWorkState] = useState<TriageWork | null>(null);
+  const [workReady, setWorkReady] = useState(false);
+  const [workNotice, setWorkNotice] = useState("");
+  const [storageWarning, setStorageWarning] = useState(false);
+  const [newWorkIds, setNewWorkIds] = useState<number[]>([]);
+  const [checkingWork, setCheckingWork] = useState(false);
+  const workRef = useRef(work);
+  workRef.current = work;
+  const setWork = useCallback((value: TriageWork | null | ((current: TriageWork | null) => TriageWork | null)) => {
+    const next = typeof value === "function" ? value(workRef.current) : value;
+    workRef.current = next;
+    if (next) setStorageWarning(!writeTriageWork(next));
+    setWorkState(next);
+  }, []);
+  const scopeQuery = workQuery(searchParams);
+  const activeWork = !reviewRun && work?.query === scopeQuery ? work : null;
+  const activeWorkIds = useMemo(() => activeWork ? workIds(activeWork) : null, [activeWork]);
+  const activeIdsKey = activeWorkIds?.join(",") ?? "";
 
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [policy, setPolicy] = useState<TriagePolicy | null>(null);
@@ -289,6 +308,11 @@ export default function TriagePage() {
   const [newDefectName, setNewDefectName] = useState("");
   const [newDefectParent, setNewDefectParent] = useState<number | null>(null);
   const [creatingDefect, setCreatingDefect] = useState(false);
+  const [referenceOpen, setReferenceOpen] = useState(false);
+  const [workpieceOpen, setWorkpieceOpen] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null);
+  const dirtyRef = useRef(false);
+  const pendingDialogRef = useRef<HTMLDivElement>(null);
   const requestIdRef = useRef(0);
   const jumpRequestIdRef = useRef(0);
   const savingRef = useRef(false);
@@ -316,6 +340,39 @@ export default function TriagePage() {
   }, [toastsMuted]);
 
   const currentSample = navigation?.current_sample ?? null;
+  const hasUnsavedDraft = Boolean(triage && currentSample?.id === triage.sample_id && JSON.stringify(draft) !== JSON.stringify(draftFromTriage(triage)));
+  dirtyRef.current = hasUnsavedDraft;
+  const requestNavigation = useCallback((action: () => void) => {
+    if (savingRef.current) return;
+    if (dirtyRef.current) setPendingNavigation(() => action);
+    else action();
+  }, []);
+
+  useEffect(() => {
+    function beforeUnload(event: BeforeUnloadEvent) {
+      if (!dirtyRef.current && !savingRef.current) return;
+      event.preventDefault(); event.returnValue = "";
+    }
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, []);
+
+  useEffect(() => {
+    if (!pendingNavigation) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = pendingDialogRef.current;
+    dialog?.querySelector<HTMLButtonElement>("button")?.focus();
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape" && !savingRef.current) { event.preventDefault(); setPendingNavigation(null); }
+      if (event.key !== "Tab") return;
+      const buttons = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? []);
+      const first = buttons[0]; const last = buttons[buttons.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => { window.removeEventListener("keydown", onKey); previousFocus?.focus(); };
+  }, [pendingNavigation]);
   const activeDefectTypes = useMemo(
     () => defectTypes.filter((item) => item.is_active),
     [defectTypes]
@@ -395,8 +452,25 @@ export default function TriagePage() {
       getTriageStats(datasetId),
       listDefectTypes(datasetId)
     ])
-      .then(([datasetValue, policyValue, statsValue, defectTypeValues]) => {
+      .then(async ([datasetValue, policyValue, statsValue, defectTypeValues]) => {
         if (cancelled) return;
+        if (!reviewRun) {
+          const remembered = readTriageWork(datasetId, datasetValue.created_at);
+          const restore = remembered && (!requestedSampleId || remembered.sampleIds.includes(requestedSampleId)) &&
+            (!searchParams.toString() || searchParams.get("resume") === "1" || remembered.query === workQuery(searchParams));
+          if (restore) {
+            const checked = reconcileWork(remembered, (await getWorkState(datasetId, remembered.sampleIds)).items);
+            if (cancelled) return;
+            if (requestedSampleId && checked.work.sampleIds.includes(requestedSampleId) && !workIds(checked.work).includes(requestedSampleId)) checked.work.view = "all";
+            setWork(checked.work);
+            setMode(checked.work.mode);
+            const restored = new URLSearchParams(checked.work.query);
+            const currentId = requestedSampleId ?? checked.work.currentId;
+            if (currentId) restored.set("sample", String(currentId));
+            setSearchParams(restored, { replace: true });
+            setWorkNotice(`已恢复上次工作范围。${checked.changed ? ` ${checked.changed} 张已变化，重新列入待处理。` : ""}${checked.removed ? ` ${checked.removed} 条记录已移除。` : ""}`);
+          }
+        }
         setDataset(datasetValue);
         setPolicy(policyValue);
         setPolicyDraft({
@@ -411,6 +485,7 @@ export default function TriagePage() {
         });
         setStats(statsValue);
         setDefectTypes(defectTypeValues);
+        setWorkReady(true);
       })
       .catch((loadError) => {
         if (!cancelled) setError(errorMessage(loadError));
@@ -419,6 +494,65 @@ export default function TriagePage() {
       cancelled = true;
     };
   }, [datasetId]);
+
+  function scopeRequest(query = scopeQuery): WorkScopeQuery {
+    const params = new URLSearchParams(query);
+    return { queue_scope: params.get("queue") as TriageQueueScope, sample_id: requestedSampleId ?? undefined,
+      search: params.get("q") || undefined, split: params.get("split") || undefined,
+      triage_status: params.get("status") || undefined, ok_grade: splitOk ? params.get("okGrade") || undefined : undefined,
+      defect_severity: ngUsesSeverity ? params.get("severity") || undefined : undefined,
+      defect_type_id: ngUsesDefectType ? Number(params.get("defectType")) || undefined : undefined };
+  }
+
+  useEffect(() => {
+    if (!workReady || !dataset || reviewRun || activeWork) return;
+    let cancelled = false;
+    setLoading(true);
+    getWorkScope(datasetId, scopeRequest()).then(scope => {
+      if (cancelled) return;
+      setWork({ version: 1, datasetId, datasetCreatedAt: dataset.created_at, query: scopeQuery, sampleIds: scope.sample_ids,
+        completed: {}, skipped: [], currentId: requestedSampleId, view: "todo", mode });
+      setNewWorkIds([]);
+    }).catch(e => { if (!cancelled) { setError(errorMessage(e)); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [workReady, dataset, reviewRun, scopeQuery, Boolean(activeWork), navigationRevision]);
+
+  function changeMode(value: "quick" | "detail") {
+    setMode(value);
+    setWork(current => current ? { ...current, mode: value } : current);
+  }
+
+  async function checkWork() {
+    if (!activeWork || checkingWork) return;
+    setCheckingWork(true);
+    savingRef.current = true;
+    try {
+      const [state, scope] = await Promise.all([getWorkState(datasetId, activeWork.sampleIds), getWorkScope(datasetId, scopeRequest())]);
+      const checked = reconcileWork(activeWork, state.items);
+      setWork(checked.work);
+      const known = new Set(activeWork.sampleIds);
+      setNewWorkIds(scope.sample_ids.filter(id => !known.has(id)));
+      setWorkNotice(`范围检查完成：${checked.changed} 张完成记录已变化，${checked.removed} 条记录已移除。`);
+      setNavigationRevision(value => value + 1);
+    } catch (e) { setError(errorMessage(e)); }
+    finally { savingRef.current = false; setCheckingWork(false); }
+  }
+
+  function changeWorkView(view: WorkView) {
+    requestNavigation(() => {
+      setWork(value => value ? { ...value, view, currentId: null } : value);
+      replaceSearchParams({ sample: null });
+    });
+  }
+
+  function skipCurrent() {
+    if (!activeWork || !currentSample || loading || saving || activeWork.view === "skipped" || activeWork.completed[currentSample.id] || activeWork.skipped.includes(currentSample.id)) return;
+    requestNavigation(() => {
+      const next = activeWorkIds?.find((id, index, ids) => index > ids.indexOf(currentSample.id)) ?? null;
+      setWork(value => value ? { ...value, skipped: [...new Set([...value.skipped, currentSample.id])], currentId: next } : value);
+      replaceSearchParams({ sample: next });
+    });
+  }
 
   useEffect(() => {
     if (firstRun) {
@@ -468,13 +602,13 @@ export default function TriagePage() {
 
   useEffect(() => {
     if (!Number.isInteger(datasetId) || datasetId <= 0) return;
-    if (!policy) return;
+    if (!policy || !workReady || (!reviewRun && !activeWork)) return;
     jumpRequestIdRef.current += 1;
     setJumping(false);
     const requestId = ++requestIdRef.current;
     setLoading(true);
     setError(null);
-    getTriageNavigation({
+    const request = activeWork ? getWorkNavigation(datasetId, activeWorkIds ?? [], navigationSampleId ?? activeWork.currentId) : getTriageNavigation({
       datasetId,
       reviewRun,
       sampleId: navigationSampleId,
@@ -484,12 +618,14 @@ export default function TriagePage() {
       okGrade: splitOk ? filterOkGrade : undefined,
       defectSeverity: ngUsesSeverity ? filterSeverity : undefined,
       defectTypeId: ngUsesDefectType ? filterDefectTypeId : undefined
-    })
+    });
+    request
       .then(async (navigationValue) => {
         if (requestId !== requestIdRef.current) return;
         setNavigation(navigationValue);
         const sample = navigationValue.current_sample;
         if (!sample) {
+          if (requestedSampleId) replaceSearchParams({ sample: null });
           setTriage(null);
           setDraft(blankDraft());
           setImageReady(false);
@@ -504,14 +640,7 @@ export default function TriagePage() {
         setDraft(draftFromTriage(triageValue));
         setZoom(1);
         setImageReady(false);
-        try {
-          window.localStorage.setItem(
-            `dataset-manager.triage.${datasetId}`,
-            JSON.stringify({ sampleId: sample.id, queueScope })
-          );
-        } catch {
-          // 浏览器禁用本地存储时不影响分拣。
-        }
+        setWork(value => value && value.currentId !== sample.id ? { ...value, currentId: sample.id } : value);
       })
       .catch((loadError) => {
         if (requestId === requestIdRef.current) setError(errorMessage(loadError));
@@ -535,7 +664,10 @@ export default function TriagePage() {
     replaceSearchParams,
     requestedSampleId,
     splitOk,
-    reviewRun
+    reviewRun,
+    workReady,
+    Boolean(activeWork),
+    activeIdsKey
   ]);
 
   useEffect(() => {
@@ -574,7 +706,7 @@ export default function TriagePage() {
     payload: Omit<SampleTriageWrite, "expected_version" | "expected_file_hash">,
     options: { advance: boolean; message: string; pendingGuidance?: boolean }
   ) => {
-    if (!currentSample || !triage || savingRef.current) return;
+    if (!currentSample || !triage || savingRef.current) return false;
     savingRef.current = true;
     const saveSequence = ++saveSequenceRef.current;
     const nextSampleId = navigation?.next_sample?.id ?? null;
@@ -592,7 +724,7 @@ export default function TriagePage() {
         const actual = await getSampleTriage(currentSample.id);
         const expectedDefects = [...(payload.defect_type_ids ?? [])].sort((a, b) => a - b);
         const actualDefects = actual.defect_types.map(d => d.id).sort((a, b) => a - b);
-        const matches = actual.triage_version === before.triage_version + 1 &&
+        const matches = (actual.triage_version === before.triage_version + 1 || actual.triage_version === before.triage_version) &&
           actual.file_hash === before.file_hash && !actual.outdated &&
           actual.current_policy_version === before.current_policy_version &&
           actual.triage_status === payload.triage_status && actual.ok_grade === (payload.ok_grade ?? null) &&
@@ -611,6 +743,11 @@ export default function TriagePage() {
       }
       setTriage(saved);
       setDraft(draftFromTriage(saved));
+      if (workRef.current?.sampleIds.includes(currentSample.id) && !reviewRun) {
+        const nextWork = completeWorkSample(workRef.current, { sample_id: currentSample.id, triage_version: saved.triage_version,
+          file_hash: saved.file_hash, triage_policy_version: saved.triage_policy_version, triage_status: saved.triage_status, triage_outdated: saved.outdated });
+        setWork({ ...nextWork, currentId: options.advance ? nextSampleId : currentSample.id });
+      }
       if (reviewRun && saved.triage_status !== "pending") {
         await updateValidationReview(reviewRun,currentSample.id,{state:"reviewed",expected_version:saved.triage_version,expected_file_hash:saved.file_hash});
         setNavigationRevision(value=>value+1);
@@ -625,8 +762,10 @@ export default function TriagePage() {
         if (saveSequence !== saveSequenceRef.current) return;
         setStats(nextStats);
       }).catch(() => undefined);
+      return true;
     } catch (saveError) {
       setError(errorMessage(saveError));
+      return false;
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -669,9 +808,13 @@ export default function TriagePage() {
   }, [savePayload]);
   actionRef.current = quickAction;
 
-  const saveDetail = useCallback(() => {
+  const saveDetail = useCallback((advance = true) => {
     let nextDraft = draft;
     if (draft.status === "untriaged") {
+      if (draft.note.trim()) {
+        setError("备注尚未保存，请先选择 OK、NG 或待定判定。");
+        return Promise.resolve(false);
+      }
       nextDraft = blankDraft();
     } else if (draft.status === "ok" && !splitOk) {
       nextDraft = {
@@ -702,9 +845,9 @@ export default function TriagePage() {
     }
     if (nextDraft.status === "ok" && splitOk && !nextDraft.okGrade) {
       setError(`请选择${okGradeCopy.clear}或${okGradeCopy.borderline}。`);
-      return;
+      return Promise.resolve(false);
     }
-    void savePayload(
+    return savePayload(
       {
         triage_status: nextDraft.status,
         ok_grade: nextDraft.status === "ok" ? nextDraft.okGrade : null,
@@ -714,7 +857,7 @@ export default function TriagePage() {
         triage_note: nextDraft.note.trim() || null
       },
       {
-        advance: true,
+        advance,
         message: nextDraft.status === "pending"
           ? "已加入待定复看"
           : "分拣结果已保存",
@@ -736,6 +879,12 @@ export default function TriagePage() {
         writeFromTriage(undoRecord.before, undoRecord.savedVersion)
       );
       if (reviewRun) await updateValidationReview(reviewRun,undoRecord.sample.id,{state:"pending"});
+      setWork(value => {
+        if (!value) return value;
+        const completed = { ...value.completed };
+        delete completed[undoRecord.sample.id];
+        return { ...value, completed, skipped: value.skipped.filter(id => id !== undoRecord.sample.id), currentId: undoRecord.sample.id, view: "todo" };
+      });
       setUndoStack((current) => {
         const next = current.slice(0, -1);
         const previousIndex = next.map((item) => item.sample.id).lastIndexOf(
@@ -767,11 +916,11 @@ export default function TriagePage() {
       setSaving(false);
     }
   }, [currentSample?.id, datasetId, replaceSearchParams, showToast, undoStack, reviewRun]);
-  undoRef.current = () => void undoLast();
+  undoRef.current = () => requestNavigation(() => void undoLast());
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.isComposing || isTypingTarget(event.target)) return;
+      if (event.isComposing || isTypingTarget(event.target) || referenceOpen || workpieceOpen || pendingNavigation || policyPanelOpen) return;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
         event.preventDefault();
         undoRef.current?.();
@@ -791,9 +940,12 @@ export default function TriagePage() {
         else if (event.key === "3") actions?.("pending");
         else if (event.key !== " ") return;
       }
-      if (event.key === " " && navigation?.next_sample) {
+      if (event.key === " " && activeWork) {
         event.preventDefault();
-        replaceSearchParams({ sample: navigation.next_sample.id });
+        skipCurrent();
+      } else if (event.key === " " && navigation?.next_sample) {
+        event.preventDefault();
+        requestNavigation(() => replaceSearchParams({ sample: navigation.next_sample?.id ?? null }));
       } else if (event.key === " ") {
         return;
       }
@@ -801,7 +953,7 @@ export default function TriagePage() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [imageReady, loading, mode, navigation?.next_sample, replaceSearchParams, splitOk]);
+  }, [imageReady, loading, mode, navigation?.next_sample, replaceSearchParams, splitOk, referenceOpen, workpieceOpen, pendingNavigation, policyPanelOpen, requestNavigation, activeWork]);
 
   function toggleDefectType(id: number) {
     setDraft((current) => {
@@ -845,30 +997,36 @@ export default function TriagePage() {
   }
 
   function setTriageFilter(name: string, value: string) {
-    setSearchParams((current) => {
-      const next = new URLSearchParams(current);
-      if (value) next.set(name, value);
-      else next.delete(name);
-      next.delete("sample");
-      return next;
-    }, { replace: true });
+    requestNavigation(() => {
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        if (value) next.set(name, value);
+        else next.delete(name);
+        next.delete("sample");
+        return next;
+      }, { replace: true });
+    });
   }
 
   function clearTriageFilters() {
-    setSearchParams((current) => {
-      const next = new URLSearchParams(current);
-      ["status", "okGrade", "defectType", "severity", "sample"].forEach((key) => next.delete(key));
-      return next;
-    }, { replace: true });
+    requestNavigation(() => {
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        ["status", "okGrade", "defectType", "severity", "sample"].forEach((key) => next.delete(key));
+        return next;
+      }, { replace: true });
+    });
   }
 
   function selectQueue(nextQueue: TriageQueueScope) {
-    replaceSearchParams({
-      queue: nextQueue,
-      sample: null,
-      split: nextQueue === "current_split"
-        ? currentSample?.split ?? queueSplit ?? "unassigned"
-        : null
+    requestNavigation(() => {
+      replaceSearchParams({
+        queue: nextQueue,
+        sample: null,
+        split: nextQueue === "current_split"
+          ? currentSample?.split ?? queueSplit ?? "unassigned"
+          : null
+      });
     });
   }
 
@@ -904,7 +1062,7 @@ export default function TriagePage() {
     setJumping(true);
     setError(null);
     try {
-      const target = await getTriageNavigation({
+      const target = activeWork ? await getWorkNavigation(datasetId, activeWorkIds ?? [], undefined, position) : await getTriageNavigation({
         datasetId,
         reviewRun,
         targetIndex: position,
@@ -920,7 +1078,7 @@ export default function TriagePage() {
         setError("目标图片已不在当前队列，请刷新后重试。");
         return;
       }
-      replaceSearchParams({ sample: target.current_sample.id });
+      requestNavigation(() => replaceSearchParams({ sample: target.current_sample?.id ?? null }));
     } catch (jumpError) {
       if (jumpRequestId === jumpRequestIdRef.current) {
         setError(errorMessage(jumpError));
@@ -934,18 +1092,20 @@ export default function TriagePage() {
 
   function openPolicyModal() {
     if (!policy) return;
-    setPolicyDraft({
-      split_ok: policy.split_ok,
-      ng_grouping: policy.ng_grouping,
-      instructions: policy.instructions,
-      clear_ok_definition: policy.clear_ok_definition,
-      borderline_ok_definition: policy.borderline_ok_definition,
-      mild_definition: policy.mild_definition,
-      moderate_definition: policy.moderate_definition,
-      severe_definition: policy.severe_definition
+    requestNavigation(() => {
+      setPolicyDraft({
+        split_ok: policy.split_ok,
+        ng_grouping: policy.ng_grouping,
+        instructions: policy.instructions,
+        clear_ok_definition: policy.clear_ok_definition,
+        borderline_ok_definition: policy.borderline_ok_definition,
+        mild_definition: policy.mild_definition,
+        moderate_definition: policy.moderate_definition,
+        severe_definition: policy.severe_definition
+      });
+      setPolicyImpact(null);
+      setPolicyPanelOpen(true);
     });
-    setPolicyImpact(null);
-    setPolicyPanelOpen(true);
   }
 
   function closePolicyModal() {
@@ -1034,6 +1194,11 @@ export default function TriagePage() {
             <Link
               state={location.state}
               to={reviewRun ? `/datasets/${datasetId}/validate/${reviewRun}${reviewReturn.startsWith("?")?reviewReturn:""}` : `/datasets/${datasetId}`}
+              onClick={(event) => {
+                if (!hasUnsavedDraft && !saving) return;
+                event.preventDefault();
+                requestNavigation(() => navigate(reviewRun ? `/datasets/${datasetId}/validate/${reviewRun}${reviewReturn.startsWith("?") ? reviewReturn : ""}` : `/datasets/${datasetId}`, { state: location.state }));
+              }}
               className="inline-flex min-h-11 shrink-0 items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-950"
             >
               <ArrowLeft size={18} /> {reviewRun?"返回本次实验":"返回数据集"}
@@ -1044,7 +1209,9 @@ export default function TriagePage() {
               <p className="text-xs text-gray-500">规则版本 {policy?.version ?? "-"} · 保存成功后自动进入下一张</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" disabled={loading || saving || !currentSample} onClick={() => setWorkpieceOpen(true)} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40">工件多视角</button>
+            <button type="button" disabled={loading || saving || !dataset} onClick={() => setReferenceOpen(true)} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"><BookOpen size={16} />参考卡</button>
             <button
               type="button"
               onClick={openPolicyModal}
@@ -1055,7 +1222,7 @@ export default function TriagePage() {
             <button
               type="button"
               title="撤销上一步（Ctrl+Z）"
-              onClick={() => void undoLast()}
+              onClick={() => requestNavigation(() => void undoLast())}
               disabled={undoStack.length === 0 || saving}
               className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
             >
@@ -1112,7 +1279,34 @@ export default function TriagePage() {
         onSubmit={() => void savePolicy()}
       />
 
+      {referenceOpen && <ReferenceCasesPanel datasetId={datasetId} currentSample={currentSample} onClose={() => setReferenceOpen(false)} />}
+      {workpieceOpen && currentSample && <WorkpieceViewsPanel sampleId={currentSample.id} onClose={() => setWorkpieceOpen(false)} />}
+      <div ref={pendingDialogRef}><Modal open={Boolean(pendingNavigation)} title="本张有未保存的分拣修改" onClose={() => { if (!saving) setPendingNavigation(null); }} dismissible={!saving}>
+        <div className="p-5"><p className="text-sm text-gray-600">保存当前判定后继续，或放弃本次修改。保存失败时会留在当前图片。</p>{error && <p role="alert" className="mt-2 text-sm text-red-700">{error}</p>}<div className="mt-4 flex flex-wrap gap-2">
+          <button type="button" disabled={saving || !imageReady} onClick={() => void saveDetail(false).then((saved) => { if (saved && pendingNavigation) { const action = pendingNavigation; setPendingNavigation(null); action(); } })} className="min-h-10 rounded-lg bg-gray-900 px-3 text-sm text-white disabled:opacity-40">{saving ? "正在保存…" : "保存并继续"}</button>
+          <button type="button" disabled={saving} onClick={() => { const action = pendingNavigation; if (triage) setDraft(draftFromTriage(triage)); dirtyRef.current = false; setPendingNavigation(null); action?.(); }} className="min-h-10 rounded-lg border border-line px-3 text-sm disabled:opacity-40">放弃修改</button>
+          <button type="button" disabled={saving} onClick={() => setPendingNavigation(null)} className="min-h-10 rounded-lg border border-line px-3 text-sm disabled:opacity-40">取消</button>
+        </div></div>
+      </Modal></div>
+
       <section className="mx-auto max-w-[1600px] px-5 py-4">
+        {activeWork && <section aria-label="本次分拣工作" className="mb-4 space-y-3 rounded-xl border border-line bg-white p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0"><h2 className="font-semibold">本次分拣工作 · 固定 {activeWork.sampleIds.length} 张</h2>
+              <p className="mt-1 text-sm text-gray-600">已处理 {Object.keys(activeWork.completed).length} · 其中待确认 {Object.values(activeWork.completed).filter(item => item.triage_status === "pending").length} · 暂时跳过 {activeWork.skipped.length} · 待处理 {activeWork.sampleIds.length - Object.keys(activeWork.completed).length - activeWork.skipped.length}</p>
+              <p className="mt-1 text-xs text-gray-500">范围按相对路径排序；切换队列或筛选会开始该范围的新工作。进度保存在当前浏览器，未保存草稿和撤销历史不跨会话保留。</p>
+            </div>
+            <button type="button" disabled={checkingWork || loading || saving} onClick={() => requestNavigation(() => void checkWork())} className="min-h-10 rounded-lg border border-line px-3 text-sm disabled:opacity-40">{checkingWork ? "正在检查…" : "检查新增与变化"}</button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {([["todo", "继续待处理"], ["skipped", "回看跳过"], ["all", "回看本次全部"]] as const).map(([view, label]) => <button key={view} type="button" disabled={saving || loading} aria-pressed={activeWork.view === view} onClick={() => changeWorkView(view)} className={`min-h-10 rounded-lg border px-3 text-sm disabled:opacity-40 ${activeWork.view === view ? "border-gray-900 bg-gray-900 text-white" : "border-line"}`}>{label}</button>)}
+            <button type="button" disabled={!currentSample || loading || saving || Boolean(currentSample && activeWork.completed[currentSample.id]) || activeWork.view === "skipped"} onClick={skipCurrent} className="min-h-10 rounded-lg border border-line px-3 text-sm disabled:opacity-40">暂时跳过（空格）</button>
+            {activeWork.view === "skipped" && currentSample && <button type="button" disabled={saving || loading} onClick={() => requestNavigation(() => { setWork(value => value ? { ...value, skipped: value.skipped.filter(id => id !== currentSample.id), view: "todo", currentId: currentSample.id } : value); })} className="min-h-10 rounded-lg border border-line px-3 text-sm disabled:opacity-40">放回待处理</button>}
+          </div>
+          {workNotice && <p role="status" className="text-xs text-gray-600">{workNotice}</p>}
+          {storageWarning && <p role="alert" className="text-sm text-amber-800">浏览器无法保存工作进度，本页仍可操作；关闭页面后可能无法续接。</p>}
+          {newWorkIds.length > 0 && <div className="flex flex-wrap items-center gap-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900"><span>当前条件另有 {newWorkIds.length} 张图片未纳入本次。</span><button type="button" disabled={saving || loading || activeWork.sampleIds.length + newWorkIds.length > 10000} onClick={() => requestNavigation(() => { setWork(value => value ? { ...value, sampleIds: [...value.sampleIds, ...newWorkIds], view: "todo" } : value); setNewWorkIds([]); })} className="min-h-9 rounded border border-amber-300 px-3 disabled:opacity-40">确认纳入本次</button><span className="text-xs">单次最多 10000 张</span></div>}
+        </section>}
         {reviewRun&&<p className="mb-4 rounded-lg border bg-white p-4 text-sm">本实验待复核 {navigation?.total??0} 张。保留原判定也可再次确认；保存有效 OK/NG 后移出候选，待定仍保留。历史实验不改写。</p>}
         {!reviewRun&&<div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <div className="rounded-xl border border-line bg-white px-4 py-3">
@@ -1302,14 +1496,14 @@ export default function TriagePage() {
                 <div className={`max-w-md text-center ${lightCanvas ? "text-gray-700" : "text-gray-300"}`}>
                   <ListChecks size={42} className={`mx-auto mb-3 ${lightCanvas ? "text-gray-400" : "text-gray-500"}`} />
                   <h2 className={`text-lg font-semibold ${lightCanvas ? "text-gray-950" : "text-white"}`}>
-                    {reviewRun ? "本实验候选已复核完成" : queueScope === "current_filter" && hasActiveTriageFilters
+                    {reviewRun ? "本实验候选已复核完成" : activeWork ? activeWork.view === "skipped" ? "没有暂时跳过的图片" : "本次范围已处理完" : queueScope === "current_filter" && hasActiveTriageFilters
                       ? "没有符合筛选条件的图片"
                       : queueScope === "current_filter" && (stats?.total_images ?? 0) === 0
                         ? "数据集中没有可分拣图片"
                         : "这个队列已经处理完了"}
                   </h2>
                   <p className={`mt-2 text-sm leading-6 ${lightCanvas ? "text-gray-600" : "text-gray-400"}`}>
-                    {reviewRun ? "本实验候选已复核完成" : queueScope === "current_filter" && hasActiveTriageFilters
+                    {reviewRun ? "本实验候选已复核完成" : activeWork ? "可回看本次全部、处理跳过的图片，或检查新增与变化。暂时跳过不会改变人工判定。" : queueScope === "current_filter" && hasActiveTriageFilters
                       ? "请调整或清除筛选条件，当前数据不会被修改。"
                       : queueScope === "current_filter" && (stats?.total_images ?? 0) === 0
                         ? "请先返回数据集扫描图片，再开始快速分拣。"
@@ -1369,13 +1563,13 @@ export default function TriagePage() {
                 <button
                   type="button"
                   disabled={!navigation?.previous_sample || saving}
-                  onClick={() => replaceSearchParams({ sample: navigation?.previous_sample?.id ?? null })}
+                  onClick={() => requestNavigation(() => replaceSearchParams({ sample: navigation?.previous_sample?.id ?? null }))}
                   className={`inline-flex min-h-10 items-center gap-1 rounded-lg border px-3 text-sm disabled:opacity-30 ${lightCanvas ? "border-gray-300 text-gray-700 hover:bg-gray-100" : "border-white/15 text-gray-200 hover:bg-white/10"}`}
                 ><ChevronLeft size={17} /> 上一张</button>
                 <button
                   type="button"
                   disabled={!navigation?.next_sample || saving}
-                  onClick={() => replaceSearchParams({ sample: navigation?.next_sample?.id ?? null })}
+                  onClick={() => requestNavigation(() => replaceSearchParams({ sample: navigation?.next_sample?.id ?? null }))}
                   className={`inline-flex min-h-10 items-center gap-1 rounded-lg border px-3 text-sm disabled:opacity-30 ${lightCanvas ? "border-gray-300 text-gray-700 hover:bg-gray-100" : "border-white/15 text-gray-200 hover:bg-white/10"}`}
                 >下一张 <ChevronRight size={17} /></button>
               </div>
@@ -1386,12 +1580,12 @@ export default function TriagePage() {
             <div className="flex border-b border-line p-1.5">
               <button
                 type="button"
-                onClick={() => setMode("quick")}
+                onClick={() => requestNavigation(() => changeMode("quick"))}
                 className={`min-h-10 flex-1 rounded-lg text-sm font-semibold ${mode === "quick" ? "bg-gray-900 text-white" : "text-gray-600 hover:bg-gray-50"}`}
               >快速判定</button>
               <button
                 type="button"
-                onClick={() => setMode("detail")}
+                onClick={() => changeMode("detail")}
                 className={`min-h-10 flex-1 rounded-lg text-sm font-semibold ${mode === "detail" ? "bg-gray-900 text-white" : "text-gray-600 hover:bg-gray-50"}`}
               >详细分拣</button>
             </div>
@@ -1545,10 +1739,16 @@ export default function TriagePage() {
 
                 <div>
                   <label htmlFor="triage-note" className="text-sm font-semibold">备注</label>
-                  <textarea id="triage-note" rows={3} value={draft.note} onChange={(event) => setDraft((current) => ({ ...current, note: event.target.value }))} placeholder="记录边界情况、客户要求或复看原因" className="mt-2 w-full resize-y rounded-lg border border-line p-3 text-sm" />
+                  <textarea id="triage-note" rows={3} maxLength={4000} disabled={!triage || saving || loading} value={draft.note} onChange={(event) => setDraft((current) => ({ ...current, note: event.target.value }))} placeholder="记录边界情况、客户要求或复看原因" className="mt-2 w-full resize-y rounded-lg border border-line p-3 text-sm disabled:opacity-40" />
+                  {dataset && <TriageReasonChips key={`${dataset.id}:${dataset.created_at}`} storageKey={`dataset-manager.triage.reasons.${dataset.id}.${dataset.created_at}`} disabled={!triage || saving || loading} onInsert={(reason) => {
+                    const next = draft.note ? `${draft.note}${draft.note.endsWith("\n") ? "" : "\n"}${reason}` : reason;
+                    if (next.length > 4000) { setError("备注最多 4000 字，请精简后再添加理由。"); return; }
+                    setDraft((current) => ({ ...current, note: next }));
+                  }} />}
+                  {hasUnsavedDraft && <p role="status" className="mt-2 text-xs text-amber-800">本张有未保存修改</p>}
                 </div>
 
-                <button type="button" onClick={saveDetail} disabled={!triage || saving || !imageReady} className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-gray-900 px-4 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-40">
+                <button type="button" onClick={() => void saveDetail()} disabled={!triage || saving || !imageReady} className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-gray-900 px-4 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-40">
                   {saving ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />} 保存并下一张
                 </button>
               </div>

@@ -37,6 +37,12 @@ from app.schemas.triage import (
     TriagePolicyValues,
     TriageQueueScope,
     TriageStats,
+    TriageWorkNavigationRequest,
+    TriageWorkScopeRequest,
+    TriageWorkScopeResponse,
+    TriageWorkStateRequest,
+    TriageWorkStateResponse,
+    TriageWorkStateItem,
 )
 from app.services.dataset_revision_service import bump_dataset_revision
 from app.services.dataset_service import get_dataset_or_404
@@ -1118,12 +1124,11 @@ def _triage_filters(
     return statement
 
 
-def get_triage_navigation(
+def _queue_filter_values(
     session: Session,
     dataset_id: int,
     *,
     sample_id: int | None = None,
-    target_index: int | None = None,
     queue_scope: TriageQueueScope = "untriaged",
     search: str | None = None,
     split: str | None = None,
@@ -1131,10 +1136,7 @@ def get_triage_navigation(
     ok_grade: str | None = None,
     defect_severity: str | None = None,
     defect_type_id: int | None = None,
-    sample_ids: list[int] | None = None,
-) -> TriageNavigationResponse:
-    _ensure_schema(session)
-    dataset = get_dataset_or_404(session, dataset_id)
+) -> dict:
     validate_triage_filters(
         session,
         dataset_id,
@@ -1155,19 +1157,97 @@ def get_triage_navigation(
     if queue_scope == "current_split" and not effective_split:
         raise TriageValidationError("跳转当前划分前，请先选择一个有效划分。")
 
+    return dict(
+        search=search if queue_scope == "current_filter" else None,
+        split=effective_split if queue_scope in {"current_filter", "current_split"} else None,
+        triage_status=effective_status,
+        ok_grade=ok_grade if queue_scope == "current_filter" else None,
+        defect_severity=defect_severity if queue_scope == "current_filter" else None,
+        defect_type_id=defect_type_id if queue_scope == "current_filter" else None,
+    )
+
+
+def create_triage_work_scope(
+    session: Session, dataset_id: int, payload: TriageWorkScopeRequest,
+) -> TriageWorkScopeResponse:
+    _ensure_schema(session)
+    dataset = get_dataset_or_404(session, dataset_id)
+    filters = _queue_filter_values(session, dataset_id, **payload.model_dump())
+    sample_ids = list(session.exec(
+        _triage_filters(select(Sample.id), dataset_id, **filters)
+        .order_by(func.lower(Sample.relative_path), Sample.id).limit(10001)
+    ).all())
+    if len(sample_ids) > 10000:
+        raise TriageValidationError("本次工作最多包含 10000 张图片，请缩小筛选范围后重试。")
+    return TriageWorkScopeResponse(
+        dataset_id=dataset_id,
+        dataset_created_at=dataset.created_at.isoformat(),
+        dataset_revision=dataset.revision,
+        sample_ids=sample_ids,
+    )
+
+
+def get_triage_work_navigation(
+    session: Session, dataset_id: int, payload: TriageWorkNavigationRequest,
+) -> TriageNavigationResponse:
+    return get_triage_navigation(
+        session, dataset_id, queue_scope="current_filter", **payload.model_dump(),
+    )
+
+
+def get_triage_work_state(
+    session: Session, dataset_id: int, payload: TriageWorkStateRequest,
+) -> TriageWorkStateResponse:
+    _ensure_schema(session)
+    dataset = get_dataset_or_404(session, dataset_id)
+    rows = session.exec(select(Sample).where(
+        Sample.dataset_id == dataset_id, Sample.file_type == "image",
+        Sample.id.in_(payload.sample_ids),
+    ).order_by(func.lower(Sample.relative_path), Sample.id)).all()
+    return TriageWorkStateResponse(
+        dataset_revision=dataset.revision,
+        items=[TriageWorkStateItem(
+            sample_id=sample.id,
+            triage_version=sample.triage_version,
+            file_hash=sample.file_hash,
+            triage_policy_version=sample.triage_policy_version,
+            triage_status=sample.triage_status,
+            triage_outdated=sample.triage_status != "untriaged" and (
+                sample.triaged_file_hash != sample.file_hash
+                or sample.triage_policy_version != dataset.triage_policy_version
+            ),
+            file_status=sample.file_status,
+        ) for sample in rows],
+    )
+
+
+def get_triage_navigation(
+    session: Session,
+    dataset_id: int,
+    *,
+    sample_id: int | None = None,
+    target_index: int | None = None,
+    queue_scope: TriageQueueScope = "untriaged",
+    search: str | None = None,
+    split: str | None = None,
+    triage_status: str | None = None,
+    ok_grade: str | None = None,
+    defect_severity: str | None = None,
+    defect_type_id: int | None = None,
+    sample_ids: list[int] | None = None,
+) -> TriageNavigationResponse:
+    _ensure_schema(session)
+    dataset = get_dataset_or_404(session, dataset_id)
+    filters = _queue_filter_values(
+        session, dataset_id, sample_id=sample_id, queue_scope=queue_scope,
+        search=search, split=split, triage_status=triage_status, ok_grade=ok_grade,
+        defect_severity=defect_severity, defect_type_id=defect_type_id,
+    )
+
     def filtered(statement):
         if sample_ids is not None:
             statement = statement.where(Sample.id.in_(sample_ids))
-        return _triage_filters(
-            statement,
-            dataset_id,
-            search=search if queue_scope == "current_filter" else None,
-            split=effective_split if queue_scope in {"current_filter", "current_split"} else None,
-            triage_status=effective_status,
-            ok_grade=ok_grade if queue_scope == "current_filter" else None,
-            defect_severity=defect_severity if queue_scope == "current_filter" else None,
-            defect_type_id=defect_type_id if queue_scope == "current_filter" else None,
-        )
+        return _triage_filters(statement, dataset_id, **filters)
 
     total = int(
         session.exec(select(func.count()).select_from(filtered(select(Sample.id)).subquery())).one()

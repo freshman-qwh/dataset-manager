@@ -1,6 +1,8 @@
 # SQLite 正式迁移、备份与恢复
 
-日期：2026-07-26
+更新日期：2026-11-06。下方带阶段名的演练保留当时记录。
+
+当前唯一 head 为 `20261106_0015`。本次新增 `sample_collections` 保存收集篮和类别参考卡，纳入元数据备份；已有库必须显式离线升级，新建空库由启动流程按迁移初始化。原图不属于迁移和元数据备份范围。
 
 ## 目标与边界
 
@@ -38,7 +40,7 @@ python -m app.cli.database upgrade --database ../database/app.db --backup-dir ..
 
 ## 基线 revision
 
-F2-0 基线 revision 为 `20260726_0001`；F2-1A 新增 jobs 后，当前唯一 head 为 `20260726_0002`：
+F2-0 基线 revision 为 `20260726_0001`；F2-1A 新增 jobs 后，当时唯一 head 为 `20260726_0002`：
 
 - 空数据库会创建当前 SQLModel 表和索引。
 - 已对齐但没有 `alembic_version` 的数据库会采用当前基线。

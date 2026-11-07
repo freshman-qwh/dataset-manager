@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -318,6 +318,53 @@ class BatchTriageCommitResponse(BaseModel):
 
 
 TriageQueueScope = Literal["untriaged", "pending", "current_filter", "current_split"]
+
+
+class TriageWorkScopeRequest(BaseModel):
+    queue_scope: TriageQueueScope = "untriaged"
+    sample_id: int | None = Field(default=None, gt=0)
+    search: str | None = Field(default=None, max_length=300)
+    split: str | None = Field(default=None, max_length=40)
+    triage_status: TriageStatus | None = None
+    ok_grade: OkGrade | None = None
+    defect_severity: DefectSeverity | None = None
+    defect_type_id: int | None = Field(default=None, gt=0)
+
+
+class TriageWorkScopeResponse(BaseModel):
+    dataset_id: int
+    dataset_created_at: str
+    dataset_revision: int
+    sample_ids: list[int]
+
+
+class TriageWorkStateRequest(BaseModel):
+    sample_ids: list[Annotated[int, Field(strict=True, gt=0)]] = Field(max_length=10000)
+
+    @field_validator("sample_ids")
+    @classmethod
+    def deduplicate_ids(cls, value: list[int]) -> list[int]:
+        return list(dict.fromkeys(value))
+
+
+class TriageWorkNavigationRequest(TriageWorkStateRequest):
+    sample_id: int | None = Field(default=None, gt=0)
+    target_index: int | None = Field(default=None, ge=1)
+
+
+class TriageWorkStateItem(BaseModel):
+    sample_id: int
+    triage_version: int
+    file_hash: str
+    triage_policy_version: int | None
+    triage_status: TriageStatus
+    triage_outdated: bool
+    file_status: str
+
+
+class TriageWorkStateResponse(BaseModel):
+    dataset_revision: int
+    items: list[TriageWorkStateItem]
 
 
 class TriageNavigationResponse(BaseModel):

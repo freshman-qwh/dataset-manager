@@ -20,6 +20,11 @@ from app.schemas.triage import (
     TriagePolicyUpdateRequest,
     TriageQueueScope,
     TriageStats,
+    TriageWorkNavigationRequest,
+    TriageWorkScopeRequest,
+    TriageWorkScopeResponse,
+    TriageWorkStateRequest,
+    TriageWorkStateResponse,
 )
 from app.services import triage_service
 
@@ -225,6 +230,42 @@ def get_triage_navigation(
             defect_type_id=defect_type_id,
             sample_ids=sample_ids,
         )
+    except triage_service.TriageError as exc:
+        _raise_triage_error(exc)
+
+
+@router.post("/datasets/{dataset_id}/triage/work-scope", response_model=TriageWorkScopeResponse)
+def create_triage_work_scope(
+    dataset_id: int,
+    payload: TriageWorkScopeRequest,
+    session: Session = Depends(get_session),
+) -> TriageWorkScopeResponse:
+    try:
+        return triage_service.create_triage_work_scope(session, dataset_id, payload)
+    except triage_service.TriageError as exc:
+        _raise_triage_error(exc)
+
+
+@router.post("/datasets/{dataset_id}/triage/work-navigation", response_model=TriageNavigationResponse)
+def get_triage_work_navigation(
+    dataset_id: int,
+    payload: TriageWorkNavigationRequest,
+    session: Session = Depends(get_session),
+) -> TriageNavigationResponse:
+    try:
+        return triage_service.get_triage_work_navigation(session, dataset_id, payload)
+    except triage_service.TriageError as exc:
+        _raise_triage_error(exc)
+
+
+@router.post("/datasets/{dataset_id}/triage/work-state", response_model=TriageWorkStateResponse)
+def get_triage_work_state(
+    dataset_id: int,
+    payload: TriageWorkStateRequest,
+    session: Session = Depends(get_session),
+) -> TriageWorkStateResponse:
+    try:
+        return triage_service.get_triage_work_state(session, dataset_id, payload)
     except triage_service.TriageError as exc:
         _raise_triage_error(exc)
 

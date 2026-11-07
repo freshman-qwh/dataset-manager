@@ -1336,7 +1336,7 @@ export default function DatasetDetailPage() {
                 {scanning ? "扫描中…" : "添加图片"}
               </button>
               <Link
-                to={`/datasets/${datasetId}/triage?queue=untriaged`}
+                to={`/datasets/${datasetId}/triage?resume=1`}
                 className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
                 <ListChecks size={17} />

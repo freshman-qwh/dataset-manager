@@ -1,6 +1,6 @@
 # 开发与验证工作流
 
-适用于当前源码，更新于 2026-11-06。稳定约束见根 [AGENTS.md](../AGENTS.md)；本页集中维护执行方法，避免在各级规则和 README 中复制整套命令。
+适用于当前源码，更新于 2026-11-07。稳定约束见根 [AGENTS.md](../AGENTS.md)；本页集中维护执行方法，避免在各级规则和 README 中复制整套命令。
 
 ## 开始任务
 
@@ -67,6 +67,8 @@ $env:TEMP = (Resolve-Path .\.tmp).Path
 ```powershell
 npm run build
 ```
+
+涉及分拣本地工作进度时，从 `frontend/` 运行 `node scripts/check-triage-work.mjs`，核对固定范围、恢复、外部修改、删除记录及存储损坏/不可用边界。该脚本不连接数据库，不能替代实际页面的连续保存、失败恢复和多视角检查。
 
 收尾（仓库根）：
 

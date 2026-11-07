@@ -8,6 +8,7 @@ from app.models.defect_type import DefectType, SampleDefectLink
 from app.models.industrial_receipt import IndustrialReceipt
 from app.models.job import Job
 from app.models.sample import Sample, SampleTagLink
+from app.models.sample_collection import SampleCollection
 from app.models.tag import Tag
 from app.models.training_readiness_state import TrainingReadinessState
 from app.models.training_split_receipt import TrainingSplitReceipt
@@ -24,6 +25,7 @@ __all__ = [
     "DefectType",
     "Job",
     "Sample",
+    "SampleCollection",
     "SampleDefectLink",
     "SampleTagLink",
     "Tag",

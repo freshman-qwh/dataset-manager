@@ -11,6 +11,7 @@ from app.api import (
     comparison,
     dataset_card,
     datasets,
+    daily_tools,
     directory_exports,
     industrial,
     validation,
@@ -18,10 +19,12 @@ from app.api import (
     jobs,
     organization,
     samples,
+    sample_collections,
     sam,
     system,
     triage,
     triage_directory_mapping,
+    workpiece,
 )
 from app.core.config import get_settings
 from app.core.database import init_db
@@ -54,6 +57,7 @@ app.add_middleware(
 )
 
 app.include_router(datasets.router)
+app.include_router(daily_tools.router)
 app.include_router(organization.router)
 app.include_router(browse.router)
 app.include_router(dataset_card.router)
@@ -63,6 +67,7 @@ app.include_router(validation.router)
 app.include_router(directory_exports.router)
 app.include_router(filesystem.router)
 app.include_router(samples.router)
+app.include_router(sample_collections.router)
 app.include_router(annotations.router)
 app.include_router(sam.router)
 app.include_router(annotation_classes.router)
@@ -71,6 +76,7 @@ app.include_router(system.router)
 app.include_router(jobs.router)
 app.include_router(triage.router)
 app.include_router(triage_directory_mapping.router)
+app.include_router(workpiece.router)
 
 
 @app.get("/health")
