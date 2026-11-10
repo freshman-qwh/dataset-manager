@@ -1,116 +1,16 @@
-# Dataset Manager / 本地视觉数据集准备工作台
+# Dataset Manager 中文文档
 
-主推用途为本地工业异常检测数据准备：分拣 → 工件/批次分组 → 独立 train/val/test → 可校验训练包。详见 [工业试用指南](docs/industrial-trial-guide.md)，其中包含备份恢复和当前试用边界。
+产品介绍、Windows 便携版和上手流程请从[项目首页](README.md)开始。源码安装与启动见[开发工作流](docs/development-workflow.md)，其他操作见[文档导航](docs/README.md)。
 
-当前已发布版本：`v0.4.1`；当前开发候选：`v0.5.0`
+## 数据库维护
 
-这是一个面向研究人员、小型实验室和隐私敏感场景的本地优先视觉数据集准备工作台，聚焦“扫描数据 → 整理样本 → 连续标注 → 质量检查 → 导出训练数据”的单机闭环。后端使用 FastAPI + SQLModel + SQLite，前端使用 React + TypeScript + Vite + Tailwind CSS；原始文件留在本地磁盘，数据库只保存元数据。
+便携版用户先从页面安全退出，再用新版 `DatasetManager.exe` 启动。启动器会先备份并校验，再升级需要迁移的数据库。
 
-## 产品边界
-
-- 主线支持图片目标检测与实例分割数据准备，并兼顾图片分类式标签整理。
-- 视频和 CSV 当前只做资产登记、筛选和元数据管理，不扩展逐帧视频标注或表格标注。
-- MVP 不建设团队权限、云同步、在线 AI 服务或 CVAT 规模的任务体系；优先把单人离线标注与训练准备做得直观、可靠。
-
-## 快速启动
-
-Windows x64 用户可使用免安装便携版：完整解压 ZIP 后双击 `DatasetManager.exe`，无需安装 Python 或 Node.js。程序会自动选择本地端口并打开浏览器；再次双击只打开已有服务。页面左下角“便携版”菜单可打开数据目录或安全退出。
-
-程序文件留在解压目录，数据库、配置、日志、缓存和导出统一保存在 `%LOCALAPPDATA%\DatasetManager`。升级前先安全退出，再覆盖程序文件；应用数据和用户导入的原始文件均保留。构建和自动验收方法见 [packaging/windows/README.md](packaging/windows/README.md)。
-
-开发环境启动方式如下。
-
-全新数据库首次启动会通过正式迁移初始化全部结构。已有数据库仍需按维护说明离线升级；请先停止后端，再在 backend 目录运行 `python -m app.cli.database upgrade --database ../database/app.db --backup-dir ../database/backups`，升级前会校验备份。便携版由启动器处理此步骤。
-
-后端：
+从源码运行时，如果页面提示工作区需要升级，请先关闭后端及其他数据库使用者。核对页面显示的数据库路径，然后在 `backend` 目录用项目 Python 环境运行以下命令。命令中的路径适用于默认工作区，使用其他工作区时请改为实际路径。
 
 ```bash
-cd backend
-uv sync
-uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+uv run python -m app.cli.database status --database ../database/app.db
+uv run python -m app.cli.database upgrade --database ../database/app.db --backup-dir ../database/backups
 ```
 
-前端：
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-访问：
-
-```text
-http://127.0.0.1:5173
-```
-
-API 文档：
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-## 当前功能
-
-- 创建和浏览数据集
-- 增量扫描本地文件夹
-- 登记图片、视频、CSV 样本
-- 自动保存文件大小、扩展名、hash、相对路径、文件状态和扫描时间
-- 样本网格预览
-- 样本详情侧边栏
-- 标签、备注、split 编辑和批量操作
-- 标签体系管理：颜色、描述、层级和别名
-- 重复样本识别：按 hash 检测重复文件
-- 审查状态底层字段：未标注、审查中、已通过、已拒绝
-- 数据集体检：集中检查缺失文件、重复样本、未标注样本和划分覆盖
-- 异常统计卡：缺失/重复有问题时变色，点击后提供对应筛选或修复入口
-- 样本统计卡支持按全部类型、图片、视频快速筛选
-- 标签统计卡：展示各标签命中数量、未标注样本数，并支持按标签快速筛选
-- 数据集随机/分层划分：支持 train/val/test 比例、是否划出 test、标签分层和固定随机种子；极端比例导致验证集或测试集名额不足时会提示至少需要的名额数量
-- 缺失文件修复：单文件重新定位和按新根目录批量重新挂载
-- 打开数据集自动扫描设置：进入详情页时可自动执行一次增量扫描
-- 样本记录删除：单选/多选删除数据库元数据，不删除本地原始文件
-- 元数据导入：从 CSV/JSON 批量导入标签、split、备注和自定义属性
-- 搜索、文件类型筛选、标签筛选
-- 数据集统计卡片，包含 train/val/test 和重复样本统计
-- manifest JSON 导出、CSV 标签表下载，以及 COCO/YOLO 格式骨架
-
-## 元数据导入格式
-
-CSV 示例：
-
-```csv
-relative_path,tags,split,notes,quality
-images/a.png,"cat;review",train,"good sample",high
-```
-
-JSON 示例：
-
-```json
-[
-  {
-    "relative_path": "images/a.png",
-    "tags": ["cat", "review"],
-    "split": "train",
-    "notes": "good sample",
-    "quality": "high"
-  }
-]
-```
-
-支持按 `sample_id`、`relative_path`、`absolute_path`、`filename`、`file_hash` 匹配样本。导入只更新已扫描登记的样本；只修改扫描目录不会自动登记文件，需要先执行扫描。`relative_path` 相对于数据集扫描目录；`absolute_path` 会做路径归一化，兼容 Windows 下的 `D:/...` 和 `D:\...` 写法。若绝对路径位于数据集扫描目录下，系统会同时尝试转换为相对路径匹配。除匹配字段、`tags`、`split`、`notes` 外，其余字段会写入样本自定义元数据。
-
-## 导出说明
-
-`manifest` 是系统原生清单；`CSV 标签表` 是当前最实用的样本级标签导出。COCO/YOLO 目前只是格式骨架，因为完整标准导出需要先实现 bbox、segmentation 等标注数据模型。前端导出会先显示预览弹窗，确认后再下载文件。
-
-## 删除与修复边界
-
-- 删除样本记录只删除 SQLite 中的样本元数据和标签关联，不删除本地原始文件。
-- 缺失文件修复只更新数据库中的路径、hash、大小、类型和文件状态，不移动、不重命名、不覆盖本地文件。
-- 批量修复缺失文件时，系统按样本 `relative_path` 在新根目录下查找文件。
-- 审查状态作为底层字段保留，当前高频工作流优先使用数据集体检、标签覆盖和划分规划。
-
-## 数据安全
-
-扫描过程只读取文件，不会移动、重命名、删除或覆盖原始数据。SQLite 只保存元数据，不保存大文件内容。
+升级命令先创建并校验备份，再迁移数据库副本。升级成功后重启后端。若命令报告数据库占用或存在 SQLite 侧车文件，请按[迁移与恢复说明](docs/database-migrations.md)处理。

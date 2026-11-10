@@ -1,6 +1,6 @@
 # 开发与验证工作流
 
-适用于当前源码，更新于 2026-11-07。稳定约束见根 [AGENTS.md](../AGENTS.md)；本页集中维护执行方法，避免在各级规则和 README 中复制整套命令。
+适用于当前源码，更新于 2026-11-10。稳定约束见根 [AGENTS.md](../AGENTS.md)；本页集中维护执行方法，避免在各级规则和 README 中复制整套命令。
 
 ## 开始任务
 
@@ -27,9 +27,19 @@ npm ci
 npm run dev
 ```
 
-后端默认 `http://127.0.0.1:8000`，API 文档为 `/docs`；前端默认 `http://127.0.0.1:5173`，Vite 将 `/api` 代理到后端。修改 API 地址时按根 README 配置 `VITE_API_BASE_URL`。没有启动服务时，不把这些默认值报告成当前可用地址。
+后端默认 `http://127.0.0.1:8000`，API 文档为 `/docs`。前端默认 `http://127.0.0.1:5173`，Vite 将 `/api` 代理到后端。没有启动服务时，不把这些默认值报告成当前可用地址。
 
 启动前检查已有服务；已有进程可用时复用。前台终端用 `Ctrl+C` 停止自己启动的服务；后台进程记录 PID/日志并按 PID 停止，不按端口盲目结束未知进程。Windows `Start-Process` 使用 `-WindowStyle Hidden`。
+
+### 本地配置
+
+[`.env.example`](../.env.example) 列出了数据库路径、存储目录和 CORS 等配置项。默认数据库和应用存储目录分别为仓库内的 `database/app.db` 和 `storage/`。后端依次读取根目录的 `.env` 和 `backend/.env`，后者可以覆盖同名设置。
+
+如果前端需要直接访问自定义后端地址，在 `frontend/.env` 中填写 `VITE_API_BASE_URL` 后重启 Vite。例如，后端监听 `127.0.0.1:8001` 时使用以下配置，并确认后端的 `CORS_ORIGINS` 允许当前前端来源。
+
+```dotenv
+VITE_API_BASE_URL=http://127.0.0.1:8001/api
+```
 
 ### 界面验收隔离
 

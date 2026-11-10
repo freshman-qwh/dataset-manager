@@ -9,6 +9,7 @@
 | 了解定位、核心流程与功能取舍 | [产品范围](product-scope.md)、[项目首页](../README.md) |
 | 快速切换分散的数据集、浏览嵌套目录和图片 | [本地浏览](local-browsing.md) |
 | 管理项目、对象类别与批次，导入 MVTec / VisA | [项目、类别与批次](project-category-batch.md) |
+| 用 CSV 或 JSON 批量补充已登记样本的标签、划分和备注 | [导入样本元数据](metadata-import.md) |
 | 复用导入格式和类别/工件规则，接收下一采集批次 | [新批次接收方案](project-category-batch.md#新批次接收方案) |
 | 继续上次浏览、生成数据集名片、查看正常与缺陷对照 | [日常浏览与对照](daily-tools.md) |
 | 续接分拣范围与进度、查看同工件多视角 | [分拣续接](daily-tools.md#续接分拣工作)、[工件多视角](daily-tools.md#查看同工件多视角) |
