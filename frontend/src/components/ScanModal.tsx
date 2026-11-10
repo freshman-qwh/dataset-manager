@@ -10,11 +10,12 @@ interface ScanModalProps {
   datasetId?: number;
   defaultPath: string;
   scanning: boolean;
+  receptionEnabled?: boolean;
   onClose: () => void;
   onScan: (path: string, options?: ScanOptions) => Promise<void>;
 }
 
-export default function ScanModal({ open, datasetId, defaultPath, scanning, onClose, onScan }: ScanModalProps) {
+export default function ScanModal({ open, datasetId, defaultPath, scanning, receptionEnabled = false, onClose, onScan }: ScanModalProps) {
   const [path, setPath] = useState(defaultPath);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [options, setOptions] = useState<ScanOptions>({ import_format: "auto" });
@@ -57,7 +58,7 @@ export default function ScanModal({ open, datasetId, defaultPath, scanning, onCl
             </button>
           </div>
         </label>
-        {datasetId && <ScanImportFields key={`${datasetId}:${open}`} datasetId={datasetId} open={open} path={path} disabled={scanning} onChange={setOptions} onValidityChange={setOptionsValid} />}
+        {datasetId && <ScanImportFields key={`${datasetId}:${open}`} datasetId={datasetId} open={open} path={path} disabled={scanning} receptionEnabled={receptionEnabled} onChange={setOptions} onValidityChange={setOptionsValid} />}
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"

@@ -290,6 +290,11 @@ export interface ScanResult {
   batches_committed: number;
   error_count: number;
   errors: string[];
+  assigned_batch_id?: number | null;
+  detected_format?: string;
+  benchmark_images?: number;
+  linked_masks?: number;
+  import_warnings?: string[];
 }
 
 export interface SampleQuery {

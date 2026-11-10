@@ -25,14 +25,14 @@ def plan_path(plan_id: str) -> Path:
     return get_settings().storage_root / "industrial-plans" / f"{plan_id}.json"
 
 
-def freeze(kind: str, dataset_id: int, revision: int, rows: list[dict], summary: dict, **extra) -> dict:
+def freeze(kind: str, dataset_id: int, revision: int, rows: list[dict], summary: dict, *, confirmation: str | None = None, **extra) -> dict:
     if len(rows) > 10000:
         raise HTTPException(422, "本次最多预览 10000 张图片，请缩小范围。")
     plan = dict(plan_id=uuid4().hex, kind=kind, dataset_id=dataset_id,
                 dataset_revision=revision, expires_at=time.time() + 86400,
                 rows=rows, summary=summary, **extra)
     count = len(rows) if kind == "groups" else sum(bool(r.get("split")) for r in rows)
-    plan["confirmation"] = f"确认{'更新采集分组' if kind == 'groups' else '写回训练划分'} {count} 张图片"
+    plan["confirmation"] = confirmation or f"确认{'更新采集分组' if kind == 'groups' else '写回训练划分'} {count} 张图片"
     plan["plan_hash"] = digest(plan)
     path = plan_path(plan["plan_id"])
     path.parent.mkdir(parents=True, exist_ok=True)

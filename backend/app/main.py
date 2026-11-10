@@ -8,10 +8,12 @@ from app.api import (
     annotation_exports,
     annotations,
     browse,
+    batch_reception,
     comparison,
     dataset_card,
     datasets,
     daily_tools,
+    delivery_checklist,
     directory_exports,
     industrial,
     validation,
@@ -58,6 +60,8 @@ app.add_middleware(
 
 app.include_router(datasets.router)
 app.include_router(daily_tools.router)
+app.include_router(batch_reception.router)
+app.include_router(delivery_checklist.router)
 app.include_router(organization.router)
 app.include_router(browse.router)
 app.include_router(dataset_card.router)

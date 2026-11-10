@@ -110,7 +110,12 @@ $manifest = [ordered]@{
     reader = "anomalib==2.7.0; separate environment"
     clean_windows_acceptance = "pending"
     real_user_acceptance = "pending"
-    capabilities = @("industrial-data-preparation", "quick-validation-q1-q5", "local-browsing", "project-category-batch", "mvtec-visa-import", "dataset-library", "dataset-card", "project-workbench", "normal-defect-comparison")
+    capabilities = @(
+        "industrial-data-preparation", "quick-validation-q1-q5", "local-browsing",
+        "project-category-batch", "mvtec-visa-import", "dataset-library", "dataset-card",
+        "project-workbench", "normal-defect-comparison", "resumable-workpiece-triage",
+        "workpiece-multi-view", "batch-reception", "delivery-checklist"
+    )
 }
 $manifest | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 (Join-Path $portableRoot "build-manifest.json")
 Copy-Item (Join-Path $repoRoot "docs\industrial-trial-guide.md") (Join-Path $portableRoot "工业试用指南.md") -Force

@@ -85,6 +85,7 @@ import SplitPlanModal from "../components/SplitPlanModal";
 import StatCard from "../components/StatCard";
 import TagManagerModal from "../components/TagManagerModal";
 import TagStatsModal from "../components/TagStatsModal";
+import BatchReceptionModal from "../components/BatchReceptionModal";
 import TrainingReadinessModal from "../components/TrainingReadinessModal";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import type {
@@ -288,6 +289,8 @@ export default function DatasetDetailPage() {
   const [scanning, setScanning] = useState(false);
   const [scanJobId, setScanJobId] = useState<number | null>(null);
   const [scanNotice, setScanNotice] = useState<string | null>(null);
+  const [receptionOpen, setReceptionOpen] = useState(false);
+  const [receptionBatchId, setReceptionBatchId] = useState<number | undefined>();
   const [thumbnailJobId, setThumbnailJobId] = useState<number | null>(null);
   const [thumbnailJobsAvailable, setThumbnailJobsAvailable] = useState(true);
   const [thumbnailRevision, setThumbnailRevision] = useState(0);
@@ -1371,7 +1374,9 @@ export default function DatasetDetailPage() {
           onPrepare={() => setAnomalyProtocolOpen(true)}
           onGroups={() => setCaptureGroupsOpen(true)}
           onFilter={() => { setPage(1); setSelectedSampleIds(new Set()); }} />}
-        {anomalyProtocolOpen && <AnomalyProtocolModal datasetId={datasetId} currentQuery={annotationExportQuery} selectedIds={Array.from(selectedSampleIds)} onClose={() => setAnomalyProtocolOpen(false)} onUpdated={async () => { await Promise.all([loadOverview(), loadSamples()]); }} />}
+        {anomalyProtocolOpen && <AnomalyProtocolModal key={datasetId} datasetId={datasetId} currentQuery={annotationExportQuery} selectedIds={Array.from(selectedSampleIds)} onClose={() => setAnomalyProtocolOpen(false)} onUpdated={async () => { await Promise.all([loadOverview(), loadSamples()]); }} />}
+        {dataset?.workflow_profile === "industrial_anomaly" && <section aria-label="接收新的采集批次" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-white p-4"><div><h2 className="text-sm font-semibold">接收新的采集批次</h2><p className="mt-1 text-xs leading-5 text-gray-500">沿用本数据集的分拣标准与检测区域，按保存的类别和工件规则预览本批变更。</p></div><button type="button" disabled={scanning} onClick={() => { setReceptionBatchId(lastScanResult?.assigned_batch_id ?? undefined); setReceptionOpen(true); }} className="min-h-10 rounded-lg border border-line px-3 text-sm disabled:opacity-40">{lastScanResult?.assigned_batch_id ? "整理本次扫描批次" : "批次接收方案"}</button></section>}
+        {receptionOpen && <BatchReceptionModal key={datasetId} datasetId={datasetId} initialBatchId={receptionBatchId} onClose={() => { setReceptionOpen(false); void loadOverview().catch(() => setError("列表刷新失败，请刷新页面。")); }} onApplied={() => { void Promise.all([loadOverview(), loadSamples()]).catch(() => setError("接收已提交，但列表刷新失败，请刷新页面。")); }} onScan={() => { setReceptionOpen(false); setScanOpen(true); }} />}
         {captureGroupsOpen && <CaptureGroupModal datasetId={datasetId} selectedIds={Array.from(selectedSampleIds)} onClose={() => setCaptureGroupsOpen(false)} onUpdated={async () => { await Promise.all([loadOverview(), loadSamples()]); }} />}
         {dataset && dataset.workflow_profile !== "industrial_anomaly" && (
           <section className="overflow-hidden rounded-2xl border border-line bg-white shadow-sm" aria-labelledby="dataset-workspace-status">
@@ -1768,6 +1773,7 @@ export default function DatasetDetailPage() {
 
       <ScanModal
         datasetId={datasetId}
+        receptionEnabled={dataset?.workflow_profile === "industrial_anomaly"}
         open={scanOpen}
         defaultPath={dataset?.root_path ?? ""}
         scanning={scanning}

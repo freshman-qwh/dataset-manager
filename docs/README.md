@@ -9,10 +9,12 @@
 | 了解定位、核心流程与功能取舍 | [产品范围](product-scope.md)、[项目首页](../README.md) |
 | 快速切换分散的数据集、浏览嵌套目录和图片 | [本地浏览](local-browsing.md) |
 | 管理项目、对象类别与批次，导入 MVTec / VisA | [项目、类别与批次](project-category-batch.md) |
+| 复用导入格式和类别/工件规则，接收下一采集批次 | [新批次接收方案](project-category-batch.md#新批次接收方案) |
 | 继续上次浏览、生成数据集名片、查看正常与缺陷对照 | [日常浏览与对照](daily-tools.md) |
 | 续接分拣范围与进度、查看同工件多视角 | [分拣续接](daily-tools.md#续接分拣工作)、[工件多视角](daily-tools.md#查看同工件多视角) |
 | 浏览公开工业异常检测数据、官方预览与获取入口 | [数据集图书馆](anomaly-dataset-library.md) |
 | 整理工业图片，生成独立训练/验证/测试数据包 | [工业试用指南](industrial-trial-guide.md) |
+| 按训练包、独立评估或正常探索检查阻断和覆盖缺口 | [交付目标验收清单](industrial-trial-guide.md#按交付目标核对验收清单) |
 | 建立本地基线、复核误报漏检、验证第二批 | [快速验证指南](quick-validation-guide.md) |
 | 使用本地 SAM 进行几何标注 | [SAM 辅助标注](sam-assisted-annotation.md) |
 | 执行人工验收 | [验收清单](../ACCEPTANCE_TESTS.md) |

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { getOrganization, organizationError, previewImport } from "../api/organization";
+import { getReceptionProfile } from "../api/batchReception";
 import type { DatasetBatch, ImportPreview, ScanOptions } from "../types/organization";
 
 const formats: Record<string, string> = { auto: "自动识别", folder: "普通本地目录", mvtec_ad: "MVTec AD", visa: "VisA" };
 
-export default function ScanImportFields({ datasetId, open, path, disabled, onChange, onValidityChange }: { datasetId: number; open: boolean; path: string; disabled: boolean; onChange: (options: ScanOptions) => void; onValidityChange: (valid: boolean) => void }) {
+export default function ScanImportFields({ datasetId, open, path, disabled, receptionEnabled = false, onChange, onValidityChange }: { datasetId: number; open: boolean; path: string; disabled: boolean; receptionEnabled?: boolean; onChange: (options: ScanOptions) => void; onValidityChange: (valid: boolean) => void }) {
   const [batches, setBatches] = useState<DatasetBatch[]>([]);
   const [batch, setBatch] = useState("");
   const [newName, setNewName] = useState("");
@@ -15,6 +16,8 @@ export default function ScanImportFields({ datasetId, open, path, disabled, onCh
   const [error, setError] = useState("");
   const [batchError, setBatchError] = useState(false);
   const [version, setVersion] = useState(0);
+  const [profileName, setProfileName] = useState("");
+  const [profileFormat, setProfileFormat] = useState<NonNullable<ScanOptions["import_format"]>>("auto");
   const controllerRef = useRef<AbortController | null>(null);
   const options: ScanOptions = { import_format: format, recognize_existing: recognizeExisting, ...(batch === "new" ? { new_batch_name: newName.trim() } : batch ? { batch_id: Number(batch) } : {}) };
   useEffect(() => {
@@ -23,6 +26,16 @@ export default function ScanImportFields({ datasetId, open, path, disabled, onCh
     void getOrganization(datasetId, controller.signal).then((data) => setBatches(data.batches)).catch(() => { if (!controller.signal.aborted) setBatchError(true); });
     return () => controller.abort();
   }, [datasetId, open, version]);
+  useEffect(() => {
+    if (!open || !receptionEnabled) return;
+    const controller = new AbortController();
+    void getReceptionProfile(datasetId, controller.signal).then(data => {
+      if (controller.signal.aborted || !data.saved) return;
+      setProfileName(data.profile.name);
+      setProfileFormat(data.profile.import_format);
+    }).catch(() => { /* Reception profiles are optional; ordinary scanning stays available. */ });
+    return () => controller.abort();
+  }, [datasetId, open, receptionEnabled]);
   useEffect(() => { onChange({ import_format: format, recognize_existing: recognizeExisting, ...(batch === "new" ? {new_batch_name: newName.trim()} : batch ? {batch_id:Number(batch)} : {}) }); }, [batch, format, newName, recognizeExisting, onChange]);
   useEffect(() => { onValidityChange(!checking && (batch !== "new" || Boolean(newName.trim()))); }, [batch, checking, newName, onValidityChange]);
   useEffect(() => { controllerRef.current?.abort(); setPreview(null); setChecking(false); setError(""); return () => controllerRef.current?.abort(); }, [path, batch, format, newName, recognizeExisting, open]);
@@ -34,6 +47,7 @@ export default function ScanImportFields({ datasetId, open, path, disabled, onCh
     finally { if (!controller.signal.aborted) setChecking(false); }
   }
   return <fieldset disabled={disabled} className="min-w-0 space-y-3">
+    {profileName && <div className="space-y-2 rounded-lg border border-line bg-gray-50 p-3 text-xs text-gray-600"><p>已保存接收方案：{profileName}</p><button type="button" disabled={checking} onClick={() => setFormat(profileFormat)} className="min-h-9 rounded border border-line bg-white px-3 text-sm disabled:opacity-40">使用方案导入格式</button><p>本次选择新批次后扫描；完成后在“整理本次扫描批次”预览类别与工件规则。已有判定、批次和工件不会被扫描覆盖。</p></div>}
     <label className="block text-sm font-medium text-gray-700">采集批次<select aria-label="导入批次" value={batch} onChange={(event) => setBatch(event.target.value)} className="mt-2 w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm"><option value="">不指定批次</option>{batches.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}<option value="new">＋ 新建批次</option></select></label>
     {batch === "new" && <input aria-label="新批次名称" required maxLength={160} value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="例如 首次采集、补充异常" className="w-full rounded-lg border border-line px-3 py-2.5 text-sm" />}
     <p className="text-xs leading-5 text-gray-500">批次只赋给新增图片，重复扫描保留已有批次、工件组与人工判定。</p>
