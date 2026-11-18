@@ -43,7 +43,7 @@ function ValidationWorkspace() {
   const [mode, setMode] = useState(context?.validationSetup?.mode??"evaluation");
   const [model, setModel] = useState(context?.validationSetup?.model??"padim");
   const [imageSize, setImageSize] = useState(context?.validationSetup?.imageSize??256);
-  const [scope, setScope] = useState(context?.validationSetup?.scope ?? (context?.currentQuery?.category_id ? "current" : "all"));
+  const [scope, setScope] = useState(context?.validationSetup?.scope ?? (context?.currentQuery?.category_id || context?.currentQuery?.normal_candidates_only ? "current" : "all"));
   const [independent, setIndependent] = useState(false);
   const [name, setName] = useState(context?.validationSetup?.name??"");
   const [preparation,setPreparation]=useState<ValidationPreparation|null>(null);

@@ -30,6 +30,7 @@ export interface GroupPreviewRequest {
 }
 
 export interface IndustrialReadiness {
+  normal_candidate_records: number;
   total_images: number; normal_candidates: number; normal_groups: number;
   missing_groups: number; needs_review: number;
   next_step: "scan" | "triage" | "review" | "groups" | "prepare";

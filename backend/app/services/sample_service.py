@@ -145,6 +145,7 @@ def get_filtered_samples(
     capture_batch_id: str | None = None,
     category_id: int | None = None,
     batch_id: int | None = None,
+    normal_candidates_only: bool = False,
 ) -> list[Sample]:
     safe_sort_by = sort_by if sort_by in SORTABLE_SAMPLE_FIELDS else "created_at"
     safe_sort_order = "asc" if sort_order.lower() == "asc" else "desc"
@@ -169,6 +170,7 @@ def get_filtered_samples(
         capture_batch_id=capture_batch_id,
         category_id=category_id,
         batch_id=batch_id,
+        normal_candidates_only=normal_candidates_only,
     )
     statement = statement.order_by(
         *_sample_order_clauses(
@@ -202,14 +204,20 @@ def list_samples(
     triage_outdated: bool | None = None,
     capture_group_id: str | None = None,
     capture_batch_id: str | None = None,
+    normal_candidates_only: bool = False,
 ) -> SampleListResponse:
     safe_page_size = min(max(page_size, 1), 200)
     safe_sort_by = sort_by if sort_by in SORTABLE_SAMPLE_FIELDS else "created_at"
     safe_sort_order = "asc" if sort_order.lower() == "asc" else "desc"
+    candidate_ids = None
+    if normal_candidates_only:
+        from app.services.industrial_readiness_service import normal_candidate_ids
+        candidate_ids = normal_candidate_ids(session, dataset_id) or [-1]
     filtered_ids = _apply_sample_filters(
         select(Sample.id),
         session,
         dataset_id,
+        sample_ids=candidate_ids,
         search=search,
         file_type=file_type,
         file_status=file_status,
@@ -235,6 +243,7 @@ def list_samples(
         ),
         session,
         dataset_id,
+        sample_ids=candidate_ids,
         search=search,
         file_type=file_type,
         file_status=file_status,
@@ -274,6 +283,7 @@ def list_samples(
             select(Sample.id, Sample.file_type, Sample.file_status),
             session,
             dataset_id,
+            sample_ids=candidate_ids,
             search=search,
             file_type=file_type,
             file_status=file_status,
@@ -518,8 +528,12 @@ def _apply_sample_filters(
     capture_batch_id: str | None = None,
     category_id: int | None = None,
     batch_id: int | None = None,
+    normal_candidates_only: bool = False,
 ):
     statement = statement.where(Sample.dataset_id == dataset_id)
+    if normal_candidates_only:
+        from app.services.industrial_readiness_service import normal_candidate_ids
+        statement = statement.where(Sample.id.in_(normal_candidate_ids(session, dataset_id)))
     if category_id is not None:
         statement = statement.where(Sample.category_id == category_id)
     if batch_id is not None:

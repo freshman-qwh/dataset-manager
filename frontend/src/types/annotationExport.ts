@@ -7,6 +7,7 @@ export type AnnotationExportFormat =
   | "voc";
 
 export interface AnnotationExportSampleQuery {
+  normal_candidates_only?: boolean;
   category_id?: number;
   batch_id?: number;
   triage_status?: string;

@@ -51,6 +51,7 @@ class GroupPreviewRequest(BaseModel):
 class IndustrialReadiness(BaseModel):
     total_images: int
     normal_candidates: int
+    normal_candidate_records: int
     normal_groups: int
     missing_groups: int
     needs_review: int

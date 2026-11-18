@@ -1,6 +1,6 @@
 import axios from "axios";
 import { AlertTriangle, CheckCircle2, Download, Info, LoaderCircle, SearchCheck } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createAnnotationExportJob,
@@ -21,6 +21,7 @@ import type {
 import type { TrainingReadinessConfigInput } from "../types/dataset";
 import type { Job } from "../types/job";
 import { uiCopy } from "../utils/uiCopy";
+import AnnotationClassMap from "./AnnotationClassMap";
 import Modal from "./Modal";
 
 type ExportScope = "filtered" | "all" | "split" | "selected";
@@ -147,6 +148,7 @@ export default function AnnotationExportModal({
   const [exportJob, setExportJob] = useState<Job | null>(null);
   const [compatibilityNotice, setCompatibilityNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const precheckRequestRef = useRef(0);
   const exportJobId = exportJob?.id ?? null;
   const exportJobStatus = exportJob?.status ?? null;
 
@@ -169,14 +171,17 @@ export default function AnnotationExportModal({
   }, [currentQuery, scope, selectedSampleIds, selectedSplit]);
 
   useEffect(() => {
+    precheckRequestRef.current += 1;
+    setChecking(false);
     setPrecheck(null);
     setDownloadCompleted(false);
     setExportJob(null);
     setCompatibilityNotice(null);
     setError(null);
-  }, [format, includeEmpty, sampleQuery]);
+  }, [datasetId, format, includeEmpty, sampleQuery]);
 
   useEffect(() => {
+    precheckRequestRef.current += 1;
     if (!open) {
       setChecking(false);
       setDownloading(false);
@@ -249,22 +254,24 @@ export default function AnnotationExportModal({
     }
     setChecking(true);
     setError(null);
+    const requestId = ++precheckRequestRef.current;
     try {
       const result = await precheckAnnotationExport(datasetId, {
         format,
         sample_query: sampleQuery,
         include_empty: includeEmpty
       });
+      if (precheckRequestRef.current !== requestId) return;
       setPrecheck(result);
       try {
         await saveTrainingReadinessConfig(datasetId, trainingConfig(result.class_map));
       } catch {
-        setError("预检已完成，但未能保存本次训练配置。");
+        if (precheckRequestRef.current === requestId) setError("预检已完成，但未能保存本次训练配置。");
       }
     } catch {
-      setError(`${uiCopy.exportCheck}失败，请确认后端服务可用。`);
+      if (precheckRequestRef.current === requestId) setError(`${uiCopy.exportCheck}失败，请确认后端服务可用。`);
     } finally {
-      setChecking(false);
+      if (precheckRequestRef.current === requestId) setChecking(false);
     }
   }
 
@@ -495,14 +502,7 @@ export default function AnnotationExportModal({
 
                 {precheck.class_map.length > 0 && (
                   <div className="rounded-lg border border-line px-3 py-3">
-                    <div className="text-xs font-medium text-gray-700">类别映射</div>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {precheck.class_map.map((item) => (
-                        <span key={item.name} className="rounded-md bg-gray-100 px-2 py-1 text-xs text-gray-700">
-                          {item.yolo_id}: {item.name}
-                        </span>
-                      ))}
-                    </div>
+                    <AnnotationClassMap format={precheck.format} classMap={precheck.class_map} />
                   </div>
                 )}
 

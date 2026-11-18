@@ -235,6 +235,7 @@ export default function DatasetDetailPage() {
   const [pageSearchParams, setPageSearchParams] = useSearchParams();
   const captureGroupId = pageSearchParams.get("capture_group_id") || undefined;
   const captureBatchId = pageSearchParams.get("capture_batch_id") || undefined;
+  const normalCandidatesOnly = pageSearchParams.get("normal_candidates_only") === "true";
   const [anomalyProtocolOpen, setAnomalyProtocolOpen] = useState(false);
   const [captureGroupsOpen, setCaptureGroupsOpen] = useState(false);
   const triageStatus = (pageSearchParams.get("triage_status") || undefined) as SampleQuery["triageStatus"];
@@ -379,7 +380,7 @@ export default function DatasetDetailPage() {
       pageSize,
       sortBy,
       sortOrder,
-      captureGroupId, captureBatchId, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId,
+      captureGroupId, captureBatchId, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId, normalCandidatesOnly,
       thumbnailPrefetch: 12
     }, signal);
     if (signal?.aborted || requestId !== samplesRequestIdRef.current) {
@@ -391,7 +392,7 @@ export default function DatasetDetailPage() {
     if (nextSamples.page !== page) {
       setPage(nextSamples.page);
     }
-  }, [datasetId, debouncedSearch, debouncedTag, fileType, fileStatus, split, reviewStatus, annotationProgress, page, pageSize, sortBy, sortOrder, captureGroupId, captureBatchId, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId]);
+  }, [datasetId, debouncedSearch, debouncedTag, fileType, fileStatus, split, reviewStatus, annotationProgress, page, pageSize, sortBy, sortOrder, captureGroupId, captureBatchId, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId, normalCandidatesOnly]);
 
   const loadQualityReport = useCallback(async () => {
     setQualityLoading(true);
@@ -658,12 +659,13 @@ export default function DatasetDetailPage() {
       review_status: reviewStatus || undefined,
       annotation_progress: annotationProgress || undefined,
       capture_group_id: captureGroupId, capture_batch_id: captureBatchId,
+      normal_candidates_only: normalCandidatesOnly || undefined,
       triage_status: triageStatus, ok_grade: okGrade, triage_outdated: triageOutdated,
       defect_severity: defectSeverity, defect_type_id: defectTypeId,
       sort_by: sortBy,
       sort_order: sortOrder
     }),
-    [annotationProgress, debouncedSearch, debouncedTag, fileStatus, fileType, reviewStatus, sortBy, sortOrder, split, captureGroupId, captureBatchId, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId]
+    [annotationProgress, debouncedSearch, debouncedTag, fileStatus, fileType, reviewStatus, sortBy, sortOrder, split, captureGroupId, captureBatchId, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId, normalCandidatesOnly]
   );
   const savedViewQuery = useMemo<DatasetSavedViewQuery>(
     () => ({
@@ -677,10 +679,11 @@ export default function DatasetDetailPage() {
       triage_status: triageStatus, ok_grade: okGrade, triage_outdated: triageOutdated,
       defect_severity: defectSeverity, defect_type_id: defectTypeId,
       capture_group_id: captureGroupId, capture_batch_id: captureBatchId,
+      normal_candidates_only: normalCandidatesOnly || undefined,
       sort_by: savedViewSortField(sortBy),
       sort_order: sortOrder
     }),
-    [annotationProgress, debouncedSearch, debouncedTag, fileStatus, fileType, reviewStatus, sortBy, sortOrder, split, captureGroupId, captureBatchId, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId]
+    [annotationProgress, debouncedSearch, debouncedTag, fileStatus, fileType, reviewStatus, sortBy, sortOrder, split, captureGroupId, captureBatchId, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId, normalCandidatesOnly]
   );
   const annotationExportSelectedSampleIds = useMemo(
     () => Array.from(selectedSampleIds),
@@ -911,7 +914,7 @@ export default function DatasetDetailPage() {
       return;
     }
     if ((stats?.sample_count ?? 0) === 0 || (geometryTask && imageCount === 0)) {
-      void handleScan(dataset.root_path);
+      setScanOpen(true);
       return;
     }
     if (unavailableCount > 0) {
@@ -940,7 +943,7 @@ export default function DatasetDetailPage() {
       : !dataset.root_path
         ? "设置扫描目录"
         : (stats?.sample_count ?? 0) === 0 || (geometryTask && imageCount === 0)
-          ? "扫描样本"
+          ? "选择批次并扫描"
           : unavailableCount > 0
             ? "处理不可用文件"
             : classificationTask
@@ -1149,7 +1152,7 @@ export default function DatasetDetailPage() {
           tag: debouncedTag,
           split,
           reviewStatus,
-          captureGroupId, captureBatchId, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId, annotationProgress: savedViewAnnotationProgress(annotationProgress),
+          captureGroupId, captureBatchId, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId, normalCandidatesOnly, annotationProgress: savedViewAnnotationProgress(annotationProgress),
           sortBy,
           sortOrder
         }),
@@ -1189,6 +1192,11 @@ export default function DatasetDetailPage() {
   }
 
   function clearFilters() {
+    setPageSearchParams(current => {
+      const next = new URLSearchParams(current);
+      next.delete("normal_candidates_only");
+      return next;
+    });
     setSearch("");
     setFileType("");
     setFileStatus("");
@@ -1221,7 +1229,7 @@ export default function DatasetDetailPage() {
     const query = savedView.sample_query;
     setPageSearchParams(current => {
       const next = new URLSearchParams(current);
-      for (const key of ["triage_status", "ok_grade", "triage_outdated", "defect_severity", "defect_type_id", "capture_group_id", "capture_batch_id"] as const) {
+      for (const key of ["triage_status", "ok_grade", "triage_outdated", "defect_severity", "defect_type_id", "capture_group_id", "capture_batch_id", "normal_candidates_only"] as const) {
         const value = query[key];
         if (value !== undefined && value !== null) next.set(key, String(value)); else next.delete(key);
       }
@@ -1386,6 +1394,17 @@ export default function DatasetDetailPage() {
 
       <section className="mx-auto max-w-7xl space-y-5 px-5 py-6">
         {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+
+        {dataset && stats?.sample_count === 0 && !scanning && (
+          <section aria-label="首次扫描引导" className="space-y-3 rounded-xl border border-line bg-white p-5">
+            <h2 className="text-lg font-semibold text-ink">下一步，扫描第一批图片</h2>
+            {dataset.root_path && <p className="break-all text-sm leading-6 text-gray-600"><span className="font-medium">已登记目录</span> {dataset.root_path}</p>}
+            <p className="text-sm leading-6 text-gray-600">当前尚无已登记的样本。在“导入本地图片”中确认目录、选择或新建采集批次，再点击“开始扫描”。</p>
+            <button type="button" onClick={() => setScanOpen(true)} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800">
+              <FolderInput size={17} />{dataset.root_path ? "选择批次并扫描" : "选择目录与批次"}
+            </button>
+          </section>
+        )}
 
         {dataset?.workflow_profile === "industrial_anomaly" && <IndustrialOverview dataset={dataset}
           onScan={() => setScanOpen(true)} onQuality={() => setQualityOpen(true)}

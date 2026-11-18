@@ -92,7 +92,7 @@ export default function CreateDatasetModal({ open, onClose, onCreate }: CreateDa
     <Modal open={open} title="创建数据集" onClose={onClose} dismissible={!saving}>
       <form onSubmit={handleSubmit} className="px-5 py-5" aria-busy={saving}>
         <fieldset disabled={saving} className="min-w-0 space-y-5">
-          <p className="text-sm leading-6 text-gray-500">填写名称即可开始，图片目录和补充资料也可以稍后设置。</p>
+          <p className="text-sm leading-6 text-gray-500">填写名称创建数据集。创建后进入数据准备页，选择采集批次并手动扫描图片。</p>
           <label className="block text-sm font-medium text-gray-700">准备目标
             <select aria-label="准备目标" value={profile} onChange={(event) => {
               const next = event.target.value as typeof profile;
@@ -132,7 +132,7 @@ export default function CreateDatasetModal({ open, onClose, onCreate }: CreateDa
                 浏览
               </button>
             </div>
-            <span className="mt-2 block text-xs leading-5 text-gray-500">创建后扫描此目录登记图片，不移动或修改原图；留空可稍后选择。</span>
+            <span className="mt-2 block text-xs leading-5 text-gray-500">创建时登记此目录。下一步点击“添加图片”，核对采集批次后点击“开始扫描”。留空可稍后选择目录。</span>
           </label>
           {profile === "industrial_anomaly" && <details className="rounded-lg border border-line p-3">
             <summary className="cursor-pointer text-sm font-medium text-gray-700">补充几何标注（可选）</summary>
@@ -202,7 +202,7 @@ export default function CreateDatasetModal({ open, onClose, onCreate }: CreateDa
               disabled={saving || !name.trim()}
               className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-gray-300"
             >
-              {saving ? "创建中…" : "创建并开始"}
+              {saving ? "创建中…" : "创建数据集"}
             </button>
           </div>
         </fieldset>

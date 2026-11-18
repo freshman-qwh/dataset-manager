@@ -288,6 +288,7 @@ def list_dataset_samples(
     triage_outdated: bool | None = Query(default=None),
     capture_group_id: str | None = Query(default=None, max_length=160),
     capture_batch_id: str | None = Query(default=None, max_length=160),
+    normal_candidates_only: bool = Query(default=False),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=60, ge=1, le=200),
     sort_by: str = Query(default="created_at"),
@@ -331,6 +332,7 @@ def list_dataset_samples(
         triage_outdated=triage_outdated,
         capture_group_id=capture_group_id,
         capture_batch_id=capture_batch_id,
+        normal_candidates_only=normal_candidates_only,
     )
 
 
@@ -586,6 +588,7 @@ def export_dataset_manifest(
     defect_type_id: int | None = Query(default=None),
     capture_group_id: str | None = Query(default=None),
     capture_batch_id: str | None = Query(default=None),
+    normal_candidates_only: bool = Query(default=False),
     annotation_progress: str | None = Query(default=None),
     sample_ids: list[int] | None = Query(default=None),
     sort_by: str = Query(default="relative_path"),
@@ -608,6 +611,7 @@ def export_dataset_manifest(
         defect_type_id=defect_type_id,
         capture_group_id=capture_group_id,
         capture_batch_id=capture_batch_id,
+        normal_candidates_only=normal_candidates_only,
         annotation_progress=annotation_progress,
         sample_ids=sample_ids,
         sort_by=sort_by,
@@ -782,6 +786,7 @@ def export_dataset_template(
     triage_outdated: bool | None = Query(default=None),
     capture_group_id: str | None = Query(default=None, max_length=160),
     capture_batch_id: str | None = Query(default=None, max_length=160),
+    normal_candidates_only: bool = Query(default=False),
     sort_by: str = Query(default="relative_path"),
     sort_order: str = Query(default="asc", pattern="^(asc|desc)$"),
     session: Session = Depends(get_session),
@@ -801,6 +806,7 @@ def export_dataset_template(
         triage_outdated=triage_outdated,
         capture_group_id=capture_group_id,
         capture_batch_id=capture_batch_id,
+        normal_candidates_only=normal_candidates_only,
         sort_by=sort_by,
         sort_order=sort_order,
     )

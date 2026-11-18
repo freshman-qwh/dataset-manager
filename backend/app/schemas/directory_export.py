@@ -11,6 +11,7 @@ DirectoryExportDelivery = Literal["zip", "directory"]
 
 
 class DirectoryExportSampleQuery(BaseModel):
+    normal_candidates_only: bool = False
     capture_group_id: str | None = Field(default=None, max_length=160)
     capture_batch_id: str | None = Field(default=None, max_length=160)
     search: str | None = None

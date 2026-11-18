@@ -178,6 +178,7 @@ def export_annotations(
     include_images: bool = Query(default=False),
     completed_only: bool = Query(default=False),
     expected_dataset_revision: int | None = Query(default=None),
+    normal_candidates_only: bool = Query(default=False),
     sort_by: str = Query(default="relative_path"),
     sort_order: str = Query(default="asc", pattern="^(asc|desc)$"),
     session: Session = Depends(get_session),
@@ -198,6 +199,7 @@ def export_annotations(
             include_images=include_images,
             completed_only=completed_only,
             expected_dataset_revision=expected_dataset_revision,
+            normal_candidates_only=normal_candidates_only,
             sort_by=sort_by,
             sort_order=sort_order,
         )

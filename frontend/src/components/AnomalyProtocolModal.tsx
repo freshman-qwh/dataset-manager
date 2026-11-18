@@ -14,7 +14,7 @@ export default function AnomalyProtocolModal({ datasetId, currentQuery, selected
 }) {
   const [delivery, setDelivery] = useState<"zip" | "directory">("zip");
   const [job, setJob] = useState<Job | null>(null);
-  const [scope, setScope] = useState("all");
+  const [scope, setScope] = useState(currentQuery.normal_candidates_only ? "current" : "all");
   const [independent, setIndependent] = useState(false);
   const [borderline, setBorderline] = useState(false);
   const [preserve, setPreserve] = useState(false);

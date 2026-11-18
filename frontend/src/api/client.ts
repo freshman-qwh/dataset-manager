@@ -588,7 +588,7 @@ export async function listSamples(params: SampleQuery, signal?: AbortSignal): Pr
   const {
     datasetId, search, fileType, fileStatus, tag, split, reviewStatus,
     annotationProgress, triageStatus, okGrade, defectSeverity, defectTypeId,
-    triageOutdated, captureGroupId, captureBatchId, page, pageSize, sortBy, sortOrder, thumbnailPrefetch
+    triageOutdated, captureGroupId, captureBatchId, normalCandidatesOnly, page, pageSize, sortBy, sortOrder, thumbnailPrefetch
   } = params;
   const { data } = await client.get<SampleListResponse>(`/datasets/${datasetId}/samples`, {
     signal,
@@ -607,6 +607,7 @@ export async function listSamples(params: SampleQuery, signal?: AbortSignal): Pr
       capture_group_id: captureGroupId || undefined,
       capture_batch_id: captureBatchId || undefined,
       triage_outdated: triageOutdated,
+      normal_candidates_only: normalCandidatesOnly,
       page,
       page_size: pageSize,
       sort_by: sortBy,
@@ -900,6 +901,7 @@ export function getManifestUrl(datasetId: number, params?: Omit<SampleQuery, "da
     searchParams.set("sort_order", params.sortOrder);
   }
   const extra = { capture_group_id: params?.captureGroupId, capture_batch_id: params?.captureBatchId,
+    normal_candidates_only: params?.normalCandidatesOnly,
     triage_status: params?.triageStatus, ok_grade: params?.okGrade, triage_outdated: params?.triageOutdated,
     defect_severity: params?.defectSeverity, defect_type_id: params?.defectTypeId, annotation_progress: params?.annotationProgress };
   for (const [key, value] of Object.entries(extra)) if (value !== undefined && value !== "") searchParams.set(key, String(value));
@@ -1070,6 +1072,7 @@ export async function downloadAnnotationExport(
   if (query.tag) params.set("tag", query.tag);
   if (query.split) params.set("split", query.split);
   if (query.review_status) params.set("review_status", query.review_status);
+  if (query.normal_candidates_only) params.set("normal_candidates_only", "true");
   if (query.expected_dataset_revision !== undefined) params.set("expected_dataset_revision", String(query.expected_dataset_revision));
   query.sample_ids?.forEach((sampleId) => params.append("sample_ids", String(sampleId)));
 

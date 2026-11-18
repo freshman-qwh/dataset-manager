@@ -229,6 +229,7 @@ def _filtered_image_samples(
         dataset_id,
         search=query.search,
         file_type="image",
+        normal_candidates_only=query.normal_candidates_only,
         file_status=query.file_status,
         tag=query.tag,
         split=query.split,

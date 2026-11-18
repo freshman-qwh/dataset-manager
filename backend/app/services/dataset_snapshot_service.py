@@ -113,6 +113,7 @@ def _build_snapshot_content(
         dataset.id or 0,
         search=query.search,
         file_type=query.file_type,
+        normal_candidates_only=query.normal_candidates_only,
         file_status=query.file_status,
         tag=query.tag,
         split=query.split,

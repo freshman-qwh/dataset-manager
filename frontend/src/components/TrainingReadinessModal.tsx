@@ -47,6 +47,7 @@ import type {
 } from "../types/dataset";
 import type { Job } from "../types/job";
 import Modal from "./Modal";
+import AnnotationClassMap from "./AnnotationClassMap";
 import TrainingSplitPlanner from "./TrainingSplitPlanner";
 
 type ReadinessStep = 1 | 2 | 3 | 4;
@@ -1079,12 +1080,7 @@ export default function TrainingReadinessModal({
             </div>
             {precheck.class_map.length > 0 && (
               <section className="rounded-xl border border-line bg-white p-4">
-                <h3 className="text-xs font-semibold text-gray-700">类别映射</h3>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {precheck.class_map.map((item) => (
-                    <span key={item.name} className="rounded-md bg-gray-100 px-2 py-1 text-xs text-gray-700">{item.yolo_id}: {item.name}</span>
-                  ))}
-                </div>
+                <AnnotationClassMap format={precheck.format} classMap={precheck.class_map} />
               </section>
             )}
             {precheck.issues.length > 0 && (

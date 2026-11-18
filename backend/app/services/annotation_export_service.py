@@ -101,6 +101,7 @@ def export_annotations(
     include_images: bool = False,
     completed_only: bool = False,
     expected_dataset_revision: int | None = None,
+    normal_candidates_only: bool = False,
     sort_by: str = "relative_path",
     sort_order: str = "asc",
 ) -> AnnotationExportArtifact:
@@ -114,6 +115,7 @@ def export_annotations(
         sample_ids=sample_ids,
         completed_only=completed_only,
         expected_dataset_revision=expected_dataset_revision,
+        normal_candidates_only=normal_candidates_only,
         sort_by=sort_by,
         sort_order="asc" if sort_order.lower() == "asc" else "desc",
     )
@@ -334,6 +336,7 @@ def _prepare_export(
         dataset_id,
         search=query.search,
         file_type="image",
+        normal_candidates_only=query.normal_candidates_only,
         file_status=query.file_status,
         tag=query.tag,
         split=query.split,

@@ -37,7 +37,7 @@ export default function IndustrialOverview({ dataset, onScan, onQuality, onFilte
   function filter(values: Record<string, string>) {
     setParams(current => {
       const next = new URLSearchParams(current);
-      for (const key of ["triage_status", "ok_grade", "triage_outdated", "defect_severity", "defect_type_id", "capture_group_id", "capture_batch_id"]) next.delete(key);
+      for (const key of ["triage_status", "ok_grade", "triage_outdated", "defect_severity", "defect_type_id", "capture_group_id", "capture_batch_id", "normal_candidates_only"]) next.delete(key);
       for (const [key, value] of Object.entries(values)) if (value) next.set(key, value);
       return next;
     });
@@ -49,11 +49,13 @@ export default function IndustrialOverview({ dataset, onScan, onQuality, onFilte
       if (value) next.set(key, value); else next.delete(key);
       if (key === "triage_status" && value !== "ok") next.delete("ok_grade");
       if (key === "ok_grade" && value) next.set("triage_status", "ok");
+      if (key === "triage_status" || key === "ok_grade") next.delete("normal_candidates_only");
       return next;
     });
     onFilter();
   }
-  const hasFilters = ["triage_status", "ok_grade", "triage_outdated", "defect_severity", "defect_type_id", "capture_group_id", "capture_batch_id"].some(key => params.has(key));
+  const normalCandidatesOnly = params.get("normal_candidates_only") === "true";
+  const hasFilters = normalCandidatesOnly || ["triage_status", "ok_grade", "triage_outdated", "defect_severity", "defect_type_id", "capture_group_id", "capture_batch_id"].some(key => params.has(key));
   const hasImages = (stats?.total_images ?? 0) > 0;
   const titles = {
     scan: "添加第一批工业图片",
@@ -81,7 +83,11 @@ export default function IndustrialOverview({ dataset, onScan, onQuality, onFilte
         {hasImages && <button className="rounded-lg border border-line px-4 py-2 text-sm" onClick={onPrepare ?? onQuality}>{onPrepare ? "划分与导出" : "检查数据质量"}</button>}
       </div>
     </div>
-    {readiness && <div className="space-y-2 rounded-lg bg-gray-50 p-3 text-sm"><p>{readiness.explanation}</p>{hasImages && <><div className="flex flex-wrap gap-4"><button className="underline underline-offset-2" onClick={() => filter({triage_status:"ok",ok_grade:"clear"})}>纯正常候选 {readiness.normal_candidates} 张 / {readiness.normal_groups} 组</button><button className="underline underline-offset-2" onClick={onGroups}>未填写工件组 {readiness.missing_groups} 张</button><button className="underline underline-offset-2" onClick={onQuality}>需复核 {readiness.needs_review} 张</button></div><p className="text-xs text-gray-500">候选按登记信息和整组成员统计，运行前仍会校验原图；未分组图片需确认独立采集。</p></>}</div>}
+    {readiness && <div className="space-y-2 rounded-lg bg-gray-50 p-3 text-sm"><p>{readiness.explanation}</p>{hasImages && <><div className="flex flex-wrap gap-4"><button className="underline underline-offset-2" onClick={() => filter({normal_candidates_only:"true"})}>纯正常候选 {readiness.normal_candidates} 份内容 / {readiness.normal_groups} 组</button><button className="underline underline-offset-2" onClick={onGroups}>未填写工件组 {readiness.missing_groups} 张</button><button className="underline underline-offset-2" onClick={onQuality}>需复核 {readiness.needs_review} 张</button></div><p className="text-xs text-gray-500">候选按登记信息和整组成员统计，运行前仍会校验原图；未分组图片需确认独立采集。</p></>}</div>}
+    {normalCandidatesOnly && readiness && <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line p-3 text-xs leading-5 text-gray-600" role="status">
+      <p>纯正常候选包含 {readiness.normal_candidate_records} 条登记图片，对应 {readiness.normal_candidates} 份内容。其他筛选会进一步缩小列表，正式预检会去除重复内容。</p>
+      <button type="button" className="underline underline-offset-2" onClick={() => change("normal_candidates_only", "")}>取消纯正常候选筛选</button>
+    </div>}
     {error && <p role="alert" className="text-sm text-red-700">{error} <button className="underline underline-offset-2" onClick={() => setRefresh(value => value + 1)}>重新读取</button></p>}
     {hasImages && <div className={`grid grid-cols-2 gap-2 sm:grid-cols-3 ${policy?.split_ok ? "xl:grid-cols-6" : "xl:grid-cols-5"}`}>{cards.map(([label, count, values]) => <button key={label} disabled={!stats || !policy} onClick={() => filter({ ...values })} className="rounded-lg border border-line bg-gray-50 p-3 text-left hover:bg-gray-100 disabled:opacity-60"><span className="text-xs text-gray-500">{label}</span><strong className="mt-1 block text-xl">{stats ? count : "…"}</strong></button>)}</div>}
     {stats && (stats.by_status.ok ?? 0) > (stats.by_ok_grade.clear ?? 0) + (stats.by_ok_grade.borderline ?? 0) && <button className="text-sm text-amber-800 underline" onClick={() => filter({ triage_status: "ok" })}>有统一 OK 图片尚未确认正常等级，查看并复核</button>}

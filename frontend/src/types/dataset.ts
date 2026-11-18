@@ -298,6 +298,7 @@ export interface ScanResult {
 }
 
 export interface SampleQuery {
+  normalCandidatesOnly?: boolean;
   datasetId: number;
   search?: string;
   fileType?: string;
