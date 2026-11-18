@@ -31,6 +31,7 @@ import type {
   FilesystemListResponse,
   DuplicateReport,
   ExportTemplateResponse,
+  MetadataExportScope,
   BatchSampleUpdate,
   BatchSampleUpdateResult,
   MissingSampleRepairRequest,
@@ -911,9 +912,14 @@ export function getExportTemplateUrl(datasetId: number, format: string): string 
   return `${API_BASE_URL}/datasets/${datasetId}/export-template?${searchParams.toString()}`;
 }
 
-export async function getExportTemplate(datasetId: number, format: string): Promise<ExportTemplateResponse> {
+export async function getExportTemplate(
+  datasetId: number,
+  format: string,
+  options?: { scope: MetadataExportScope; query?: AnnotationExportSampleQuery; signal?: AbortSignal }
+): Promise<ExportTemplateResponse> {
   const { data } = await client.get<ExportTemplateResponse>(`/datasets/${datasetId}/export-template`, {
-    params: { format }
+    params: { format, scope: options?.scope, ...(options?.scope === "filtered" ? options.query : undefined) },
+    signal: options?.signal
   });
   return data;
 }

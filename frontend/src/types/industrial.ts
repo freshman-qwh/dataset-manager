@@ -15,9 +15,12 @@ export interface FrozenPlan {
 
 export interface GroupPreviewRequest {
   mode: "selected" | "directories" | "mapping" | "filename";
+  scope?: "selected" | "batch" | "all";
+  scope_capture_batch_id?: string;
   sample_ids?: number[];
   capture_group_id?: string | null;
   capture_batch_id?: string | null;
+  clear_capture_batch?: boolean;
   mapping_text?: string;
   path_column?: string;
   group_column?: string;

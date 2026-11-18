@@ -51,3 +51,11 @@ export interface QualityInspection {
 export interface ValidationPredictions {
   items: ValidationPrediction[]; total:number;page:number;page_size:number;threshold:number;
 }
+
+export interface ValidationBatchPreviewRequest {
+  target_dataset_id: number;
+  batch_scope?: "all" | "batch" | "unassigned";
+  batch_id?: number;
+  sample_ids?: number[];
+  independent_capture_declared?: boolean;
+}

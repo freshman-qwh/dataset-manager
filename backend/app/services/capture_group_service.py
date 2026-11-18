@@ -18,7 +18,19 @@ from app.services.dataset_service import get_dataset_or_404
 
 def preview(session: Session, dataset_id: int, request: GroupPreviewRequest) -> dict:
     dataset = get_dataset_or_404(session, dataset_id)
-    samples = list(session.exec(select(Sample).where(Sample.dataset_id == dataset_id).order_by(Sample.id)).all())
+    scope = request.scope or ("selected" if request.sample_ids or request.mode == "selected" else "all")
+    statement = select(Sample).where(Sample.dataset_id == dataset_id)
+    if request.scope is not None or scope == "selected":
+        statement = statement.where(Sample.file_type == "image")
+    if scope == "selected":
+        statement = statement.where(Sample.id.in_(request.sample_ids))
+    elif scope == "batch":
+        statement = statement.where(Sample.capture_batch_id == request.scope_capture_batch_id)
+    samples = list(session.exec(statement.order_by(Sample.id)).all())
+    if scope == "selected" and (not request.sample_ids or set(request.sample_ids) != {s.id for s in samples}):
+        raise HTTPException(422, "请选择当前数据集的图片（最多 200 张）。")
+    if not samples:
+        raise HTTPException(422, "所选范围没有可更新图片，请检查范围和采集批次编号。")
     mapping: dict[int, tuple[str | None, str | None]] = {}
     by_path = {s.relative_path.replace("\\", "/"): s for s in samples}
     path_counts: dict[str, int] = {}
@@ -26,10 +38,7 @@ def preview(session: Session, dataset_id: int, request: GroupPreviewRequest) -> 
         path = sample.relative_path.replace("\\", "/")
         path_counts[path] = path_counts.get(path, 0) + 1
     if request.mode == "selected":
-        ids = set(request.sample_ids)
-        if not ids or ids - {s.id for s in samples}:
-            raise HTTPException(422, "请选择当前项目的图片（最多 200 张）。")
-        mapping = {sid: (request.capture_group_id, request.capture_batch_id) for sid in ids}
+        mapping = {s.id: (request.capture_group_id, request.capture_batch_id) for s in samples}
     elif request.mode == "directories":
         for s in samples:
             parent = str(PurePosixPath(s.relative_path.replace("\\", "/")).parent)
@@ -62,8 +71,10 @@ def preview(session: Session, dataset_id: int, request: GroupPreviewRequest) -> 
                 if path_counts.get(path, 0) > 1:
                     raise ValueError(f"相对路径对应多个来源，请改用所选图片设置工件与批次：{path}")
                 sample = by_path.get(path)
-                if sample is None or sample.id in mapping:
-                    raise ValueError(f"路径不匹配或重复：{path}")
+                if sample is None:
+                    raise ValueError(f"路径不在所选范围内或尚未登记：{path}")
+                if sample.id in mapping:
+                    raise ValueError(f"路径重复：{path}")
                 group = str(item[request.group_column] or "").strip() or None
                 batch = str(item.get(request.batch_column) or "").strip() or None
                 if any(v is not None and len(v) > 160 for v in (group, batch)):
@@ -71,15 +82,29 @@ def preview(session: Session, dataset_id: int, request: GroupPreviewRequest) -> 
                 mapping[sample.id] = (group, batch)
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             raise HTTPException(422, f"映射表无效：{exc}") from exc
-    rows = [dict(sample_id=s.id, relative_path=s.relative_path, file_hash=s.file_hash,
-                 before_group=s.capture_group_id, before_batch=s.capture_batch_id,
-                 capture_group_id=mapping[s.id][0], capture_batch_id=mapping[s.id][1], split=s.split)
-            for s in samples if s.id in mapping]
+    rows = []
+    for sample in samples:
+        if sample.id not in mapping:
+            continue
+        group, batch = mapping[sample.id]
+        if request.clear_capture_batch:
+            batch_action = "clear"
+        elif batch is None:
+            batch_action = "keep"
+            batch = sample.capture_batch_id
+        else:
+            batch_action = "set"
+        rows.append(dict(sample_id=sample.id, relative_path=sample.relative_path, file_hash=sample.file_hash,
+                         before_group=sample.capture_group_id, before_batch=sample.capture_batch_id,
+                         capture_group_id=group, capture_batch_id=batch, batch_action=batch_action,
+                         split=sample.split))
     if not rows:
         raise HTTPException(422, "没有可更新图片。")
     return plans.freeze("groups", dataset_id, dataset.revision, rows,
                         dict(sample_count=len(rows), existing_split_count=sum(bool(r["split"]) for r in rows),
-                             group_count=len(set(mapping.values())),
+                             scope=scope, scope_capture_batch_id=request.scope_capture_batch_id,
+                             scope_sample_count=len(samples),
+                             group_count=len({(r["capture_group_id"], r["capture_batch_id"]) for r in rows}),
                              notice="仅更新分组元数据；已有 split 不变，训练准备时会重新检查整组隔离。目录草稿需确认同目录确属同一工件。"),
                         filename_rule=request.filename_rule.model_dump() if request.mode == "filename" and request.remember_rule else None)
 
@@ -100,7 +125,15 @@ def confirm(session: Session, dataset_id: int, plan_id: str, request: PlanConfir
             sample = session.get(Sample, row["sample_id"])
             if sample is None or sample.dataset_id != dataset_id or sample.file_hash != row["file_hash"]:
                 raise HTTPException(409, "图片已变化，请重新预览。")
+            batch_action = row.get("batch_action")
+            # Old previews did not distinguish an empty value from explicit clearing.
+            if (batch_action is None and row["capture_batch_id"] is None
+                    and (sample.capture_batch_id is not None or sample.batch_id is not None)):
+                raise HTTPException(409, "旧分组计划会清除已有采集批次，请重新预览。")
             sample.capture_group_id = row["capture_group_id"]
+            session.add(sample)
+            if batch_action == "keep":
+                continue
             sample.capture_batch_id = row["capture_batch_id"]
             # The legacy group editor accepts a batch code. Keep its stable
             # organization relation in sync without altering the grouping rule.
@@ -116,7 +149,6 @@ def confirm(session: Session, dataset_id: int, plan_id: str, request: PlanConfir
                 sample.batch_id = batch.id
             else:
                 sample.batch_id = None
-            session.add(sample)
         if plan.get("filename_rule"):
             dataset = get_dataset_or_404(session, dataset_id)
             settings = json.loads(dataset.industrial_settings_json or "{}")

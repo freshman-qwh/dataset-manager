@@ -1,5 +1,6 @@
 from pathlib import Path
 import base64
+from contextlib import contextmanager
 
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
@@ -7,6 +8,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app.core.database import get_session
 from app.main import app
+from app.models.sample import Sample
 
 
 PNG_1X1 = base64.b64decode(
@@ -874,6 +876,85 @@ def test_v03_duplicates_tags_metadata_import_and_templates(tmp_path: Path):
         assert "cat" in yolo_template.json()["payload"]["classes"]
 
     app.dependency_overrides.clear()
+
+
+def test_csv_export_scope_matches_all_filtered_samples(tmp_path: Path):
+    try:
+        with make_client() as client:
+            dataset_id = create_labeled_dataset(client, tmp_path, "csv-scope", {
+                "a.png": "keep", "b.png": "keep", "c.png": "other",
+            })
+            base = f"/api/datasets/{dataset_id}"
+            export_url = f"{base}/export-template"
+            filters = {"tag": "keep", "file_status": "normal", "sort_by": "relative_path", "sort_order": "desc"}
+            page = client.get(f"{base}/samples", params={**filters, "page_size": 1}).json()
+            assert page["total"] == 2
+            assert len(page["items"]) == 1
+
+            filtered = client.get(export_url, params={"format": "csv", "scope": "filtered", **filters})
+            assert filtered.status_code == 200, filtered.text
+            result = filtered.json()
+            assert [row["relative_path"] for row in result["payload"]["rows"]] == ["b.png", "a.png"]
+            assert result["scope"] == "filtered"
+            assert result["sample_count"] == 2
+
+            for params in ({"scope": "all", **filters}, {}):
+                unfiltered = client.get(export_url, params={"format": "csv", **params}).json()
+                assert unfiltered["scope"] == "all"
+                assert unfiltered["sample_count"] == 3
+                assert [row["relative_path"] for row in unfiltered["payload"]["rows"]] == ["a.png", "b.png", "c.png"]
+
+            empty = client.get(export_url, params={"format": "csv", "scope": "filtered", "tag": "missing"}).json()
+            assert empty["sample_count"] == 0
+            assert empty["payload"]["rows"] == []
+            assert empty["payload"]["columns"][0] == "relative_path"
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+
+def test_csv_export_scope_follows_industrial_and_annotation_filters(tmp_path: Path):
+    try:
+        with make_client() as client:
+            dataset = client.post("/api/datasets", json={"name": "Industrial CSV"}).json()
+            dataset_id = dataset["id"]
+            defaults = {
+                "capture_batch_id": "第二批",
+                "capture_group_id": "工件 A",
+                "triage_status": "ng",
+                "annotation_progress": "completed_with_objects",
+                "file_status": "normal",
+            }
+            sample_variants = {
+                "target.png": {},
+                "first-batch.png": {"capture_batch_id": "首批"},
+                "other-workpiece.png": {"capture_group_id": "工件 B"},
+                "pending.png": {"triage_status": "pending"},
+                "draft.png": {"annotation_progress": "in_progress"},
+                "missing.png": {"file_status": "missing"},
+            }
+            with contextmanager(app.dependency_overrides[get_session])() as session:
+                for filename, variant in sample_variants.items():
+                    session.add(Sample(
+                        dataset_id=dataset_id,
+                        filename=filename,
+                        absolute_path=str(tmp_path / filename),
+                        relative_path=filename,
+                        extension=".png",
+                        file_type="image",
+                        file_hash=filename,
+                        **(defaults | variant),
+                    ))
+                session.commit()
+
+            base = f"/api/datasets/{dataset_id}"
+            listing = client.get(f"{base}/samples", params=defaults).json()
+            assert [sample["relative_path"] for sample in listing["items"]] == ["target.png"]
+            exported = client.get(f"{base}/export-template", params={"scope": "filtered", **defaults})
+            assert exported.status_code == 200, exported.text
+            assert exported.json()["sample_count"] == 1
+            assert [row["relative_path"] for row in exported.json()["payload"]["rows"]] == ["target.png"]
+    finally:
+        app.dependency_overrides.pop(get_session, None)
 
 
 def test_v03_review_missing_repair_and_metadata_delete(tmp_path: Path):

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.schemas.industrial import AnomalyPreviewRequest
@@ -84,8 +84,16 @@ class ReviewUpdate(BaseModel):
 
 class BatchPreviewRequest(BaseModel):
     target_dataset_id: int = Field(gt=0)
+    batch_scope: Literal["all", "batch", "unassigned"] = "all"
+    batch_id: int | None = Field(default=None, gt=0)
     sample_ids: list[int] | None = Field(default=None, min_length=1, max_length=2000)
     independent_capture_declared: bool = False
+
+    @model_validator(mode="after")
+    def check_batch_scope(self) -> Self:
+        if (self.batch_scope == "batch") != (self.batch_id is not None):
+            raise ValueError("选择具体采集批次时必须提供批次编号，其他范围请勿填写批次编号。")
+        return self
 
 
 class RoiSettingsWrite(BaseModel):

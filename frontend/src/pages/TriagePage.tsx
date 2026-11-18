@@ -1267,6 +1267,7 @@ function TriageWorkspace() {
       <TriagePolicyModal
         open={policyPanelOpen}
         firstRun={firstRun}
+        workflowProfile={dataset?.workflow_profile ?? "general"}
         draft={policyDraft}
         stats={stats}
         impact={policyImpact}

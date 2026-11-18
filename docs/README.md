@@ -19,6 +19,7 @@
 | 建立本地基线、复核误报漏检、验证第二批 | [快速验证指南](quick-validation-guide.md) |
 | 使用本地 SAM 进行几何标注 | [SAM 辅助标注](sam-assisted-annotation.md) |
 | 执行人工验收 | [验收清单](../ACCEPTANCE_TESTS.md) |
+| 查看新手体验问题的修复状态 | [体验问题与修复](usability-review.md) |
 
 ## 参与开发
 

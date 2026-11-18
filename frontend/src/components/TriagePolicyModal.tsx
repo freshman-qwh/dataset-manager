@@ -1,5 +1,6 @@
 import { Check, ChevronDown, CircleAlert, Info, Loader2 } from "lucide-react";
 
+import type { Dataset } from "../types/dataset";
 import type {
   NgGrouping,
   TriagePolicyImpactPreview,
@@ -11,13 +12,13 @@ import Modal from "./Modal";
 const OK_GRANULARITY_OPTIONS = [
   {
     splitOk: false,
-    title: "统一 OK（推荐）",
+    title: "统一 OK",
     description: "只记录合格判定，导出到单一 ok/ 目录。"
   },
   {
     splitOk: true,
     title: "细分完全 / 临界 OK",
-    description: "适用于需要单独复核边界样本的研究流程。"
+    description: "分别记录完全 OK 与临界可接受，便于核对纯正常候选。"
   }
 ];
 
@@ -59,6 +60,7 @@ function PolicyOption({ checked, name, title, description, onChange }: PolicyOpt
 interface TriagePolicyModalProps {
   open: boolean;
   firstRun: boolean;
+  workflowProfile: Dataset["workflow_profile"];
   draft: TriagePolicyValues | null;
   stats: TriageStats | null;
   impact: TriagePolicyImpactPreview | null;
@@ -71,6 +73,7 @@ interface TriagePolicyModalProps {
 export default function TriagePolicyModal({
   open,
   firstRun,
+  workflowProfile,
   draft,
   stats,
   impact,
@@ -81,6 +84,13 @@ export default function TriagePolicyModal({
 }: TriagePolicyModalProps) {
   if (!draft) return null;
 
+  const industrial = workflowProfile === "industrial_anomaly";
+  const recommendation = industrial
+    ? "工业异常检测推荐细分完全 / 临界 OK，NG 可先不细分"
+    : "通用目录整理推荐统一 OK，NG 可先不细分";
+  const firstRunExplanation = industrial
+    ? "完全 OK 用于纯正常候选核查，临界可接受默认从训练方案排除。先区分正常等级，再准备训练包或快速验证。"
+    : "先完成 OK、NG 与待定判定。需要单独复核边界样本时，可选择细分完全 / 临界 OK。";
   const needsConfirmation = Boolean(impact?.changed && impact.requires_review_count > 0);
 
   return (
@@ -96,13 +106,13 @@ export default function TriagePolicyModal({
           <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-semibold text-blue-950">
             <Info size={16} className="shrink-0" />
             <span className="flex-1">
-              {firstRun ? "推荐从统一 OK + NG 不细分开始" : "规则修改不会删除已有判定"}
+              {firstRun ? recommendation : "规则修改不会删除已有判定"}
             </span>
             <ChevronDown size={16} className="transition-transform group-open:rotate-180" />
           </summary>
           <p className="mt-2 pl-6 text-xs leading-5 text-blue-800">
             {firstRun
-              ? "先选择需要记录的判定粒度；只有确实需要研究级分析时再开启细分。"
+              ? firstRunExplanation
               : "新规则用于后续判定与导出解释；已有细分信息继续保留，需要补录的样本会标记为待复核。"}
           </p>
         </details>
@@ -117,12 +127,18 @@ export default function TriagePolicyModal({
                     key={String(option.splitOk)}
                     name="ok-granularity"
                     checked={draft.split_ok === option.splitOk}
-                    title={option.title}
+                    title={`${option.title}${option.splitOk === industrial ? "（推荐）" : ""}`}
                     description={option.description}
                     onChange={() => onChange({ ...draft, split_ok: option.splitOk })}
                   />
                 ))}
               </div>
+              {industrial && !draft.split_ok && (
+                <div role="status" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm leading-6 text-amber-950">
+                  <p className="font-semibold">统一 OK 缺少正常等级</p>
+                  <p className="mt-1">按此方式保存的 OK 图片会被异常检测训练包和本地快速验证预检排除。用于训练或验证前，请选择“细分完全 / 临界 OK”，并逐张复核已有统一 OK 图片的正常等级。</p>
+                </div>
+              )}
             </fieldset>
 
             <fieldset>

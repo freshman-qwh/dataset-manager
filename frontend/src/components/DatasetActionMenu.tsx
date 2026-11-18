@@ -1,6 +1,7 @@
 import { Download, MoreHorizontal, Tags, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import type { MetadataExportScope } from "../types/dataset";
 import { uiCopy } from "../utils/uiCopy";
 
 interface DatasetActionMenuProps {
@@ -9,7 +10,7 @@ interface DatasetActionMenuProps {
   onManageTags: () => void;
   onImportMetadata: () => void;
   onImportLabelme: () => void;
-  onExport: () => void;
+  onExport: (scope: MetadataExportScope) => void;
   onAnnotationExport: () => void;
   annotationExportEnabled?: boolean;
   annotationImportEnabled?: boolean;
@@ -29,6 +30,7 @@ export default function DatasetActionMenu({
   annotationExportHint
 }: DatasetActionMenuProps) {
   const [open, setOpen] = useState(false);
+  const [csvScope, setCsvScope] = useState<MetadataExportScope>("filtered");
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -102,9 +104,22 @@ export default function DatasetActionMenu({
             <option value="manifest">Manifest 审计清单（JSON）</option>
             <option value="csv">CSV 标签表</option>
           </select>
+          {exportFormat === "csv" && (
+            <label className="mt-3 block text-xs font-medium text-gray-500">
+              CSV 导出范围
+              <select
+                value={csvScope}
+                onChange={(event) => setCsvScope(event.target.value as MetadataExportScope)}
+                className="mt-2 w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-gray-900 outline-none transition focus:border-gray-900"
+              >
+                <option value="filtered">当前筛选结果</option>
+                <option value="all">全数据集</option>
+              </select>
+            </label>
+          )}
           <button
             type="button"
-            onClick={() => closeAfter(onExport)}
+            onClick={() => closeAfter(() => onExport(csvScope))}
             className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800"
           >
             <Download size={16} />

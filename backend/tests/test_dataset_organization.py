@@ -150,10 +150,11 @@ def test_legacy_group_editor_keeps_batch_relation_in_sync(organization_client):
         session.add(second)
         session.commit()
         second_id = second.id
-    def apply_batch(code):
+    def apply_batch(code=None, *, clear=False):
         with Session(engine) as session:
             plan = capture_group_service.preview(session, dataset["id"], GroupPreviewRequest(
-                mode="selected", sample_ids=[first, second_id], capture_group_id="part-1", capture_batch_id=code))
+                mode="selected", sample_ids=[first, second_id], capture_group_id="part-1",
+                capture_batch_id=code, clear_capture_batch=clear))
             capture_group_service.confirm(session, dataset["id"], plan["plan_id"], PlanConfirmation(
                 plan_hash=plan["plan_hash"], confirmation=plan["confirmation"]))
     apply_batch("legacy-batch")
@@ -161,8 +162,12 @@ def test_legacy_group_editor_keeps_batch_relation_in_sync(organization_client):
     batches = client.get(f"/api/datasets/{dataset['id']}/batches").json()
     assert len(batches) == 1 and batches[0]["code"] == "legacy-batch"
     assert all(item["batch_id"] == batches[0]["id"] and item["capture_group_id"] == "part-1" for item in items)
-    apply_batch(None)
-    assert all(client.get(f"/api/samples/{sample_id}").json()["batch_id"] is None for sample_id in [first, second_id])
+    apply_batch()
+    items = [client.get(f"/api/samples/{sample_id}").json() for sample_id in [first, second_id]]
+    assert all(item["batch_id"] == batches[0]["id"] and item["capture_batch_id"] == "legacy-batch" for item in items)
+    apply_batch(clear=True)
+    items = [client.get(f"/api/samples/{sample_id}").json() for sample_id in [first, second_id]]
+    assert all(item["batch_id"] is None and item["capture_batch_id"] is None for item in items)
     apply_batch("legacy-batch")
     assert len(client.get(f"/api/datasets/{dataset['id']}/batches").json()) == 1
 

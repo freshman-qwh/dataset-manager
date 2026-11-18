@@ -4,14 +4,16 @@ from pathlib import Path
 
 from fastapi import HTTPException
 from sqlmodel import Session, select
+from app.models.organization import DatasetBatch
 from app.models.sample import Sample
 from app.models.validation import ValidationDecision, ValidationRun
+from app.schemas.validation import BatchPreviewRequest
 from app.services import anomaly_protocol_service as protocol, industrial_plan_service as plans
 from app.services import validation_run_service as runs
 from app.utils.image_validation import image_is_decodable
 
 
-def preview(session: Session, run_id: str, request) -> dict:
+def preview(session: Session, run_id: str, request: BatchPreviewRequest) -> dict:
     parent, old, result = runs.load_result(session, run_id)
     if parent.mode == "batch":
         return preview(session, parent.parent_run_id, request)
@@ -30,6 +32,16 @@ def preview(session: Session, run_id: str, request) -> dict:
     selected = set(request.sample_ids) if request.sample_ids else {s.id for s in samples}
     if selected - {s.id for s in samples}:
         raise HTTPException(422, "所选图片不属于目标项目。")
+    scope_label = "全部图片（跨批次）"
+    if request.batch_scope == "batch":
+        batch = session.get(DatasetBatch, request.batch_id)
+        if batch is None or batch.dataset_id != dataset.id:
+            raise HTTPException(422, "所选采集批次不属于目标数据集，请重新选择。")
+        selected.intersection_update(s.id for s in samples if s.batch_id == batch.id)
+        scope_label = f"采集批次「{batch.name}」"
+    elif request.batch_scope == "unassigned":
+        selected.intersection_update(s.id for s in samples if s.batch_id is None)
+        scope_label = "未分配批次的图片"
     previous = [old]
     # Include previous batches so copying a past evaluation cannot look independent.
     for child in session.exec(select(ValidationRun).where(ValidationRun.parent_run_id == parent.id)).all():
@@ -38,6 +50,8 @@ def preview(session: Session, run_id: str, request) -> dict:
     hashes = {r["sha256"] for r in history}
     captures = {(r.get("capture_batch_id") or "", r["capture_group_id"]) for r in history if r.get("capture_group_id")}
     rows, blockers = [], []
+    if not selected:
+        blockers.append("所选范围没有登记图片，请先添加图片并指定采集批次，或重新选择范围。")
     for gid, members in protocol._components(samples).items():
         if not any(s.id in selected for s in members):
             continue
@@ -84,7 +98,9 @@ def preview(session: Session, run_id: str, request) -> dict:
     summary = dict(blocked=bool(blockers), blockers=list(dict.fromkeys(blockers)), included_count=count,
         excluded_count=len(rows)-count, unknown_count=sum(bool(r["split"]) and r["label_index"] is None for r in rows),
         parent_name=parent.name, threshold=decision.threshold,
+        scope_label=scope_label, selected_count=len(selected),
         notice="只复用原模型，不重新拟合或调阈值。重叠采集组/内容已排除；未知真值仅展示预测，不计算误报漏检。")
     return plans.freeze("validation", dataset.id, dataset.revision, rows, summary, mode="batch", recipe=json.loads(parent.recipe_json),
+        batch_scope={"mode": request.batch_scope, "batch_id": request.batch_id, "sample_ids": request.sample_ids},
         parent_run_id=parent.id, parent_model_sha256=result["model_sha256"], parent_threshold=decision.threshold,
         triage_policy={"version": dataset.triage_policy_version, "values_json": dataset.triage_policy_json})

@@ -1,17 +1,27 @@
 from sqlmodel import Session
 
-from app.schemas.export_template import ExportTemplateResponse
+from app.schemas.directory_export import DirectoryExportSampleQuery
+from app.schemas.export_template import ExportTemplateResponse, MetadataExportScope
 from app.services.dataset_service import get_dataset_or_404
 from app.services.sample_service import get_filtered_samples
 
 
-def export_template(session: Session, dataset_id: int, template_format: str) -> ExportTemplateResponse:
+def export_template(
+    session: Session,
+    dataset_id: int,
+    template_format: str,
+    *,
+    scope: MetadataExportScope = "all",
+    query: DirectoryExportSampleQuery | None = None,
+) -> ExportTemplateResponse:
     dataset = get_dataset_or_404(session, dataset_id)
-    samples = get_filtered_samples(session, dataset_id, sort_by="relative_path", sort_order="asc")
     normalized = template_format.lower()
+    effective_scope = scope if normalized == "csv" else "all"
+    sample_query = query if effective_scope == "filtered" and query is not None else DirectoryExportSampleQuery()
+    samples = get_filtered_samples(session, dataset_id, **sample_query.model_dump(exclude_none=True))
     if normalized == "csv":
         payload = _csv_payload(samples)
-        description = "Sample-level label table. This is the most useful current export because the MVP stores tags and splits, not bounding boxes."
+        description = "样本标签表，包含相对路径、训练划分和审核状态等信息。"
     elif normalized == "coco":
         payload = _coco_payload(dataset.name, samples)
         description = "COCO skeleton with images and categories. Object annotations are empty until annotation geometry is implemented."
@@ -29,6 +39,8 @@ def export_template(session: Session, dataset_id: int, template_format: str) -> 
         dataset_id=dataset_id,
         format=normalized,
         description=description,
+        scope=effective_scope,
+        sample_count=len(samples),
         payload=payload,
     )
 

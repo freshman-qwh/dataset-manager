@@ -105,7 +105,8 @@ import type {
   Tag,
   TrainingReadinessConfigInput,
   TrainingReadinessReport,
-  ReviewStatus
+  ReviewStatus,
+  MetadataExportScope
 } from "../types/dataset";
 import type { AnnotationExportFormat } from "../types/annotationExport";
 import type { Job } from "../types/job";
@@ -332,11 +333,17 @@ export default function DatasetDetailPage() {
   const samplesSectionRef = useRef<HTMLElement | null>(null);
   const overviewRequestIdRef = useRef(0);
   const samplesRequestIdRef = useRef(0);
+  const exportPreviewRequestRef = useRef<AbortController | null>(null);
   const thumbnailRequestKeyRef = useRef("");
   const thumbnailMaintenanceRequestedRef = useRef(false);
   const detailCacheStateRef = useRef<Parameters<typeof writeDatasetDetailCache>[0] | null>(null);
   const debouncedSearch = useDebouncedValue(search);
   const debouncedTag = useDebouncedValue(tag);
+
+  useEffect(() => {
+    setExportPreview(null);
+    return () => exportPreviewRequestRef.current?.abort();
+  }, [datasetId]);
 
   const loadOverview = useCallback(async (signal?: AbortSignal) => {
     const requestId = ++overviewRequestIdRef.current;
@@ -1104,23 +1111,33 @@ export default function DatasetDetailPage() {
     }
   }
 
-  async function handleExport(
-    formatOverride?: string,
-    trainingConfig?: TrainingReadinessConfigInput
-  ) {
+  async function handleExport(options: {
+    format?: string;
+    trainingConfig?: TrainingReadinessConfigInput;
+    csvScope: MetadataExportScope;
+  }) {
+    exportPreviewRequestRef.current?.abort();
+    const controller = new AbortController();
+    exportPreviewRequestRef.current = controller;
+    const { signal } = controller;
     setError(null);
     try {
-      const targetFormat = formatOverride ?? exportFormat;
+      const targetFormat = options.format ?? exportFormat;
       if (targetFormat === "csv") {
-        const template = await getExportTemplate(datasetId, targetFormat);
-        const content = exportTemplateToCsv(template.payload);
+        const template = await getExportTemplate(datasetId, targetFormat, {
+          scope: options.csvScope,
+          query: annotationExportQuery,
+          signal
+        });
+        if (signal.aborted) return;
+        const scopeLabel = template.scope === "filtered" ? "当前筛选结果" : "全数据集";
         setExportPreview({
           title: "CSV 标签表",
           filename: `dataset-${datasetId}-labels.csv`,
           mimeType: "text/csv;charset=utf-8",
-          content,
-          summary: template.description,
-          trainingConfig
+          content: exportTemplateToCsv(template.payload),
+          summary: `${scopeLabel} · 共 ${template.sample_count} 个样本`,
+          trainingConfig: options.trainingConfig
         });
         return;
       }
@@ -1135,12 +1152,14 @@ export default function DatasetDetailPage() {
           captureGroupId, captureBatchId, triageStatus, okGrade, triageOutdated, defectSeverity, defectTypeId, annotationProgress: savedViewAnnotationProgress(annotationProgress),
           sortBy,
           sortOrder
-        })
+        }),
+        { signal }
       );
       if (!response.ok) {
         throw new Error("Manifest export failed.");
       }
       const manifest = await response.json();
+      if (signal.aborted) return;
       setExportPreview({
         title: "Manifest 审计清单",
         filename: `dataset-${datasetId}-manifest.json`,
@@ -1149,7 +1168,7 @@ export default function DatasetDetailPage() {
         summary: `当前筛选条件下导出 ${manifest.exported_sample_count ?? 0} 个样本。`
       });
     } catch {
-      setError("导出失败，请稍后重试");
+      if (!signal.aborted) setError("导出失败，请稍后重试");
     }
   }
 
@@ -1617,7 +1636,7 @@ export default function DatasetDetailPage() {
                 onManageTags={() => setTagsOpen(true)}
                 onImportMetadata={() => setMetadataImportOpen(true)}
                 onImportLabelme={() => setLabelmeImportOpen(true)}
-                onExport={() => void handleExport()}
+                onExport={(csvScope) => void handleExport({ csvScope })}
                 onAnnotationExport={() => setAnnotationExportOpen(true)}
                 annotationExportEnabled={geometryTask}
                 annotationImportEnabled={geometryTask}
@@ -1946,7 +1965,7 @@ export default function DatasetDetailPage() {
         }}
         onExportClassification={(trainingConfig) => {
           setTrainingReadinessOpen(false);
-          void handleExport("csv", trainingConfig);
+          void handleExport({ format: "csv", trainingConfig, csvScope: "all" });
         }}
       />
       <SplitPlanModal

@@ -576,10 +576,14 @@ export interface AnnotationImportReview {
   fingerprint: string;
 }
 
+export type MetadataExportScope = "filtered" | "all";
+
 export interface ExportTemplateResponse {
   dataset_id: number;
   format: string;
   description: string;
+  scope: MetadataExportScope;
+  sample_count: number;
   payload: Record<string, unknown>;
 }
 

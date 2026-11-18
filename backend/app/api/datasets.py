@@ -17,7 +17,8 @@ from app.schemas.dataset_snapshot import (
     DatasetSnapshotTrainingLabels,
 )
 from app.schemas.duplicates import DuplicateReport
-from app.schemas.export_template import ExportTemplateResponse
+from app.schemas.export_template import ExportTemplateResponse, MetadataExportScope
+from app.schemas.directory_export import DirectoryExportSampleQuery
 from app.schemas.metadata_import import (
     MetadataImportJobCreateRequest,
     MetadataImportJobCreateResponse,
@@ -766,6 +767,41 @@ def download_dataset_snapshot(
 def export_dataset_template(
     dataset_id: int,
     format: str = Query(default="csv"),
+    scope: MetadataExportScope = Query(default="all"),
+    search: str | None = Query(default=None),
+    file_type: str | None = Query(default=None, pattern="^(image|video|csv)$"),
+    file_status: str | None = Query(default=None),
+    tag: str | None = Query(default=None),
+    split: str | None = Query(default=None),
+    review_status: str | None = Query(default=None),
+    annotation_progress: str | None = Query(default=None),
+    triage_status: str | None = Query(default=None),
+    ok_grade: str | None = Query(default=None),
+    defect_severity: str | None = Query(default=None),
+    defect_type_id: int | None = Query(default=None, gt=0),
+    triage_outdated: bool | None = Query(default=None),
+    capture_group_id: str | None = Query(default=None, max_length=160),
+    capture_batch_id: str | None = Query(default=None, max_length=160),
+    sort_by: str = Query(default="relative_path"),
+    sort_order: str = Query(default="asc", pattern="^(asc|desc)$"),
     session: Session = Depends(get_session),
 ) -> ExportTemplateResponse:
-    return export_template_service.export_template(session, dataset_id, format)
+    query = DirectoryExportSampleQuery(
+        search=search,
+        file_type=file_type,
+        file_status=file_status,
+        tag=tag,
+        split=split,
+        review_status=review_status,
+        annotation_progress=annotation_progress,
+        triage_status=triage_status,
+        ok_grade=ok_grade,
+        defect_severity=defect_severity,
+        defect_type_id=defect_type_id,
+        triage_outdated=triage_outdated,
+        capture_group_id=capture_group_id,
+        capture_batch_id=capture_batch_id,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    return export_template_service.export_template(session, dataset_id, format, scope=scope, query=query)

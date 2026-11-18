@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -15,9 +15,12 @@ class FilenameGroupRule(BaseModel):
 class GroupPreviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     mode: Literal["selected", "directories", "mapping", "filename"] = "selected"
+    scope: Literal["selected", "batch", "all"] | None = None
+    scope_capture_batch_id: str | None = Field(default=None, max_length=160)
     sample_ids: list[int] = Field(default_factory=list, max_length=200)
     capture_group_id: str | None = Field(default=None, max_length=160)
     capture_batch_id: str | None = Field(default=None, max_length=160)
+    clear_capture_batch: bool = False
     mapping_text: str | None = Field(default=None, max_length=2_000_000)
     path_column: str = Field(default="relative_path", min_length=1, max_length=160)
     group_column: str = Field(default="capture_group_id", min_length=1, max_length=160)
@@ -25,10 +28,24 @@ class GroupPreviewRequest(BaseModel):
     filename_rule: FilenameGroupRule = Field(default_factory=FilenameGroupRule)
     remember_rule: bool = True
 
-    @field_validator("capture_group_id", "capture_batch_id")
+    @field_validator("capture_group_id", "capture_batch_id", "scope_capture_batch_id")
     @classmethod
     def clean_identity(cls, value: str | None) -> str | None:
         return value.strip() or None if value is not None else None
+
+    @model_validator(mode="after")
+    def check_batch_update(self) -> Self:
+        if self.clear_capture_batch and (self.capture_batch_id is not None or self.mode == "mapping"):
+            raise ValueError("清除采集批次不能与填写批次编号或导入映射同时使用。")
+        if self.scope == "selected" and not self.sample_ids:
+            raise ValueError("所选图片范围需要至少一张图片。")
+        if self.scope in {"batch", "all"} and self.sample_ids:
+            raise ValueError("指定批次或全数据集范围不能同时携带所选图片。")
+        if self.scope == "batch" and self.scope_capture_batch_id is None:
+            raise ValueError("指定采集批次范围需要填写批次编号。")
+        if self.scope != "batch" and self.scope_capture_batch_id is not None:
+            raise ValueError("仅指定采集批次范围可填写范围批次编号。")
+        return self
 
 
 class IndustrialReadiness(BaseModel):
